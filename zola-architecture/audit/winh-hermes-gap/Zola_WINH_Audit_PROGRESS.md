@@ -38,8 +38,8 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH02 — Hermes Integration Surface Inventory & Desktop Reference Architecture — COMPLETE
 - WINH03 — Integration Request Trace & Operational Contract — COMPLETE
 - WINH04 — Memory & Skills — COMPLETE
-- WINH05 — Identity, Personality & Self-Model — COMPLETE
-- WINH06 — Self-Improvement & Capability Acquisition — PENDING
+- WINH05 — Identity, Personality & Self-Model — COMPLETE — commit `3ef603f467366375e4eefa00a0b58cd2a792b82d`
+- WINH06 — Self-Improvement & Capability Acquisition — COMPLETE
 - WINH07 — Authority, Governance & Routing — PENDING
 - WINH08 — Tool Calling, Subagents & Scheduled Automation — PENDING
 - WINH09 — Voice Pipeline & Voice Identity — PENDING
@@ -114,6 +114,18 @@ WINH04 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 
 WINH05 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match). Branch HEAD at start of WINH05: `5637a6956a303794f22f01018e5e3f696b3f6a2e` (`winh-hermes-audit`). SOUL.md is configurable identity text, not a locked seed; no Style Profile / SMA layer; `state.db` `sessions` is wrap-able but not a single-mint `SessionRecord`. Lore files are out of scope for this audit (none on disk in this track).
 
+## Self-improvement & capability acquisition (WINH06 Phase 2–6)
+
+Exploratory inventory — **no Zola Document of Truth** for this domain. Labels are `[MECHANISM]` / `[RISK]` / `[ABSENT]` / `[UNVERIFIED]` (not MATCH/GAP/PARTIAL).
+
+- [Zola_WINH06_Audit_02_SkillSelfAuthoring.md](./Zola_WINH06_Audit_02_SkillSelfAuthoring.md)
+- [Zola_WINH06_Audit_03_ToolPluginAcquisition.md](./Zola_WINH06_Audit_03_ToolPluginAcquisition.md)
+- [Zola_WINH06_Audit_04_SelfDirectedConfigModification.md](./Zola_WINH06_Audit_04_SelfDirectedConfigModification.md)
+- [Zola_WINH06_Audit_05_LearningAdaptation.md](./Zola_WINH06_Audit_05_LearningAdaptation.md)
+- [Zola_WINH06_Audit_06_Synthesis.md](./Zola_WINH06_Audit_06_Synthesis.md)
+
+WINH06 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH06: `5637a6956a303794f22f01018e5e3f696b3f6a2e` (`winh-hermes-audit`). No bundled training loop; skill authoring and background-review writes are ungated by default; `$HERMES_HOME/SOUL.md` is writable via `write_file` (home exempt from the project-local always-ask); desktop MCP setup is a consent card, terminal CLI is the fallback. 25 findings (9 HIGH, 12 MEDIUM, 4 LOW).
+
 ## Running findings list
 
 - WINH01-AUD-01 — [PARTIAL] — MEDIUM — `README.md` L43-45; `website/docs/user-guide/windows-native.md` L85-102 — Native Windows is a first-class install path, but the project's own feature matrix does not claim full Linux/macOS parity.
@@ -182,3 +194,28 @@ WINH05 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH05-AUD-16 — [PARTIAL] — MEDIUM — `tui_gateway/server.py` L122–140; `session_lifecycle.py` — WS orphan/resume ≠ Zola 30s app-background close.
 - WINH05-AUD-17 — [PARTIAL] — MEDIUM — `sessions.user_id` / `profile_name` — profile/connection scoped, not user+device provenance.
 - WINH05-AUD-18 — [PARTIAL] — MEDIUM — `messages.session_id` FK vs `tools/memory_tool.py` (no session field) — transcripts stamped; MEMORY.md writes not.
+- WINH06-AUD-01 — [MECHANISM] — MEDIUM — `tools/skill_manager_tool.py` L682–688 — `skill_manage` create/edit/patch/delete/write_file/remove_file; no enable/disable action.
+- WINH06-AUD-02 — [RISK] — HIGH — `write_approval.py` L171–175; `config_defaults.py` L1376 — `skills.write_approval` default False; gate fail-open on import (WINH04-AUD-09 confirmed).
+- WINH06-AUD-03 — [ABSENT] — HIGH — `skill_manager_tool.py` L392–415, L49–63 — no dry-run/staging; `guard_agent_created` default False; write then live.
+- WINH06-AUD-04 — [MECHANISM] — LOW — `tools/skill_ledger.py` L1–8, L246–266 — JSONL mutation ledger with before/after blobs; `session_id` in evidence when dispatch injects it.
+- WINH06-AUD-05 — [RISK] — MEDIUM — `skill_ledger.py` L6–8, L269–288 — ledger is telemetry not a gate; append failures do not block the write.
+- WINH06-AUD-06 — [MECHANISM] — MEDIUM — `skill_ledger.py` `rollback_entry` L338–402 — CLI `hermes curator rollback <id>`; foreground delete is hard; no transcript cascade.
+- WINH06-AUD-07 — [MECHANISM] — HIGH — `agent/background_review.py` L1–6, L1025–1065 — post-turn fork can `skill_manage`; default `background_review.enabled: True`.
+- WINH06-AUD-08 — [RISK] — HIGH — `write_approval.py` L174–175 — same ungated default applies to the review fork.
+- WINH06-AUD-09 — [MECHANISM] — MEDIUM — `tools/setup_mcp_tool.py` L1–32 — desktop `setup_mcp` is a human consent card, not a silent config write.
+- WINH06-AUD-10 — [RISK] — HIGH — `setup_mcp_tool.py` L29–32; `mcp_config.py` `cmd_mcp_add` — non-desktop fallback is `terminal` `hermes mcp install/add`; not in hardline patterns.
+- WINH06-AUD-11 — [MECHANISM] — MEDIUM — `hermes_cli/plugins_cmd.py`; `plugins_discovery.py` L173–218 — plugin install is CLI/TUI; `plugin_guard`; `plugins.enabled` opt-in; capability consent.
+- WINH06-AUD-12 — [ABSENT] — MEDIUM — searched `tools/*_tool.py` — no agent plugin-install tool (directory-drop still needs `plugins.enabled` in config).
+- WINH06-AUD-13 — [RISK] — HIGH — `plugins.py` `register_tool` L460–502; `plugin_guard.py` L3–4 — new plugins in-process; MCP stdio as same OS user; no extra sandbox for newly added capability.
+- WINH06-AUD-14 — [ABSENT] — MEDIUM — `methods_tools.py` `tools.list` / `plugins.list` — no single inventory of skills + tools + plugins + MCP.
+- WINH06-AUD-15 — [MECHANISM] — MEDIUM — `tools/lazy_deps.py` L324–332; `config_defaults.py` L1640 — lazy PyPI installs into the venv; `allow_lazy_installs` default True.
+- WINH06-AUD-16 — [UNVERIFIED] — LOW — `methods_slash.py` `_mirror_reload_mcp` L320–322 — live attach of CLI-installed MCP without `/reload-mcp` not confirmed in this checkout.
+- WINH06-AUD-17 — [RISK] — HIGH — `file_tools_write_guards.py` L182–187 — `$HERMES_HOME/SOUL.md` exempt from protected-instruction always-ask; `write_file` can rewrite it.
+- WINH06-AUD-18 — [MECHANISM] — MEDIUM — `file_tools_write_guards.py` L116–123, L208–213 — project-local SOUL.md always-ask; `config.yaml` hard-blocked on `write_file`.
+- WINH06-AUD-19 — [ABSENT] — HIGH — searched write_approval / personality / prompt_builder — no draft/review state for identity or config self-modification.
+- WINH06-AUD-20 — [RISK] — HIGH — `prompt_builder.py` `load_soul_md` L1452–1484 — SOUL rewrite has no SOUL ledger; WINH05-AUD-06/07 strings do not follow.
+- WINH06-AUD-21 — [RISK] — MEDIUM — `approval_detection.py` (no `hermes config` patterns) — `hermes config set` via `terminal` bypasses the `write_file` config hard-block.
+- WINH06-AUD-22 — [ABSENT] — LOW — searched agent/tools/cli for train/RLHF — no bundled fine-tune/RLHF/weight loop; optional TRL skill is user documentation.
+- WINH06-AUD-23 — [MECHANISM] — MEDIUM — `agent/background_review.py` — only non-memory adaptation loop: post-turn skill/memory fork.
+- WINH06-AUD-24 — [ABSENT] — MEDIUM — `agent/curator.py` (WINH04); no outcome scorer — no performance self-eval / A/B / prompt-optimization loop.
+- WINH06-AUD-25 — [MECHANISM] — LOW — `tui_gateway/model_switch.py` L203–254; `model_tools.py` L212–221 — `/model` is a human slash; toolsets do not change with model id.
