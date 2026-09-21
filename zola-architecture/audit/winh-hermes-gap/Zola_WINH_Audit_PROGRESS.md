@@ -40,8 +40,8 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH04 — Memory & Skills — COMPLETE
 - WINH05 — Identity, Personality & Self-Model — COMPLETE — commit `3ef603f467366375e4eefa00a0b58cd2a792b82d`
 - WINH06 — Self-Improvement & Capability Acquisition — COMPLETE — commit `a62b0fff322df572581d062d5297578346deefce`
-- WINH07 — Authority, Governance & Routing — COMPLETE
-- WINH08 — Tool Calling, Subagents & Scheduled Automation — PENDING
+- WINH07 — Authority, Governance & Routing — COMPLETE — commit `935aaba0f7ee0950f9f4479076abe1b9451f68ff`
+- WINH08 — Tool Calling, Subagents & Scheduled Automation — COMPLETE
 - WINH09 — Voice Pipeline & Voice Identity — PENDING
 - WINH10 — Messaging Surfaces — PENDING
 - WINH11 — Windows Security & Deployment — PENDING
@@ -137,6 +137,18 @@ Document of Truth: Master Architecture Plan §20 (Centralized Authority Model), 
 - [Zola_WINH07_Audit_06_Synthesis.md](./Zola_WINH07_Audit_06_Synthesis.md)
 
 WINH07 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH07: `a62b0fff322df572581d062d5297578346deefce` (`winh-hermes-audit`). No Response Governor / named core; `review.summary` is a second user-facing emit from the WINH06 background-review fork; six WINH02 surfaces route independently except dashboard+JSON-RPC sharing `tui_gateway.dispatch`; no reasoning/speech split. 15 findings (8 HIGH, 7 MEDIUM, 0 LOW).
+
+## Tool calling, subagents & scheduled automation (WINH08 Phase 2–6)
+
+Document of Truth: `Zola_Agent_Map.md` (Core Rule, per-agent Must-never, staleness/TTL/confidence, Agent 8 / 14 / 15). Tool-calling held only to the Core Rule line and Agent 8's "must never bypass the tool authorization pipeline / pre-execute confirmation-gated tools." Not re-derived: WINH06 acquisition, WINH07 speech/routing, WINH04 memory-write (`WINH04-AUD-02`).
+
+- [Zola_WINH08_Audit_02_SubagentArchitecture.md](./Zola_WINH08_Audit_02_SubagentArchitecture.md)
+- [Zola_WINH08_Audit_03_ToolCallAuthorization.md](./Zola_WINH08_Audit_03_ToolCallAuthorization.md)
+- [Zola_WINH08_Audit_04_ScheduledAutomation.md](./Zola_WINH08_Audit_04_ScheduledAutomation.md)
+- [Zola_WINH08_Audit_05_SpeculativeExecutionSafety.md](./Zola_WINH08_Audit_05_SpeculativeExecutionSafety.md)
+- [Zola_WINH08_Audit_06_Synthesis.md](./Zola_WINH08_Audit_06_Synthesis.md)
+
+WINH08 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH08: `935aaba0f7ee0950f9f4479076abe1b9451f68ff` (`winh-hermes-audit`). Subagents/review/cron/heartbeat invoke tools off the live turn; no Agent 8 warm-start; cron is a real scheduler (`~/.hermes/cron/jobs.json`, 60s ticker). 14 findings (2 HIGH, 9 MEDIUM, 3 LOW).
 
 ## Running findings list
 
@@ -246,3 +258,17 @@ WINH07 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH07-AUD-13 — [GAP] — HIGH — `conversation_loop.py`; `turn_final_response.py` L1–6; `prompt_turn.py` L848 — same model call chain both reasons and phrases; no downstream formatter.
 - WINH07-AUD-14 — [GAP] — HIGH — searched turn/stop/prompt_turn — no check that final text preserves tool numbers/names/dates.
 - WINH07-AUD-15 — [GAP] — HIGH — `turn_stop_gates.py` L1–9; `verification_stop.py` L1–3 — architecture does not separate reasoning vs speech; verify-on-stop ≠ fidelity.
+- WINH08-AUD-01 — [PARTIAL] — MEDIUM — `delegate_tool.py`; `background_review.py`; `cron/scheduler.py`; `heartbeat.py` — several worker paths exist; not Agent Map prepare-only categories.
+- WINH08-AUD-02 — [RISK] — HIGH — `background_review.py` L1025–1107; `delegate_tool.py`; `scheduler.py` L1675–1721 — subagent/review/cron/heartbeat invoke tools off the live tool-round.
+- WINH08-AUD-03 — [GAP] — MEDIUM — searched agent/tools/cron for `ttlMs`/`isStale` — no consumer-facing freshness/confidence on cached/precomputed data.
+- WINH08-AUD-04 — [PARTIAL] — MEDIUM — `turn_facade.py` L33–39; `heartbeat.py` L4–6 — review yields to live; cron/delegate have no Agent 14 priority tiers.
+- WINH08-AUD-05 — [MATCH] — LOW — `turn_tool_round.py` L45; `run_agent.py` L1273; `approval.py` L1015, L1079 — live turn: persist → execute → guards/approval → result.
+- WINH08-AUD-06 — [RISK] — HIGH — `background_review.py` L988–992; `delegate_tool_config.py` L42–59; `approval_context.py` L126–128 — background/subagent/cron/heartbeat do not share one live human gate.
+- WINH08-AUD-07 — [MATCH] — LOW — searched prefetch/warm/speculat in agent/tools — no speculative tool pre-execute (Agent 8 constraint holds by absence).
+- WINH08-AUD-08 — [RISK] — MEDIUM — `server.py` L709; `_DropTransport`; `approval.py` timeout — orphaned turn keeps gateway approval until timeout, not unattended deny.
+- WINH08-AUD-09 — [OBSERVATION] — MEDIUM — `cron/jobs.py` L1–73; `scheduler.py` L1–2; `gateway/run.py` L4587 — real cron ticker (60s) + jobs.json; not the review fork.
+- WINH08-AUD-10 — [OBSERVATION] — MEDIUM — `scheduler.py` L1675–1721; `cron_mode` deny — cron runs full agent; danger default-deny; heartbeat uses live auth.
+- WINH08-AUD-11 — [PARTIAL] — MEDIUM — `jobs.py` last_run_at; `scheduler_provider.py` L20, L240 — claim + misfire grace; not Agent 15 lastDeliveredDate.
+- WINH08-AUD-12 — [GAP] — MEDIUM — cron status vs SessionDB heartbeat/loop vs kanban — no single place listing every scheduled job (`WINH06-AUD-14` / `WINH07-AUD-12` pattern).
+- WINH08-AUD-13 — [PARTIAL] — MEDIUM — `turn_context.py` L779–790; `memory_manager.py` L394–443 — memory prefetch exists; no live-wins over cached recall text.
+- WINH08-AUD-14 — [MATCH] — LOW — `memory_provider.py` L111–117 — prefetch is read/inject only; no speculative durable write.
