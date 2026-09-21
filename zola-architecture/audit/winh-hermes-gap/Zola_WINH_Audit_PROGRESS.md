@@ -39,8 +39,8 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH03 — Integration Request Trace & Operational Contract — COMPLETE
 - WINH04 — Memory & Skills — COMPLETE
 - WINH05 — Identity, Personality & Self-Model — COMPLETE — commit `3ef603f467366375e4eefa00a0b58cd2a792b82d`
-- WINH06 — Self-Improvement & Capability Acquisition — COMPLETE
-- WINH07 — Authority, Governance & Routing — PENDING
+- WINH06 — Self-Improvement & Capability Acquisition — COMPLETE — commit `a62b0fff322df572581d062d5297578346deefce`
+- WINH07 — Authority, Governance & Routing — COMPLETE
 - WINH08 — Tool Calling, Subagents & Scheduled Automation — PENDING
 - WINH09 — Voice Pipeline & Voice Identity — PENDING
 - WINH10 — Messaging Surfaces — PENDING
@@ -125,6 +125,18 @@ Exploratory inventory — **no Zola Document of Truth** for this domain. Labels 
 - [Zola_WINH06_Audit_06_Synthesis.md](./Zola_WINH06_Audit_06_Synthesis.md)
 
 WINH06 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH06: `5637a6956a303794f22f01018e5e3f696b3f6a2e` (`winh-hermes-audit`). No bundled training loop; skill authoring and background-review writes are ungated by default; `$HERMES_HOME/SOUL.md` is writable via `write_file` (home exempt from the project-local always-ask); desktop MCP setup is a consent card, terminal CLI is the fallback. 25 findings (9 HIGH, 12 MEDIUM, 4 LOW).
+
+## Authority, governance & routing (WINH07 Phase 2–6)
+
+Document of Truth: Master Architecture Plan §20 (Centralized Authority Model), Core Architectural Principles (Single Authority Ownership, Truth Ownership Rule, Speech Authority Constraint, Provider Abstraction), §13 Trust/Permission/Privacy, and `Zola_Agent_Map.md` Core Rule. **Not scored:** §9/9a (series environmental-scope decision) and §12 (reserved for WINH09). Cross-refs only: WINH02 surfaces, `WINH03-AUD-03/05/08`, `WINH04-AUD-02/03`, `WINH06-AUD-02/07/08/14/23/25`.
+
+- [Zola_WINH07_Audit_02_ResponseAuthority.md](./Zola_WINH07_Audit_02_ResponseAuthority.md)
+- [Zola_WINH07_Audit_03_TrustPermissionFramework.md](./Zola_WINH07_Audit_03_TrustPermissionFramework.md)
+- [Zola_WINH07_Audit_04_RoutingAuthority.md](./Zola_WINH07_Audit_04_RoutingAuthority.md)
+- [Zola_WINH07_Audit_05_TruthSpeechSeparation.md](./Zola_WINH07_Audit_05_TruthSpeechSeparation.md)
+- [Zola_WINH07_Audit_06_Synthesis.md](./Zola_WINH07_Audit_06_Synthesis.md)
+
+WINH07 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH07: `a62b0fff322df572581d062d5297578346deefce` (`winh-hermes-audit`). No Response Governor / named core; `review.summary` is a second user-facing emit from the WINH06 background-review fork; six WINH02 surfaces route independently except dashboard+JSON-RPC sharing `tui_gateway.dispatch`; no reasoning/speech split. 15 findings (8 HIGH, 7 MEDIUM, 0 LOW).
 
 ## Running findings list
 
@@ -219,3 +231,18 @@ WINH06 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH06-AUD-23 — [MECHANISM] — MEDIUM — `agent/background_review.py` — only non-memory adaptation loop: post-turn skill/memory fork.
 - WINH06-AUD-24 — [ABSENT] — MEDIUM — `agent/curator.py` (WINH04); no outcome scorer — no performance self-eval / A/B / prompt-optimization loop.
 - WINH06-AUD-25 — [MECHANISM] — LOW — `tui_gateway/model_switch.py` L203–254; `model_tools.py` L212–221 — `/model` is a human slash; toolsets do not change with model id.
+- WINH07-AUD-01 — [PARTIAL] — HIGH — `prompt_turn.py` L848; `server.py` L623–624, L1006; `agent_callbacks.py` L77 — primary `message.complete` path exists; `review.summary`, notices, heartbeat turns, and child completes also speak.
+- WINH07-AUD-02 — [RISK] — HIGH — `background_review.py` L1148–1153; `server.py` L1006 — WINH06 fork emits user-facing `review.summary` / `_safe_print`, not file-only.
+- WINH07-AUD-03 — [PARTIAL] — MEDIUM — `methods_prompt.py` L610–620; `session_auto_continue.py` L240–245; `session_transports.py` L50–82 — same-gateway concurrent submits serialize via `running`; no cross-surface arbiter.
+- WINH07-AUD-04 — [GAP] — HIGH — searched `tui_gateway/`, `agent/` — no Response Governor / named core; `_emit` is a transport helper.
+- WINH07-AUD-05 — [PARTIAL] — MEDIUM — `toolsets.py` L11–31; `approval_context.py` L228–237 — scope = enabled tools + danger overlay; no §13 permission catalog.
+- WINH07-AUD-06 — [PARTIAL] — MEDIUM — `approval.py` L494–519; `config_defaults.py` L1557–1578 — danger/sudo/slash confirms; no contact/third-party escalation class.
+- WINH07-AUD-07 — [RISK] — HIGH — `config_defaults.py` L1557, L767, L793–796 — default `approvals.mode: smart` (and interrupt/notify defaults) assume trust.
+- WINH07-AUD-08 — [PARTIAL] — MEDIUM — `approval.py` L471–519; `server.py` L1000–1002 — approval prompts explain; smart-allow / missing toolset do not.
+- WINH07-AUD-09 — [GAP] — HIGH — `server.py` `dispatch` L844–877 vs `api_server.py` / `acp_adapter` / `mcp_serve.py` / `webhook.py` — only Surfaces 2+3 share a dispatcher; four surfaces route alone.
+- WINH07-AUD-10 — [PARTIAL] — MEDIUM — `runtime_provider.py` L835–852; `background_review.py` L205–243 — shared ladder function; review/delegation may pick independently.
+- WINH07-AUD-11 — [RISK] — MEDIUM — `_DropTransport` L191–207; `event_replay.py` L26–28; `methods_session.py` L677–679 — orphaned output: drop / 512-ring / later attacher / session_key notify.
+- WINH07-AUD-12 — [GAP] — MEDIUM — six inbound files (no single index) — routing authority not discoverable in one place (`WINH06-AUD-14` pattern).
+- WINH07-AUD-13 — [GAP] — HIGH — `conversation_loop.py`; `turn_final_response.py` L1–6; `prompt_turn.py` L848 — same model call chain both reasons and phrases; no downstream formatter.
+- WINH07-AUD-14 — [GAP] — HIGH — searched turn/stop/prompt_turn — no check that final text preserves tool numbers/names/dates.
+- WINH07-AUD-15 — [GAP] — HIGH — `turn_stop_gates.py` L1–9; `verification_stop.py` L1–3 — architecture does not separate reasoning vs speech; verify-on-stop ≠ fidelity.
