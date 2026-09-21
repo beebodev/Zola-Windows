@@ -44,7 +44,7 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH08 — Tool Calling, Subagents & Scheduled Automation — COMPLETE — commit `a071ea807100afa42bafba36031a6070f3626542`
 - WINH09 — Voice Pipeline & Voice Identity — COMPLETE — commit `463667f4d3782dd3b23bb5c2362a5e088987aa5d`
 - WINH10 — Messaging Surfaces — COMPLETE — commit `b946ad0b630540bb935aa805db28a0518b2319f7`
-- WINH11 — Windows Security & Deployment — COMPLETE
+- WINH11 — Windows Security & Deployment — COMPLETE — commit `da6bf40f5b3f89c9b5337d4b29b933e16872079a`
 - WINH12 — Relational Intelligence & Model Provider Flexibility — PENDING
 - WINH00 — Synthesis + Closeout — PENDING
 
