@@ -21,15 +21,6 @@ synthesis document.
 - **H6** — MCP/plugin sandboxing and secret inheritance: sandbox,
   reduce privilege, or refuse third-party MCP on Windows until
   reviewed?
-## Provider / vendor
-- **P1** — Conversational model: configure existing Hermes adapters, or
-  build a custom one?
-- **P2** — TTS/STT: Hermes's built-in ElevenLabs (or Edge default), or
-  a custom Cartesia/Deepgram plugin from day one?
-- **P3** — Email channel: IMAP/SMTP bot, Outlook (Graph Mail), or a
-  Gmail connector — which matches the actual accounts in use?
-- **P4** — Honcho/Hindsight (or any external memory provider): allowed
-  in the product at all?
 ## Confirmed-action / authorization
 - **A1** — Confirmed send: does Zola-Windows build its own approval UI
   in front of `send_message_tool`/`adapter.send`, including gateway
@@ -62,4 +53,4 @@ synthesis document.
   close, draft the capability-acquisition and tool-authorization
   architecture documents before writing the Build Plan.
 ---
-*Resolved: C1–C12, S1–S11 — see DESIGN_DECISIONS.md.*
+*Resolved: C1–C12, S1–S11, P1–P4 — see DESIGN_DECISIONS.md.*

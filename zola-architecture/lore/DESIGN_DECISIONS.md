@@ -91,3 +91,22 @@ at the end.
 - **S8 — On-box training loop: confirmed non-goal, no decision needed.**
   Rest of the WINH06 Section 4 scratch-vs-inherit question remains
   blocked on `C9` (capability-acquisition architecture doc).
+## Provider / vendor
+- **P1 — Conversational model: configure existing adapters.** No
+  custom provider work needed. Hermes's existing registry (Anthropic,
+  Gemini, OpenAI, Bedrock, Vertex, Azure, Moonshot, plus local models
+  via LM Studio) already covers the Master Plan's abstraction targets,
+  including live model/provider switching (`model_switch.py`). Default
+  model(s) to configure get pinned down in the Build Plan.
+- **P2 — TTS/STT: Edge (free) for now.** ElevenLabs revisited later
+  once there's a working baseline to compare quality/cost/latency
+  against. Not a capability gap either way — Hermes supports both.
+- **P3 — Email channel: Gmail, via Hermes's dedicated Gmail connector**
+  (`connections_tool`/himalaya) — not generic IMAP/SMTP, and not
+  Outlook/Graph Mail. All of the user's accounts flow into a single
+  Gmail inbox. Exact wiring/OAuth setup to be confirmed as functional
+  during the Build Plan / track execution stage.
+- **P4 — No external memory provider (Honcho/Hindsight or similar).**
+  Consistent with `C4` (Zola extends her own MEMORY.md store). Closes
+  off the `P-3P` (provider retention/stranding) risk category before
+  it becomes a build concern.
