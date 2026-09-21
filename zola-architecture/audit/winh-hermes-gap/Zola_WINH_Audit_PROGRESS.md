@@ -38,7 +38,7 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH02 — Hermes Integration Surface Inventory & Desktop Reference Architecture — COMPLETE
 - WINH03 — Integration Request Trace & Operational Contract — COMPLETE
 - WINH04 — Memory & Skills — COMPLETE
-- WINH05 — Identity, Personality & Self-Model — PENDING
+- WINH05 — Identity, Personality & Self-Model — COMPLETE
 - WINH06 — Self-Improvement & Capability Acquisition — PENDING
 - WINH07 — Authority, Governance & Routing — PENDING
 - WINH08 — Tool Calling, Subagents & Scheduled Automation — PENDING
@@ -104,6 +104,16 @@ WINH03 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 
 WINH04 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match). Default Hermes memory is profile-scoped MEMORY.md/USER.md plus `state.db` transcripts plus at most one optional provider. Retention, sacred-category sensitivity, visibility scopes, instance-wide access, and fact-memory audit trail are `[GAP]`s not covered by the memory-agency exception. Skills are a separate backend; agent `skill_manage` is ungated by default.
 
+## Identity, personality, self-model, session identity (WINH05 Phase 2–6)
+
+- [Zola_WINH05_Audit_02_IdentityPersonalityFramework.md](./Zola_WINH05_Audit_02_IdentityPersonalityFramework.md)
+- [Zola_WINH05_Audit_03_IdentitySourceConsolidation.md](./Zola_WINH05_Audit_03_IdentitySourceConsolidation.md)
+- [Zola_WINH05_Audit_04_SelfModelAwareness.md](./Zola_WINH05_Audit_04_SelfModelAwareness.md)
+- [Zola_WINH05_Audit_05_SessionIdentity.md](./Zola_WINH05_Audit_05_SessionIdentity.md)
+- [Zola_WINH05_Audit_06_Synthesis.md](./Zola_WINH05_Audit_06_Synthesis.md)
+
+WINH05 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match). Branch HEAD at start of WINH05: `5637a6956a303794f22f01018e5e3f696b3f6a2e` (`winh-hermes-audit`). SOUL.md is configurable identity text, not a locked seed; no Style Profile / SMA layer; `state.db` `sessions` is wrap-able but not a single-mint `SessionRecord`. Lore files are out of scope for this audit (none on disk in this track).
+
 ## Running findings list
 
 - WINH01-AUD-01 — [PARTIAL] — MEDIUM — `README.md` L43-45; `website/docs/user-guide/windows-native.md` L85-102 — Native Windows is a first-class install path, but the project's own feature matrix does not claim full Linux/macOS parity.
@@ -154,3 +164,21 @@ WINH04 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH04-AUD-12 — [GAP] — MEDIUM — Ethics Context Contamination — USER.md is a single flattened profile (`memory_tool_store.py` L20–21).
 - WINH04-AUD-13 — [PARTIAL] — LOW — `plugins/memory/holographic/retrieval.py` L39 `temporal_decay_half_life` default 0 — score decay, not deletion.
 - WINH04-AUD-14 — [GAP] — MEDIUM — Privacy Plan §6 inventory / retention visibility / audit-log access — no Hermes mechanism.
+- WINH05-AUD-01 — [GAP] — HIGH — `agent/prompt_builder.py` `DEFAULT_AGENT_IDENTITY` L130–138; `load_soul_md` L1452; `hermes_cli/config.py` `_ensure_default_soul_md` L611–623 — no locked Identity Seed; SOUL.md is fully replaceable prompt text.
+- WINH05-AUD-02 — [PARTIAL] — MEDIUM — `agent/system_prompt.py` `_identity_parts` L488–494; `hermes_cli/personality.py` L118–124; `tools/memory_tool.py` L1–4 — identity / overlay / USER.md are separate slots, not locked-vs-adaptive types.
+- WINH05-AUD-03 — [GAP] — HIGH — `personality.py` `persist_personality` L127–145; `plugins/memory/holographic/retrieval.py` L69 — style is config/presets; `trust_score` is retrieval, not phrasing.
+- WINH05-AUD-04 — [GAP] — MEDIUM — no persona drift/baseline job; `agent/curator.py` is skill lifecycle only (WINH04).
+- WINH05-AUD-05 — [GAP] — HIGH — `memory_tool_store.py` L20–21; `hermes_cli/profiles.py` — one persona string per session; USER.md has no context key (WINH04-AUD-01 Layer 5 remains additive).
+- WINH05-AUD-06 — [RISK] — HIGH — `default_soul.py`; `personality.py` L19–34; `tools/voice_live.py` L48–69; `agent/auxiliary_client.py` L1352; `hermes_cli/doctor_state.py` L133 — multiple independently-maintained identity strings.
+- WINH05-AUD-07 — [RISK] — MEDIUM — same sites as AUD-06 — agent name/identity change is a multi-file edit; customized SOUL.md is never auto-updated.
+- WINH05-AUD-08 — [GAP] — MEDIUM — no style-profile store; USER.md is the only default place learned style could live.
+- WINH05-AUD-09 — [GAP] — MEDIUM — no numeric clamps / bounded-evolution / style drift log (Consolidation Plan §8–9).
+- WINH05-AUD-10 — [GAP] — HIGH — no `SelfBeliefBlock`; self-description is static SOUL.md / `DEFAULT_AGENT_IDENTITY`.
+- WINH05-AUD-11 — [GAP] — MEDIUM — `prompt_builder.py` L137 — “when unsure, say so” is a style instruction, not computed hedging.
+- WINH05-AUD-12 — [GAP] — MEDIUM — no SMA subsystem; agent loop writes memory and produces output (SMA read-only boundary unimplemented).
+- WINH05-AUD-13 — [MATCH] — LOW — no user-facing self-model confidence numbers (prohibition not violated).
+- WINH05-AUD-14 — [PARTIAL] — MEDIUM — `hermes_state_common.py` `sessions` L328–389 — explicit session row; no `deviceId`; live sid ≠ durable id.
+- WINH05-AUD-15 — [RISK] — HIGH — `hermes_state_ids.py` `new_session_id`; many callers; `tui_gateway/methods_session.py` L65–67 runtime uuid — not a single mint call site.
+- WINH05-AUD-16 — [PARTIAL] — MEDIUM — `tui_gateway/server.py` L122–140; `session_lifecycle.py` — WS orphan/resume ≠ Zola 30s app-background close.
+- WINH05-AUD-17 — [PARTIAL] — MEDIUM — `sessions.user_id` / `profile_name` — profile/connection scoped, not user+device provenance.
+- WINH05-AUD-18 — [PARTIAL] — MEDIUM — `messages.session_id` FK vs `tools/memory_tool.py` (no session field) — transcripts stamped; MEMORY.md writes not.
