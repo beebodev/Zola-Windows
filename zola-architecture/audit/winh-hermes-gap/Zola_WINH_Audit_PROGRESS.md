@@ -14,6 +14,8 @@ Shared across the entire WINH series (WINH01–12 + WINH00). Later prompts exten
 - Clone path (external, not in this repo): `C:\Users\test\Dev\hermes-agent`
 - Checkout state: detached HEAD at `v2026.9.14`
 
+WINH00 Phase 1 final pin re-check (2026-09-21): `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). This is the last series phase that re-checks the pin.
+
 ### Five most recent local tags (by `git tag --sort=-creatordate`)
 
 1. `v2026.9.14` — 2026-09-14 09:04:09 -0700 — Hermes Agent v0.21.3 (v2026.9.14)
@@ -34,10 +36,10 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 
 ## Series phase table
 
-- WINH01 — Setup, Repo Map, Native Windows Runtime — COMPLETE
-- WINH02 — Hermes Integration Surface Inventory & Desktop Reference Architecture — COMPLETE
-- WINH03 — Integration Request Trace & Operational Contract — COMPLETE
-- WINH04 — Memory & Skills — COMPLETE
+- WINH01 — Setup, Repo Map, Native Windows Runtime — COMPLETE — commit `2b0c7edaa0f8d533b504b6bd39cac077934bcf8b`
+- WINH02 — Hermes Integration Surface Inventory & Desktop Reference Architecture — COMPLETE — commit `a73038b3b5db2c7fac6ddf9b1d4d6f7096529ede`
+- WINH03 — Integration Request Trace & Operational Contract — COMPLETE — commit `e5d237aec40e0473993d9533c9fb74580d3145ae`
+- WINH04 — Memory & Skills — COMPLETE — commit `5637a6956a303794f22f01018e5e3f696b3f6a2e`
 - WINH05 — Identity, Personality & Self-Model — COMPLETE — commit `3ef603f467366375e4eefa00a0b58cd2a792b82d`
 - WINH06 — Self-Improvement & Capability Acquisition — COMPLETE — commit `a62b0fff322df572581d062d5297578346deefce`
 - WINH07 — Authority, Governance & Routing — COMPLETE — commit `935aaba0f7ee0950f9f4479076abe1b9451f68ff`
@@ -46,7 +48,7 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH10 — Messaging Surfaces — COMPLETE — commit `b946ad0b630540bb935aa805db28a0518b2319f7`
 - WINH11 — Windows Security & Deployment — COMPLETE — commit `da6bf40f5b3f89c9b5337d4b29b933e16872079a`
 - WINH12 — Relational Intelligence & Model Provider Flexibility — COMPLETE — commit `d01ddefb59dd15040d4f178efc732fb864bf8d8b`
-- WINH00 — Synthesis + Closeout — PENDING
+- WINH00 — Synthesis + Closeout — COMPLETE (synthesis documents on `winh-hermes-audit`; merge SHA recorded at Phase 7)
 
 WINH00 is the only prompt that merges or closes the branch.
 
@@ -201,6 +203,18 @@ Document of Truth: `Zola_Relational_Intelligence_Layer_Architecture.md` plus Tem
 - [Zola_WINH12_Audit_06_Synthesis.md](./Zola_WINH12_Audit_06_Synthesis.md)
 
 WINH12 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH12: `cc97edac74275dff1a9f67b6d0c509fc89944d04` (`winh-hermes-audit`). Recorded scope decisions still present. Half A is near-total `[GAP]` (RIL is scratch). Half B is `[MATCH]` (multi-vendor + local + live `/model`). 17 findings (10 HIGH, 7 MEDIUM, 0 LOW).
+
+## Series synthesis (WINH00 Phase 2–6)
+
+WINH00 synthesizes the completed series. It does **not** append `WINH00-AUD-NN` findings (G-NO-INVENT). It does **not** resolve Section 5 questions (G-NO-DECIDE). Phase 7 merge/push/`winh-hermes-audit` deletion waits for explicit “proceed to closeout.”
+
+- [Zola_WINH00_Audit_02_FindingsAggregation.md](./Zola_WINH00_Audit_02_FindingsAggregation.md)
+- [Zola_WINH00_Audit_03_CrossCuttingThemes.md](./Zola_WINH00_Audit_03_CrossCuttingThemes.md)
+- [Zola_WINH00_Audit_04_BuildReadinessPicture.md](./Zola_WINH00_Audit_04_BuildReadinessPicture.md)
+- [Zola_WINH00_Audit_05_DecisionsNeeded.md](./Zola_WINH00_Audit_05_DecisionsNeeded.md)
+- [Zola_WINH00_MasterSynthesis.md](./Zola_WINH00_MasterSynthesis.md)
+
+WINH00 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH00: `466ad45b6e9b3016b83bc7e6b20eee86eb224769` (`winh-hermes-audit`). All twelve domain phases COMPLETE with commit SHAs. Series total **187** findings (55 HIGH, 102 MEDIUM, 27 LOW, 3 OBSERVATION). WINH01–04 SHAs recovered from git log (those rows previously said COMPLETE without SHA).
 
 ## Running findings list
 
