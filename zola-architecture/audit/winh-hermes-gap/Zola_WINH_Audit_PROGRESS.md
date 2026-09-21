@@ -41,8 +41,8 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH05 — Identity, Personality & Self-Model — COMPLETE — commit `3ef603f467366375e4eefa00a0b58cd2a792b82d`
 - WINH06 — Self-Improvement & Capability Acquisition — COMPLETE — commit `a62b0fff322df572581d062d5297578346deefce`
 - WINH07 — Authority, Governance & Routing — COMPLETE — commit `935aaba0f7ee0950f9f4479076abe1b9451f68ff`
-- WINH08 — Tool Calling, Subagents & Scheduled Automation — COMPLETE
-- WINH09 — Voice Pipeline & Voice Identity — PENDING
+- WINH08 — Tool Calling, Subagents & Scheduled Automation — COMPLETE — commit `a071ea807100afa42bafba36031a6070f3626542`
+- WINH09 — Voice Pipeline & Voice Identity — COMPLETE
 - WINH10 — Messaging Surfaces — PENDING
 - WINH11 — Windows Security & Deployment — PENDING
 - WINH12 — Relational Intelligence & Model Provider Flexibility — PENDING
@@ -53,6 +53,10 @@ WINH00 is the only prompt that merges or closes the branch.
 ## Recorded scope decisions
 
 > Environmental Awareness / Perception (Zola Environmental Awareness Architecture, Zola Environmental Perception Architecture, Zola_Architecture_Environmental_Event_Bus_and_User_State_Model, Zola_Architecture_Perceptual_Input_Layer, Zola_Architecture_Context_Injection, Zola_Architecture_Device_Registration_and_Active_Endpoint_Tracking) is out of scope for the entire WINH series, decided 2026-09-21 — treated like the 3D avatar (WINH01's Explicitly Out of Scope): will be assessed separately outside this audit, not audited against Hermes here.
+
+> Zola-Windows is a fresh-start implementation, not a port of zola-main, decided 2026-09-21. The `zola-architecture/` documents are read as a capability/requirements guide, not an implementation spec — an Android-specific implementation choice (a named library, OS API, or hardware component) is never itself a finding against Hermes; only the underlying capability requirement is. This applies to the whole WINH series, past and future phases alike.
+
+> `Zola_Cognitive_Engine_Architecture.md` (the `CognitivePrepWorker` "Prep Kitchen Model," a durable persisted initiative queue, curiosity-derived triggering, and three named cognitive engines routing through the existing authority chain) is out of scope for the entire WINH series, decided 2026-09-21. This document describes background/between-session proactive cognition, distinct from the real-time conversational pipeline this phase audits (Master Plan §3). Hermes has adjacent primitives — a real cron scheduler, heartbeat/loop idle triggers, and the WINH06 background-review post-turn fork — but not this specific pattern; that absence is already covered by existing findings (no Agent-14-style priority tiers, no unified schedule inventory — `WINH06-AUD-14`, `WINH08-AUD-12`) rather than re-derived as a new finding here. Will be assessed separately outside this audit series, not audited against Hermes as its own phase.
 
 WINH04 Document-of-Truth check: all six listed `zola-architecture/` files are present. `Zola_Master_State_Audit.md` is absent from disk (working tree shows it deleted vs HEAD; not restored). Memory-agency exception (entity-vs-user ownership and who holds write authority) is recorded here as superseded for this track — it is not raised as `[GAP]`/`[RISK]`. Retention, deletion, sensitivity, access control, and integrity are **not** exempted.
 
@@ -149,6 +153,18 @@ Document of Truth: `Zola_Agent_Map.md` (Core Rule, per-agent Must-never, stalene
 - [Zola_WINH08_Audit_06_Synthesis.md](./Zola_WINH08_Audit_06_Synthesis.md)
 
 WINH08 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH08: `935aaba0f7ee0950f9f4479076abe1b9451f68ff` (`winh-hermes-audit`). Subagents/review/cron/heartbeat invoke tools off the live turn; no Agent 8 warm-start; cron is a real scheduler (`~/.hermes/cron/jobs.json`, 60s ticker). 14 findings (2 HIGH, 9 MEDIUM, 3 LOW).
+
+## Voice pipeline & voice identity (WINH09 Phase 2–6)
+
+Document of Truth: Master Plan §3 Current Sequential Model only (not Long-Term Streaming), §12 Conversational Attention Authority (reserved from WINH07), External API Strategy Tier 1, `Zola_Architecture_Living_Voiceprint_MultiSpeaker.md` (capability requirements, not Android libraries). Not scored: Long-Term Streaming, §9/9a, camera identity, cloud voiceprint sync, post-session diarization, barge-in mechanics.
+
+- [Zola_WINH09_Audit_02_VoiceProviderLandscape.md](./Zola_WINH09_Audit_02_VoiceProviderLandscape.md)
+- [Zola_WINH09_Audit_03_VoicePipelineArchitecture.md](./Zola_WINH09_Audit_03_VoicePipelineArchitecture.md)
+- [Zola_WINH09_Audit_04_VoiceIdentity.md](./Zola_WINH09_Audit_04_VoiceIdentity.md)
+- [Zola_WINH09_Audit_05_ConversationalAttentionAuthority.md](./Zola_WINH09_Audit_05_ConversationalAttentionAuthority.md)
+- [Zola_WINH09_Audit_06_Synthesis.md](./Zola_WINH09_Audit_06_Synthesis.md)
+
+WINH09 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH09: `a071ea807100afa42bafba36031a6070f3626542` (`winh-hermes-audit`). Hermes covers ElevenLabs TTS/STT natively; Cartesia/Deepgram are not built-ins; Gemini Live is not GPT-Live. Chained voice is STT → client `prompt.submit` → TTS. No speaker-identity tracker. Wake-word is the primary attention gate, not directed-speech. 16 findings (3 HIGH, 12 MEDIUM, 1 LOW).
 
 ## Running findings list
 
@@ -272,3 +288,19 @@ WINH08 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH08-AUD-12 — [GAP] — MEDIUM — cron status vs SessionDB heartbeat/loop vs kanban — no single place listing every scheduled job (`WINH06-AUD-14` / `WINH07-AUD-12` pattern).
 - WINH08-AUD-13 — [PARTIAL] — MEDIUM — `turn_context.py` L779–790; `memory_manager.py` L394–443 — memory prefetch exists; no live-wins over cached recall text.
 - WINH08-AUD-14 — [MATCH] — LOW — `memory_provider.py` L111–117 — prefetch is read/inject only; no speculative durable write.
+- WINH09-AUD-01 — [PARTIAL] — MEDIUM — `tts_registry.py` L25–28; `tts_tool_providers.py` L219–229; `tts_streaming.py` L173–193 — ElevenLabs built-in file + PCM streamer; ABC `stream()` still default-unimplemented.
+- WINH09-AUD-02 — [PARTIAL] — MEDIUM — `transcription_registry.py` L23–25; `transcription_command.py` L31–41 — No Cartesia/Deepgram built-in; command or plugin (file STT).
+- WINH09-AUD-03 — [MATCH] — LOW — `config_defaults.py` L1008; `plugins.py` L1051–1061 — Built-in `tts.provider` / `stt.provider` swap by config.
+- WINH09-AUD-04 — [PARTIAL] — MEDIUM — `tts_provider.py` L58–73; `tts_streaming.py` L142–159 — No latency catalog; `streaming.provider` auto/pin only.
+- WINH09-AUD-05 — [PARTIAL] — MEDIUM — `methods_voice.py`; `voice.py` L331; `prompt_turn.py` — Chained: VAD → file STT → `voice.transcript` → client `prompt.submit`.
+- WINH09-AUD-06 — [PARTIAL] — MEDIUM — `voice_mode.py` L852; `tts_tool_speaker.py`; `tts_streaming.py` — STT batch after silence; TTS sentence-stream if streamer exists.
+- WINH09-AUD-07 — [PARTIAL] — MEDIUM — `methods_prompt.py` L586–588; `voice_live.py` L1–20, L84–90 — Context is a prompt note; GPT-Live WebRTC is a separate OpenAI duplex mode.
+- WINH09-AUD-08 — [MATCH] — MEDIUM — `methods_voice.py` L117–134; `tts_streaming.py` L51–60 — Barge-in stops TTS and latches next-turn interrupt note.
+- WINH09-AUD-09 — [RISK] — MEDIUM — `methods_voice.py` L1–2, L16–17, L309–312 — One mic/speaker per process; JSON-RPC voice assumes that topology.
+- WINH09-AUD-10 — [GAP] — HIGH — searched agent/tools/tui_gateway; `transcription_cloud.py` L260, L318 — No speaker-identity / embedding tracker.
+- WINH09-AUD-11 — [GAP] — HIGH — same search — No voice enrollment (ambient or formal).
+- WINH09-AUD-12 — [RISK] — MEDIUM — `transcription_provider.py`; `voice_live.py`; WINH02 surfaces — On-device identity would not be structurally enforced.
+- WINH09-AUD-13 — [GAP] — MEDIUM — `methods_prompt.py` prompt.submit — Turns are single-author for voice; no speaker field.
+- WINH09-AUD-14 — [GAP] — HIGH — `config_defaults.py` L1161–1178; `methods_voice.py` L309–312 — Wake-word is the primary gate, not directed-speech.
+- WINH09-AUD-15 — [GAP] — MEDIUM — wake engines; no confidence tiers in voice state machine — Activation is binary.
+- WINH09-AUD-16 — [PARTIAL] — MEDIUM — `methods_voice.py` L747–752, L685–687 — After capture, wake re-arms; no continuation window.
