@@ -110,3 +110,35 @@ at the end.
   Consistent with `C4` (Zola extends her own MEMORY.md store). Closes
   off the `P-3P` (provider retention/stranding) risk category before
   it becomes a build concern.
+## Security / hardening
+**Standing trigger for this whole bucket:** every item below is
+deferred on the same basis — accepted as-is for personal, single-user
+use; all six get revisited together before any public release or
+multi-user distribution. This is one decision applied six times, not
+six independent ones.
+- **H1 — No code signing for now.** Accept unsigned Windows builds
+  (this Hermes tag ships unsigned by default: `signAndEditExecutable:
+  false`, no Authenticode CI) and the resulting SmartScreen warnings.
+  Revisit if/when this goes public.
+- **H2 — Credential storage: deferred.** No Windows Credential
+  Manager/DPAPI wrapping. BitLocker-at-rest accepted as the working
+  credential-protection posture for a single-user machine.
+- **H3 — Ship bar: deferred.** No formal blocking-items list
+  established yet. Current posture (unsigned binary, no update-
+  signature verification, Electron sandbox with `--no-sandbox`
+  fallback) accepted for now; revisit alongside H1 before real
+  distribution.
+- **H4 — `state.db`/MEMORY.md encryption: deferred.** No
+  application-level encryption (e.g. SQLCipher). BitLocker-at-rest
+  treated as satisfying both the general "platform-standard encryption
+  at minimum" and the memory-specific "must be encrypted at rest"
+  bullets in Privacy Plan §9, for now.
+- **H5 — Hermes default-config risks: accepted as-is.** No extra
+  gating added beyond Hermes's stock behavior for skill writes/review
+  fork (`AUD-02`/`08`), CLI fallbacks (`AUD-10`/`21`), or home-directory
+  SOUL.md (`AUD-17`).
+- **H6 — MCP/plugin secret inheritance: accepted as-is.** No
+  sandboxing or privilege reduction added for third-party MCP servers.
+  Hermes's existing `_build_safe_env()` behavior (deliberately
+  re-injecting configured secrets into MCP subprocess environments)
+  stands unchanged.

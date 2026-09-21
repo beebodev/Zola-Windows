@@ -3,24 +3,6 @@ Remaining Decisions-Locked items from `Zola_WINH00_MasterSynthesis.md`
 Section 5, not yet resolved. Resolved items move to
 `DESIGN_DECISIONS.md` and are removed from here. IDs match the master
 synthesis document.
-## Security / hardening
-- **H1** — Code signing: does Zola-Windows need its own Authenticode
-  cert + signing step before real distribution? (Fact: this Hermes tag
-  ships unsigned Windows binaries by default.)
-- **H2** — Credential storage: wrap secrets in Windows Credential
-  Manager/DPAPI, or is BitLocker-at-rest sufficient?
-- **H3** — Ship bar: which items (if any) block shipping — signing,
-  update integrity, sandbox posture — given the current unsigned/
-  unverified-update/optional-sandbox posture?
-- **H4** — `state.db`/MEMORY.md encryption: application-level (e.g.
-  SQLCipher) in scope, or is BitLocker-at-rest sufficient per Privacy
-  Plan §9's "platform-standard encryption at minimum"?
-- **H5** — Which WINH06 default-config RISK findings block adopting
-  Hermes's defaults as-is for the Windows track vs which are acceptable
-  assuming a human operator is present?
-- **H6** — MCP/plugin sandboxing and secret inheritance: sandbox,
-  reduce privilege, or refuse third-party MCP on Windows until
-  reviewed?
 ## Confirmed-action / authorization
 - **A1** — Confirmed send: does Zola-Windows build its own approval UI
   in front of `send_message_tool`/`adapter.send`, including gateway
@@ -53,4 +35,4 @@ synthesis document.
   close, draft the capability-acquisition and tool-authorization
   architecture documents before writing the Build Plan.
 ---
-*Resolved: C1–C12, S1–S11, P1–P4 — see DESIGN_DECISIONS.md.*
+*Resolved: C1–C12, S1–S11, P1–P4, H1–H6 — see DESIGN_DECISIONS.md.*
