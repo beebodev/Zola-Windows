@@ -1,6 +1,6 @@
 # Zola WINH Hermes Gap Analysis — Progress
 
-Shared across the entire WINH series (WINH01-07 + WINH00). Later prompts extend this file; they must not replace the Hermes pin recorded here.
+Shared across the entire WINH series (WINH01–11 + WINH00). Later prompts extend this file; they must not replace the Hermes pin recorded here.
 
 ## Hermes pin (set once by WINH01 — do not change)
 
@@ -35,15 +35,19 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 ## Series phase table
 
 - WINH01 — Setup, Repo Map, Native Windows Runtime — COMPLETE
-- WINH02 — Memory and Skills — PENDING
-- WINH03 — (domain audit; title filled by that prompt) — PENDING
-- WINH04 — (domain audit; title filled by that prompt) — PENDING
-- WINH05 — (domain audit; title filled by that prompt) — PENDING
-- WINH06 — (domain audit; title filled by that prompt) — PENDING
-- WINH07 — (domain audit; title filled by that prompt) — PENDING
-- WINH00 — Synthesis + closeout — PENDING
+- WINH02 — Hermes Integration Surface Inventory & Desktop Reference Architecture — COMPLETE
+- WINH03 — Integration Request Trace & Operational Contract — PENDING
+- WINH04 — Memory & Skills — PENDING
+- WINH05 — Self-Improvement & Capability Acquisition — PENDING
+- WINH06 — Authority, Governance & Routing — PENDING
+- WINH07 — Tool Calling, Subagents & Scheduled Automation — PENDING
+- WINH08 — Voice Pipeline & Voice Identity — PENDING
+- WINH09 — Messaging Surfaces — PENDING
+- WINH10 — Windows Security & Deployment — PENDING
+- WINH11 — Relational Intelligence & Model Provider Flexibility — PENDING
+- WINH00 — Synthesis + Closeout — PENDING
 
-WINH02-07 titles are filled in by those prompts. WINH00 is the only prompt that merges or closes the branch.
+WINH00 is the only prompt that merges or closes the branch.
 
 ## Guardrails (entire series)
 
@@ -62,6 +66,16 @@ Windows runtime findings:
 
 - [Zola_WINH01_Audit_02_WindowsRuntime.md](./Zola_WINH01_Audit_02_WindowsRuntime.md)
 
+## Integration surfaces (WINH02 Phase 2–4)
+
+- [Zola_WINH02_Audit_01_SurfaceInventory.md](./Zola_WINH02_Audit_01_SurfaceInventory.md)
+- [Zola_WINH02_Audit_02_DesktopReference.md](./Zola_WINH02_Audit_02_DesktopReference.md)
+- [Zola_WINH02_Audit_03_PreliminaryPaths.md](./Zola_WINH02_Audit_03_PreliminaryPaths.md)
+
+WINH02 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (matches the pin above). No re-clone, no new branch, no re-pin.
+
+Preliminary paths named for WINH00 (no decision in this prompt): (a) fork/re-theme `apps/desktop`; (b) fresh native Windows client against the JSON-RPC/WebSocket gateway; (c) client against the OpenAI-compatible HTTP API only; (d) ACP stdio adapter (IDE-shaped, not a standalone Windows shell).
+
 ## Running findings list
 
 - WINH01-AUD-01 — [PARTIAL] — MEDIUM — `README.md` L43-45; `website/docs/user-guide/windows-native.md` L85-102 — Native Windows is a first-class install path, but the project's own feature matrix does not claim full Linux/macOS parity.
@@ -73,3 +87,15 @@ Windows runtime findings:
 - WINH01-AUD-07 — [PARTIAL] — MEDIUM — `tools/environments/local.py` `_find_bash` / `_windows_bash_candidates` L364-413 — Native Windows shell execution goes through Git Bash (`bash.exe`), not cmd/PowerShell; documented as the POSIX-compat strategy.
 - WINH01-AUD-08 — [MATCH] — LOW — `scripts/install.ps1`; `pyproject.toml` L19-141; `website/docs/user-guide/windows-native.md` L66-79 — Default native install is `uv` plus CPython 3.11 wheels plus PortableGit/Node; no Visual Studio Build Tools required for the core path.
 - WINH01-AUD-09 — [RISK] — LOW — `tests/install/KNOWN_FAILURES.md` — No in-repo `KNOWN_ISSUES.md`. The only tracked Windows issues file is historical installer/updater known-failures, not live bugs.
+- WINH02-AUD-01 — [MATCH] — MEDIUM — `tui_gateway/server.py` L85; `tui_gateway/AGENTS.md` L19–30, L53–57; `apps/desktop/src/api/client.ts` L28–37 — JSON-RPC gateway is the only surface that already carries the full first-party agent-loop contract and is exercised by Desktop, TUI, and dashboard `/api/ws`.
+- WINH02-AUD-02 — [RISK] — HIGH — `tui_gateway/AGENTS.md` L1–4; `apps/shared/package.json` L2–4 (`version: 0.0.0`); `apps/shared/src/gateway-contract.openrpc.json` L3–5 (`version: "1"`); `gateway-contract.generated.ts` L1–3 — internal, generated, un-semvered contract. A packaged Zola client cannot detect a breaking Hermes update from version numbers alone.
+- WINH02-AUD-03 — [PARTIAL] — MEDIUM — `gateway/platforms/api_server.py` L1–6; `website/docs/user-guide/features/api-server.md` L7–9, L109–112; `api_server_openai_routes.py` L668; `api_server_runs.py` L862–883 — public OpenAI-compatible API with streaming, tool progress, and stop; missing the first-party RPC catalog Desktop actually uses.
+- WINH02-AUD-04 — [PARTIAL] / [GAP] / [RISK] — MEDIUM — `hermes_cli/web_routers/chat_ws.py` L555–574; `hermes_cli/web_server_chat.py` L26–28; `hermes_cli/web_server.py` L304–311 — dashboard hosts Surface 3 at `/api/ws` and a PTY embed at `/api/pty`; session token is process-ephemeral.
+- WINH02-AUD-05 — [PARTIAL] / [GAP] — MEDIUM — `acp_adapter/server.py` L1, L613–628; `website/docs/user-guide/features/acp.md`; `website/docs/reference/toolsets-reference.md` L97 — public ACP stdio for IDEs; `hermes-acp` toolset drops cron and other product tools; not a Windows desktop product surface.
+- WINH02-AUD-06 — [GAP] — LOW — `mcp_serve.py` L1–7, L309–314, L721 — MCP messaging-conversation bridge, not an agent chat loop.
+- WINH02-AUD-07 — [GAP] — LOW — `gateway/platforms/webhook.py` L1–3, L154, L198–224 — inbound HMAC webhook receiver; Zola cannot call into it as a client.
+- WINH02-AUD-08 — [MATCH] — MEDIUM — `apps/desktop/src/api/client.ts` L28–37; `apps/desktop/README.md` L101–103; `apps/desktop/src/AGENTS.md` L6–10 — official Desktop uses Surface 3 JSON-RPC over `/api/ws` via `JsonRpcGatewayClient`.
+- WINH02-AUD-09 — [MATCH] / [PARTIAL] — MEDIUM — `apps/desktop/electron/backend-command.ts` L18–21; `apps/desktop/electron/main.ts` L1418–1428; README L90–138 — Desktop launches a `hermes serve` sidecar and can instead attach to a remote/existing gateway.
+- WINH02-AUD-10 — [PARTIAL] — MEDIUM — `apps/shared/src/json-rpc-gateway.ts` L27, L121–127, L142; `apps/shared/src/reconnect-backoff.ts`; `tui_gateway/session_lifecycle.py` L380–394, L568–594 — reconnect/replay exist; mid-turn disconnect interrupt is deferred.
+- WINH02-AUD-11 — [PARTIAL] — MEDIUM — `LICENSE` (MIT); `apps/desktop/package.json` L2–7; `apps/desktop/src/i18n/en.ts` L3286, L3309; `apps/shared/` vs `apps/desktop/src/` — transport is separable; UI/i18n/productName are Hermes-coupled.
+- WINH02-AUD-12 — [RISK] — MEDIUM — `api_server_openai_routes.py` L697–698 vs `tui_gateway/session_lifecycle.py` L380–394, L568–594 — SSE disconnect fail-closes (interrupt); JSON-RPC `client_gone` defers interrupt. Two surfaces disagree on who owns a mid-turn disconnect.
