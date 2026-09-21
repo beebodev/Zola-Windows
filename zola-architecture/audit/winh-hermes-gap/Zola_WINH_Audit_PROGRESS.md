@@ -48,9 +48,9 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH10 — Messaging Surfaces — COMPLETE — commit `b946ad0b630540bb935aa805db28a0518b2319f7`
 - WINH11 — Windows Security & Deployment — COMPLETE — commit `da6bf40f5b3f89c9b5337d4b29b933e16872079a`
 - WINH12 — Relational Intelligence & Model Provider Flexibility — COMPLETE — commit `d01ddefb59dd15040d4f178efc732fb864bf8d8b`
-- WINH00 — Synthesis + Closeout — COMPLETE (synthesis documents on `winh-hermes-audit`; merge SHA recorded at Phase 7)
+- WINH00 — Synthesis + Closeout — COMPLETE — merge commit `da6c35fd997487db23bb15c08eb9056e28413e39`
 
-WINH00 is the only prompt that merges or closes the branch.
+Series closed 2026-09-21: `winh-hermes-audit` merged into `main` (`--no-ff`, merge `da6c35fd997487db23bb15c08eb9056e28413e39`). Local branch deleted after merge. No remote tracking branch existed.
 
 ## Recorded scope decisions
 
@@ -67,7 +67,7 @@ WINH04 Document-of-Truth check: all six listed `zola-architecture/` files are pr
 - G-SCOPE: Diagnostic audit only. Read Hermes at `C:\Users\test\Dev\hermes-agent` (pinned tag) and the Zola-Windows documents listed in each prompt. Produce findings only under `zola-architecture/audit/winh-hermes-gap/`.
 - G-NOCHANGE: Zero source modifications in Hermes. Zero modifications in Zola-Windows outside this output directory.
 - G-QUALITY: Every finding names a specific file, directory, function, config key, or line in tag `v2026.9.14`. If docs and code conflict, report both.
-- G-CLOSEOUT: Deferred to WINH00. This series does not merge, push a final state, or delete the branch until WINH00.
+- G-CLOSEOUT: Done. `winh-hermes-audit` merged `--no-ff` into `main` at `da6c35fd997487db23bb15c08eb9056e28413e39`; local branch deleted.
 
 ## Repo map (WINH01 Phase 2)
 
@@ -206,7 +206,7 @@ WINH12 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 
 ## Series synthesis (WINH00 Phase 2–6)
 
-WINH00 synthesizes the completed series. It does **not** append `WINH00-AUD-NN` findings (G-NO-INVENT). It does **not** resolve Section 5 questions (G-NO-DECIDE). Phase 7 merge/push/`winh-hermes-audit` deletion waits for explicit “proceed to closeout.”
+WINH00 synthesizes the completed series. It does **not** append `WINH00-AUD-NN` findings (G-NO-INVENT). It does **not** resolve Section 5 questions (G-NO-DECIDE). Phase 7 complete: merged `--no-ff` into `main` at `da6c35fd997487db23bb15c08eb9056e28413e39`.
 
 - [Zola_WINH00_Audit_02_FindingsAggregation.md](./Zola_WINH00_Audit_02_FindingsAggregation.md)
 - [Zola_WINH00_Audit_03_CrossCuttingThemes.md](./Zola_WINH00_Audit_03_CrossCuttingThemes.md)
