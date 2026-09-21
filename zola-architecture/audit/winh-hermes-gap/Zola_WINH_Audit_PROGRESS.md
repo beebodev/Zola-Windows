@@ -45,7 +45,7 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH09 — Voice Pipeline & Voice Identity — COMPLETE — commit `463667f4d3782dd3b23bb5c2362a5e088987aa5d`
 - WINH10 — Messaging Surfaces — COMPLETE — commit `b946ad0b630540bb935aa805db28a0518b2319f7`
 - WINH11 — Windows Security & Deployment — COMPLETE — commit `da6bf40f5b3f89c9b5337d4b29b933e16872079a`
-- WINH12 — Relational Intelligence & Model Provider Flexibility — PENDING
+- WINH12 — Relational Intelligence & Model Provider Flexibility — COMPLETE
 - WINH00 — Synthesis + Closeout — PENDING
 
 WINH00 is the only prompt that merges or closes the branch.
@@ -189,6 +189,18 @@ Document of Truth: Privacy Plan §9 Encryption/Storage/Access (core); §7 Provid
 - [Zola_WINH11_Audit_06_Synthesis.md](./Zola_WINH11_Audit_06_Synthesis.md)
 
 WINH11 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH11: `b946ad0b630540bb935aa805db28a0518b2319f7` (`winh-hermes-audit`). Recorded scope decisions still present (fresh-start, Cognitive Engine exclusion, Environmental Awareness). Pre-audit claims verified: `signAndEditExecutable: false` plus `install.ps1` CSC disabled (unsigned Windows, not CI-signed); NSIS `perMachine: false` / `oneClick: false`; custom `windows.ps1` → `hermes update` (not electron-updater); `.env` plaintext, vault Fernet with co-located key, `state.db` plain `sqlite3.connect`. 22 findings (7 HIGH, 10 MEDIUM, 5 LOW).
+
+## Relational intelligence & model provider flexibility (WINH12 Phase 2–6)
+
+Document of Truth: `Zola_Relational_Intelligence_Layer_Architecture.md` plus Temporal, Social Graph, Continuity, Calibration. SMA cited `WINH05-AUD-10`–`13` (not re-read). Half B: Master Plan Provider Abstraction + Tier 1 Conversational Models (Gemini / OpenAI / Anthropic / local). Capability-not-Android-impl. Cognitive Engine and Environmental Awareness still excluded.
+
+- [Zola_WINH12_Audit_02_TemporalFoundation.md](./Zola_WINH12_Audit_02_TemporalFoundation.md)
+- [Zola_WINH12_Audit_03_SocialGraphReasoning.md](./Zola_WINH12_Audit_03_SocialGraphReasoning.md)
+- [Zola_WINH12_Audit_04_ContinuityAndCalibration.md](./Zola_WINH12_Audit_04_ContinuityAndCalibration.md)
+- [Zola_WINH12_Audit_05_ModelProviderFlexibility.md](./Zola_WINH12_Audit_05_ModelProviderFlexibility.md)
+- [Zola_WINH12_Audit_06_Synthesis.md](./Zola_WINH12_Audit_06_Synthesis.md)
+
+WINH12 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH12: `cc97edac74275dff1a9f67b6d0c509fc89944d04` (`winh-hermes-audit`). Recorded scope decisions still present. Half A is near-total `[GAP]` (RIL is scratch). Half B is `[MATCH]` (multi-vendor + local + live `/model`). 17 findings (10 HIGH, 7 MEDIUM, 0 LOW).
 
 ## Running findings list
 
@@ -362,3 +374,20 @@ WINH11 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH11-AUD-20 — [RISK] — MEDIUM — `windows-sandbox-fallback.ts` L15–22 — Windows can fall back to `--no-sandbox`.
 - WINH11-AUD-21 — [MECHANISM] — LOW — `config_defaults.py` L2279; `vercel_sandbox.py` L44–46 — no always-on Hermes telemetry.
 - WINH11-AUD-22 — [MECHANISM] — LOW — `gateway_windows.py` L152–189 — runs as user; UAC only for gateway task install.
+- WINH12-AUD-01 — [GAP] — HIGH — `system_prompt.py` L433–457, L656 — timestamps/dates exist; no elapsed-time-to-meaning.
+- WINH12-AUD-02 — [GAP] — HIGH — cite `WINH03-AUD-09`, `WINH05-AUD-15` — no relational `SessionBoundaryResolver`.
+- WINH12-AUD-03 — [GAP] — HIGH — searched `agent/`/`tools/` — no `ThreadArcClassifier` or `TemporalRecencyFormatter`.
+- WINH12-AUD-04 — [RISK] — MEDIUM — `hermes_time.py`; `turn_context.py` L515 — clock split: prompt TZ vs `time.time` vs UTC datetime.
+- WINH12-AUD-05 — [GAP] — HIGH — cite `WINH05-AUD-10`–`13` — belief/correction/entity-view/arc contracts absent.
+- WINH12-AUD-06 — [GAP] — HIGH — `memory_tool.py` L2; `learning_graph.py` L130–134 — no third-party person model; flat MEMORY.md/USER.md.
+- WINH12-AUD-07 — [GAP] — HIGH — searched relationship-type / KNOWS_ABOUT — no structured relationship predicates.
+- WINH12-AUD-08 — [GAP] — MEDIUM — `learning_graph.py` L130–134 — no salience / distinct-session recurrence ranking.
+- WINH12-AUD-09 — [GAP] — HIGH — searched RelationshipArc / relationshipDepth — no relationship-arc document.
+- WINH12-AUD-10 — [GAP] — HIGH — `system_prompt.py` L1–8, L656 — prompt injects memory files + date, not an arc block.
+- WINH12-AUD-11 — [GAP] — HIGH — cite `WINH05-AUD-03`/`08` — no depth-driven familiarity / warmth ceiling.
+- WINH12-AUD-12 — [GAP] — HIGH — Phase 2 + `WINH05-AUD-10`–`12` — Calibration dependency chain unmet at every link.
+- WINH12-AUD-13 — [MATCH] — MEDIUM — `providers.py`; `gemini_native_adapter.py` — Gemini/OpenAI/Anthropic native; not Gemini-locked.
+- WINH12-AUD-14 — [MATCH] — MEDIUM — `lmstudio_reasoning.py`; `providers.py` L136–137 — local OpenAI-compat can run the full tool loop.
+- WINH12-AUD-15 — [MATCH] — MEDIUM — `model_switch.py` L15, L203–254; cite `WINH06-AUD-25` — live `/model` switches provider+model mid-session.
+- WINH12-AUD-16 — [MATCH] — MEDIUM — `transports/base.py`; `NormalizedResponse` — wire formats convert into one internal representation.
+- WINH12-AUD-17 — [RISK] — MEDIUM — cite `WINH07-AUD-01`/`02`; RIL master L312–343 — single delivery path vs Hermes multi-path speech.
