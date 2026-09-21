@@ -142,3 +142,35 @@ six independent ones.
   Hermes's existing `_build_safe_env()` behavior (deliberately
   re-injecting configured secrets into MCP subprocess environments)
   stands unchanged.
+## Confirmed-action / authorization
+- **A1 — Confirmed send: already decided.** Zola builds her own
+  approval UI in front of `send_message_tool`/`adapter.send`, covering
+  gateway chat replies as well as any other outbound send path. Treated
+  as an existing product commitment (per the SMS Intelligence
+  architecture's "Send Is Confirmed, Not Autonomous" requirement), not
+  a genuinely open Decisions-Locked item.
+- **A2 — Client-side response arbitration: no suppression for now.**
+  Accept Hermes's extra speech paths (`review.summary`, child-session
+  completes, heartbeat events) as-is. Observe real behavior before
+  deciding whether an arbitration/filtering layer is needed.
+- **A3 — Trust/Permission layer: Hermes's existing gate is enough for
+  now.** No separate Zola-owned permission-checking layer added in
+  front of Hermes's `approvals.mode`/danger-command overlay.
+- **A4 — Truth/speech separation: accepted for v1.** No verification/
+  formatting layer splitting fact from phrasing. Model output treated
+  as both, matching Hermes's native behavior.
+- **A5 — Background-review combined authority: Hermes defaults
+  accepted**, consistent with `H5`. No added gating on the
+  background-review fork's combined write + speak + tool authority
+  beyond what Hermes ships with.
+- **A6 — RIL single delivery path: moot**, consistent with `S2`'s
+  deferral of the full Relational Intelligence Layer. Revisit only if
+  RIL is picked back up.
+- **A7 — SMA write ban: stick with Hermes's general posture.** The
+  Self-Model Awareness read-only boundary is not enforced more strictly
+  than Hermes's own write-authority model elsewhere in the agent.
+- **A8 — Skills governance: accept Hermes's default** (`write_approval:
+  False`), consistent with `H5`.
+- **A9 — One policy vs path-dependent gating: confirmed moot.** `C1`
+  locked a single integration path (Path B); gating is uniform by
+  construction, no path-dependent split to design for.
