@@ -1,6 +1,6 @@
 # Zola WINH Hermes Gap Analysis — Progress
 
-Shared across the entire WINH series (WINH01–11 + WINH00). Later prompts extend this file; they must not replace the Hermes pin recorded here.
+Shared across the entire WINH series (WINH01–12 + WINH00). Later prompts extend this file; they must not replace the Hermes pin recorded here.
 
 ## Hermes pin (set once by WINH01 — do not change)
 
@@ -37,17 +37,24 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH01 — Setup, Repo Map, Native Windows Runtime — COMPLETE
 - WINH02 — Hermes Integration Surface Inventory & Desktop Reference Architecture — COMPLETE
 - WINH03 — Integration Request Trace & Operational Contract — COMPLETE
-- WINH04 — Memory & Skills — PENDING
-- WINH05 — Self-Improvement & Capability Acquisition — PENDING
-- WINH06 — Authority, Governance & Routing — PENDING
-- WINH07 — Tool Calling, Subagents & Scheduled Automation — PENDING
-- WINH08 — Voice Pipeline & Voice Identity — PENDING
-- WINH09 — Messaging Surfaces — PENDING
-- WINH10 — Windows Security & Deployment — PENDING
-- WINH11 — Relational Intelligence & Model Provider Flexibility — PENDING
+- WINH04 — Memory & Skills — COMPLETE
+- WINH05 — Identity, Personality & Self-Model — PENDING
+- WINH06 — Self-Improvement & Capability Acquisition — PENDING
+- WINH07 — Authority, Governance & Routing — PENDING
+- WINH08 — Tool Calling, Subagents & Scheduled Automation — PENDING
+- WINH09 — Voice Pipeline & Voice Identity — PENDING
+- WINH10 — Messaging Surfaces — PENDING
+- WINH11 — Windows Security & Deployment — PENDING
+- WINH12 — Relational Intelligence & Model Provider Flexibility — PENDING
 - WINH00 — Synthesis + Closeout — PENDING
 
 WINH00 is the only prompt that merges or closes the branch.
+
+## Recorded scope decisions
+
+> Environmental Awareness / Perception (Zola Environmental Awareness Architecture, Zola Environmental Perception Architecture, Zola_Architecture_Environmental_Event_Bus_and_User_State_Model, Zola_Architecture_Perceptual_Input_Layer, Zola_Architecture_Context_Injection, Zola_Architecture_Device_Registration_and_Active_Endpoint_Tracking) is out of scope for the entire WINH series, decided 2026-09-21 — treated like the 3D avatar (WINH01's Explicitly Out of Scope): will be assessed separately outside this audit, not audited against Hermes here.
+
+WINH04 Document-of-Truth check: all six listed `zola-architecture/` files are present. `Zola_Master_State_Audit.md` is absent from disk (working tree shows it deleted vs HEAD; not restored). Memory-agency exception (entity-vs-user ownership and who holds write authority) is recorded here as superseded for this track — it is not raised as `[GAP]`/`[RISK]`. Retention, deletion, sensitivity, access control, and integrity are **not** exempted.
 
 ## Guardrails (entire series)
 
@@ -87,6 +94,16 @@ Preliminary paths named for WINH00 (no decision in this prompt): (a) fork/re-the
 
 WINH03 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match). Process model: Path B (`hermes serve`) and Path C (`hermes gateway` + API server) cannot share one spawned process. Disconnect/fail-closed: Surface 3 default is fail-open for healthy detached turns (20s grace, 600s activity freshness); Surface 1 SSE interrupt remains fail-closed.
 
+## Memory & skills (WINH04 Phase 2–6)
+
+- [Zola_WINH04_Audit_01_StorageOwnership.md](./Zola_WINH04_Audit_01_StorageOwnership.md)
+- [Zola_WINH04_Audit_02_PrivacyRetentionAccess.md](./Zola_WINH04_Audit_02_PrivacyRetentionAccess.md)
+- [Zola_WINH04_Audit_03_Skills.md](./Zola_WINH04_Audit_03_Skills.md)
+- [Zola_WINH04_Audit_04_HierarchyReconciliation.md](./Zola_WINH04_Audit_04_HierarchyReconciliation.md)
+- [Zola_WINH04_Audit_05_Synthesis.md](./Zola_WINH04_Audit_05_Synthesis.md)
+
+WINH04 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match). Default Hermes memory is profile-scoped MEMORY.md/USER.md plus `state.db` transcripts plus at most one optional provider. Retention, sacred-category sensitivity, visibility scopes, instance-wide access, and fact-memory audit trail are `[GAP]`s not covered by the memory-agency exception. Skills are a separate backend; agent `skill_manage` is ungated by default.
+
 ## Running findings list
 
 - WINH01-AUD-01 — [PARTIAL] — MEDIUM — `README.md` L43-45; `website/docs/user-guide/windows-native.md` L85-102 — Native Windows is a first-class install path, but the project's own feature matrix does not claim full Linux/macOS parity.
@@ -123,3 +140,17 @@ WINH03 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH03-AUD-11 — [PARTIAL] — LOW — Desktop `powerMonitor.on('resume')` (`apps/desktop/electron/main.ts` L6846–6847); no serve-side OS-sleep handler; loopback WS ping disabled (`config_defaults.py` L945–948) — sleep/wake misfire of the orphan timer is `[UNVERIFIED]`.
 - WINH03-AUD-12 — [RISK] — MEDIUM — `tui_gateway/contracts/server_requests.py`; `_ask` L1306; approval 300s / clarify 3600s / sudo 120s — missing handlers time out then skip/deny at defaults; clarify `timeout <= 0` can wait forever.
 - WINH03-AUD-13 — [MATCH] — LOW — `apps/desktop/package.json` L95 and `web/package.json` L18 `"@hermes/shared": "file:…"` — consumable outside the Hermes workspace via a relative `file:` dependency; still un-semvered (`WINH02-AUD-02`).
+- WINH04-AUD-01 — [PARTIAL] — MEDIUM — `tools/memory_tool.py` L1–4, L38–40; `hermes_state_sessions.py` / `state.db`; `agent/memory_provider.py` L1–4 — builtin files + transcript + optional one plugin do not implement Hierarchy layers 0–6 as distinct stores.
+- WINH04-AUD-02 — [RISK] — MEDIUM — `agent/memory_manager.py` `sync_turn` L485–503; `on_memory_write` L720–734 — provider session hooks persist memory outside `memory_tool`.
+- WINH04-AUD-03 — [GAP] — HIGH — `tools/memory_tool_store.py` (no TTL); `config_defaults.py` L1222–1223 char limits only — Privacy Plan §3 retention windows unenforced.
+- WINH04-AUD-04 — [PARTIAL] — MEDIUM — `MemoryStore.remove` `memory_tool_store.py` L270–274; `_cmd_memory_reset` `hermes_cli/main_agent_cmds.py` L21–56 — per-entry substring delete + file wipe; no cascade to `state.db`/clouds.
+- WINH04-AUD-05 — [GAP] — HIGH — builtin entries are untyped strings (`memory_tool_store.py`); Ethics visibility scopes and sacred categories absent.
+- WINH04-AUD-06 — [GAP] — HIGH — frozen prompt dump (`memory_tool.py` L2–4); `hermes_tools_mcp_server.py` L40 omits `memory` but instance tools/messaging still see the snapshot.
+- WINH04-AUD-07 — [GAP] — MEDIUM — `atomic_write_text` `memory_tool_store.py` L422; no fact-memory ledger (contrast `tools/skill_ledger.py`).
+- WINH04-AUD-08 — [MATCH] — LOW — `$HERMES_HOME/skills/` via `skill_manager_tool.py` L68 vs `$HERMES_HOME/memories/` — separate backends.
+- WINH04-AUD-09 — [RISK] — MEDIUM — `write_approval.evaluate_gate` L171–175; `config_defaults.py` L1376 `skills.write_approval: False` — agent `skill_manage` create/edit ungated by default.
+- WINH04-AUD-10 — [PARTIAL] — MEDIUM — `skills_tool.py` `skill_view` L540–549 fail-visible on load; no auto-disable on runtime skill error.
+- WINH04-AUD-11 — [GAP] — MEDIUM — Hierarchy §4 DWA / Agency write pipeline — no source/scope/authority/freshness metadata or promotion state machine.
+- WINH04-AUD-12 — [GAP] — MEDIUM — Ethics Context Contamination — USER.md is a single flattened profile (`memory_tool_store.py` L20–21).
+- WINH04-AUD-13 — [PARTIAL] — LOW — `plugins/memory/holographic/retrieval.py` L39 `temporal_decay_half_life` default 0 — score decay, not deletion.
+- WINH04-AUD-14 — [GAP] — MEDIUM — Privacy Plan §6 inventory / retention visibility / audit-log access — no Hermes mechanism.
