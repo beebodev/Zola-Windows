@@ -42,8 +42,8 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH06 — Self-Improvement & Capability Acquisition — COMPLETE — commit `a62b0fff322df572581d062d5297578346deefce`
 - WINH07 — Authority, Governance & Routing — COMPLETE — commit `935aaba0f7ee0950f9f4479076abe1b9451f68ff`
 - WINH08 — Tool Calling, Subagents & Scheduled Automation — COMPLETE — commit `a071ea807100afa42bafba36031a6070f3626542`
-- WINH09 — Voice Pipeline & Voice Identity — COMPLETE
-- WINH10 — Messaging Surfaces — PENDING
+- WINH09 — Voice Pipeline & Voice Identity — COMPLETE — commit `463667f4d3782dd3b23bb5c2362a5e088987aa5d`
+- WINH10 — Messaging Surfaces — COMPLETE
 - WINH11 — Windows Security & Deployment — PENDING
 - WINH12 — Relational Intelligence & Model Provider Flexibility — PENDING
 - WINH00 — Synthesis + Closeout — PENDING
@@ -165,6 +165,18 @@ Document of Truth: Master Plan §3 Current Sequential Model only (not Long-Term 
 - [Zola_WINH09_Audit_06_Synthesis.md](./Zola_WINH09_Audit_06_Synthesis.md)
 
 WINH09 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH09: `a071ea807100afa42bafba36031a6070f3626542` (`winh-hermes-audit`). Hermes covers ElevenLabs TTS/STT natively; Cartesia/Deepgram are not built-ins; Gemini Live is not GPT-Live. Chained voice is STT → client `prompt.submit` → TTS. No speaker-identity tracker. Wake-word is the primary attention gate, not directed-speech. 16 findings (3 HIGH, 12 MEDIUM, 1 LOW).
+
+## Messaging surfaces (WINH10 Phase 2–6)
+
+Document of Truth: `Zola_Communication_Intelligence_Architecture.md` (email + SMS intelligence, shared principles), `Zola_Sms_Intelligence_Architecture.md` (contact-gate, thread velocity, Send Is Confirmed). Capability-not-Android-impl. Windows has no cellular radio (platform constraint, not a Hermes miss). Cross-refs: `WINH04-AUD-02`/`06`, `WINH07-AUD-07`, `WINH08-AUD-02`/`06`.
+
+- [Zola_WINH10_Audit_02_InboundIntelligence.md](./Zola_WINH10_Audit_02_InboundIntelligence.md)
+- [Zola_WINH10_Audit_03_ConfirmedSendFlow.md](./Zola_WINH10_Audit_03_ConfirmedSendFlow.md)
+- [Zola_WINH10_Audit_04_ChannelCoverage.md](./Zola_WINH10_Audit_04_ChannelCoverage.md)
+- [Zola_WINH10_Audit_05_CrossReference.md](./Zola_WINH10_Audit_05_CrossReference.md)
+- [Zola_WINH10_Audit_06_Synthesis.md](./Zola_WINH10_Audit_06_Synthesis.md)
+
+WINH10 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH10: `463667f4d3782dd3b23bb5c2362a5e088987aa5d` (`winh-hermes-audit`). Pre-audit “no SMS/Twilio in tools/” was incomplete: Twilio SMS and IMAP/SMTP email are `plugins/platforms/sms` and `email`. `send_message` is not model-callable; live gateway replies still send autonomously. No SmsSignal/EmailSignal pipeline. 12 findings (3 HIGH, 6 MEDIUM, 2 LOW, 1 OBSERVATION).
 
 ## Running findings list
 
@@ -304,3 +316,15 @@ WINH09 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH09-AUD-14 — [GAP] — HIGH — `config_defaults.py` L1161–1178; `methods_voice.py` L309–312 — Wake-word is the primary gate, not directed-speech.
 - WINH09-AUD-15 — [GAP] — MEDIUM — wake engines; no confidence tiers in voice state machine — Activation is binary.
 - WINH09-AUD-16 — [PARTIAL] — MEDIUM — `methods_voice.py` L747–752, L685–687 — After capture, wake re-arms; no continuation window.
+- WINH10-AUD-01 — [PARTIAL] — MEDIUM — `authz_mixin.py` L544–605; `run_inbound.py` L191–205; `email/adapter.py` L602–628 — Allowlist/pairing gate, not silent contact-list exclusion.
+- WINH10-AUD-02 — [GAP] — HIGH — searched SmsSignal/EmailIntelligenceAnalyzer; `session.py` transcripts — No signal-extract-then-discard; raw body is the turn.
+- WINH10-AUD-03 — [GAP] — MEDIUM — searched threadVelocity / last H hours — No first-class thread-velocity signal.
+- WINH10-AUD-04 — [PARTIAL] — MEDIUM — `run_startup.py` L821–854; `sms/plugin.yaml` `SMS_ALLOWED_USERS` — Channel allowlist ≠ `smsAnalysisConsent`.
+- WINH10-AUD-05 — [MATCH] — LOW — `send_message_tool.py` L22–24; `toolsets.py` L185; registry test L191–194 — `send_message` not model-callable; CLI/cron/kanban/MCP call helpers.
+- WINH10-AUD-06 — [RISK] — HIGH — `base.py` `handle_message`; `delivery.py` L254; SMS `adapter.send` — Live gateway reply is autonomous send on the inbound channel.
+- WINH10-AUD-07 — [GAP] — HIGH — `send_cmd.py` L195; `scheduler_delivery.py` L1460; `mcp_serve.py` L600 — Host send paths have no two-step per-message confirm.
+- WINH10-AUD-09 — [PARTIAL] — MEDIUM — `plugins/platforms/sms/adapter.py` — Twilio SMS exists; Windows has no handset radio.
+- WINH10-AUD-10 — [PARTIAL] — MEDIUM — `plugins/platforms/email/adapter.py`; Graph used by `teams_pipeline` — Mail bot ≠ EmailSignal; Graph is Teams not Outlook mail.
+- WINH10-AUD-11 — [MATCH] — LOW — `toolsets.py` L202–240; `send_message_tool.py` L568–588 — Broad chat-platform coverage; WhatsApp/Signal/Twilio for “text”.
+- WINH10-AUD-12 — [OBSERVATION] — — Twilio plugin; Phone Link / CPaaS / defer — Windows SMS options; not a Hermes score.
+- WINH10-AUD-13 — [RISK] — MEDIUM — `session.py` transcripts; cite `WINH04-AUD-02`/`06` — Comms bodies persist like any other turn.
