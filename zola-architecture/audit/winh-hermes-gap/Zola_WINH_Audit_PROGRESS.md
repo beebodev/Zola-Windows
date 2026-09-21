@@ -36,7 +36,7 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 
 - WINH01 — Setup, Repo Map, Native Windows Runtime — COMPLETE
 - WINH02 — Hermes Integration Surface Inventory & Desktop Reference Architecture — COMPLETE
-- WINH03 — Integration Request Trace & Operational Contract — PENDING
+- WINH03 — Integration Request Trace & Operational Contract — COMPLETE
 - WINH04 — Memory & Skills — PENDING
 - WINH05 — Self-Improvement & Capability Acquisition — PENDING
 - WINH06 — Authority, Governance & Routing — PENDING
@@ -76,6 +76,17 @@ WINH02 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 
 Preliminary paths named for WINH00 (no decision in this prompt): (a) fork/re-theme `apps/desktop`; (b) fresh native Windows client against the JSON-RPC/WebSocket gateway; (c) client against the OpenAI-compatible HTTP API only; (d) ACP stdio adapter (IDE-shaped, not a standalone Windows shell).
 
+## Operational contract (WINH03 Phase 2–7)
+
+- [Zola_WINH03_Audit_01_ProcessModel.md](./Zola_WINH03_Audit_01_ProcessModel.md)
+- [Zola_WINH03_Audit_02_RequestTrace.md](./Zola_WINH03_Audit_02_RequestTrace.md)
+- [Zola_WINH03_Audit_03_DisconnectReconciliation.md](./Zola_WINH03_Audit_03_DisconnectReconciliation.md)
+- [Zola_WINH03_Audit_04_SessionDurability.md](./Zola_WINH03_Audit_04_SessionDurability.md)
+- [Zola_WINH03_Audit_05_MinimumClientCapabilities.md](./Zola_WINH03_Audit_05_MinimumClientCapabilities.md)
+- [Zola_WINH03_Audit_06_Synthesis.md](./Zola_WINH03_Audit_06_Synthesis.md)
+
+WINH03 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match). Process model: Path B (`hermes serve`) and Path C (`hermes gateway` + API server) cannot share one spawned process. Disconnect/fail-closed: Surface 3 default is fail-open for healthy detached turns (20s grace, 600s activity freshness); Surface 1 SSE interrupt remains fail-closed.
+
 ## Running findings list
 
 - WINH01-AUD-01 — [PARTIAL] — MEDIUM — `README.md` L43-45; `website/docs/user-guide/windows-native.md` L85-102 — Native Windows is a first-class install path, but the project's own feature matrix does not claim full Linux/macOS parity.
@@ -98,4 +109,17 @@ Preliminary paths named for WINH00 (no decision in this prompt): (a) fork/re-the
 - WINH02-AUD-09 — [MATCH] / [PARTIAL] — MEDIUM — `apps/desktop/electron/backend-command.ts` L18–21; `apps/desktop/electron/main.ts` L1418–1428; README L90–138 — Desktop launches a `hermes serve` sidecar and can instead attach to a remote/existing gateway.
 - WINH02-AUD-10 — [PARTIAL] — MEDIUM — `apps/shared/src/json-rpc-gateway.ts` L27, L121–127, L142; `apps/shared/src/reconnect-backoff.ts`; `tui_gateway/session_lifecycle.py` L380–394, L568–594 — reconnect/replay exist; mid-turn disconnect interrupt is deferred.
 - WINH02-AUD-11 — [PARTIAL] — MEDIUM — `LICENSE` (MIT); `apps/desktop/package.json` L2–7; `apps/desktop/src/i18n/en.ts` L3286, L3309; `apps/shared/` vs `apps/desktop/src/` — transport is separable; UI/i18n/productName are Hermes-coupled.
-- WINH02-AUD-12 — [RISK] — MEDIUM — `api_server_openai_routes.py` L697–698 vs `tui_gateway/session_lifecycle.py` L380–394, L568–594 — SSE disconnect fail-closes (interrupt); JSON-RPC `client_gone` defers interrupt. Two surfaces disagree on who owns a mid-turn disconnect.
+- WINH02-AUD-12 — [RISK] — MEDIUM — `api_server_openai_routes.py` L697–698 vs `tui_gateway/session_lifecycle.py` L380–394, L568–594 — SSE disconnect fail-closes (interrupt); JSON-RPC `client_gone` defers interrupt. Two surfaces disagree on who owns a mid-turn disconnect. Restated with mechanism in WINH03-AUD-05 / WINH03-AUD-08.
+- WINH03-AUD-01 — [GAP] — MEDIUM — `hermes_cli/subcommands/dashboard.py` L48–59; `hermes_cli/main.py` `cmd_dashboard` L2543–2590 / `cmd_gateway` L1769–1775; `web_server.py` `start_server` L1365–1385 (no API_SERVER); `gateway/run.py` `start_gateway` L5195 — `hermes serve` does not start the OpenAI API; `hermes gateway` does not bind `/api/ws`. Path B and Path C cannot share one spawned process.
+- WINH03-AUD-02 — [MATCH] — LOW — `tui_gateway/methods_prompt.py` L544–662; `prompt_turn.py` `_run_prompt_submit` / `_invoke_agent`; `conversation_loop.py` `run_conversation` L1573; `turn_api_call.py` `perform_api_call` L61; `turn_tool_round.py` `run_tool_round` L45; `run_agent.py` `_execute_tool_calls` L1273 — one JSON-RPC turn traced as a named-function chain.
+- WINH03-AUD-03 — [MATCH] — LOW — `prompt_turn.py` `_complete_turn_payload` L634–651 / emit L848; `tui_gateway/contracts/events.py` L164–184 — `message.complete` carries full `text` plus `usage`/`status`, not a bare done signal.
+- WINH03-AUD-04 — [PARTIAL] — MEDIUM — `tui_gateway/server.py` `_emit_approval_request` L709–732; `approval_context.py` `_get_approval_timeout` L239–248 — approval blocks the turn thread on the queue (default 300s); JSON-RPC dispatcher can still read `session.interrupt`.
+- WINH03-AUD-05 — [RISK] — HIGH — `tui_gateway/server.py` L122–140 (grace default 20s, activity stale default 600s); `session_lifecycle.py` L507–572; `config_defaults.py` L949–955 — Surface 3 default keeps a healthy detached turn running (“an active turn runs to completion”); not an immediate interrupt.
+- WINH03-AUD-06 — [PARTIAL] — MEDIUM — `methods_session.py` L337 `close_on_disconnect`; `session_lifecycle.py` L653–654 vs L390 `_interrupt_session_turn`; `ChatSidebar.tsx` L94–99 — no interrupt-on-disconnect RPC; `close_on_disconnect` reaps without calling `_interrupt_session_turn`. Desktop main chats do not set the flag.
+- WINH03-AUD-07 — [PARTIAL] / [UNVERIFIED] — MEDIUM — `session.interrupt` → `_interrupt_session_turn` (`methods_session.py` L1995; `session_lifecycle.py` L390–432) — client interrupt-then-close can approximate Surface 1 if the frame is read; unread-frame race `[UNVERIFIED]`.
+- WINH03-AUD-08 — [RISK] — HIGH — restates WINH02-AUD-12: Surface 3 default is structurally fail-open; fail-closed requires client `session.interrupt` and/or sidecar env (`HERMES_TUI_WS_ORPHAN_ACTIVITY_STALE_S=0` with grace > 0), not socket-drop alone.
+- WINH03-AUD-09 — [PARTIAL] — MEDIUM — `tui_gateway/server.py` `_sessions` L85 vs `hermes_state_sessions.py`; `methods_session.py` `_resume_cold` L762–780; `event_replay.py` L26–28 — process crash loses live runtime and the 512-event ring; `session.resume` reloads durable transcript and builds a new agent.
+- WINH03-AUD-10 — [UNVERIFIED] — MEDIUM — Windows `taskkill /F` / Desktop `forceKillProcessTree` vs `state.db` WAL (`hermes_state_wal.py`); `startup_orphan_sweep` (`config_defaults.py` L957–963) — resume-after-hard-kill integrity not settled by static reading.
+- WINH03-AUD-11 — [PARTIAL] — LOW — Desktop `powerMonitor.on('resume')` (`apps/desktop/electron/main.ts` L6846–6847); no serve-side OS-sleep handler; loopback WS ping disabled (`config_defaults.py` L945–948) — sleep/wake misfire of the orphan timer is `[UNVERIFIED]`.
+- WINH03-AUD-12 — [RISK] — MEDIUM — `tui_gateway/contracts/server_requests.py`; `_ask` L1306; approval 300s / clarify 3600s / sudo 120s — missing handlers time out then skip/deny at defaults; clarify `timeout <= 0` can wait forever.
+- WINH03-AUD-13 — [MATCH] — LOW — `apps/desktop/package.json` L95 and `web/package.json` L18 `"@hermes/shared": "file:…"` — consumable outside the Hermes workspace via a relative `file:` dependency; still un-semvered (`WINH02-AUD-02`).
