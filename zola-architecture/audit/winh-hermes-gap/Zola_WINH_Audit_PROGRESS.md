@@ -43,8 +43,8 @@ WINH01 setup note: this workspace had no `.git` when the prompt started. `main` 
 - WINH07 — Authority, Governance & Routing — COMPLETE — commit `935aaba0f7ee0950f9f4479076abe1b9451f68ff`
 - WINH08 — Tool Calling, Subagents & Scheduled Automation — COMPLETE — commit `a071ea807100afa42bafba36031a6070f3626542`
 - WINH09 — Voice Pipeline & Voice Identity — COMPLETE — commit `463667f4d3782dd3b23bb5c2362a5e088987aa5d`
-- WINH10 — Messaging Surfaces — COMPLETE
-- WINH11 — Windows Security & Deployment — PENDING
+- WINH10 — Messaging Surfaces — COMPLETE — commit `b946ad0b630540bb935aa805db28a0518b2319f7`
+- WINH11 — Windows Security & Deployment — COMPLETE
 - WINH12 — Relational Intelligence & Model Provider Flexibility — PENDING
 - WINH00 — Synthesis + Closeout — PENDING
 
@@ -177,6 +177,18 @@ Document of Truth: `Zola_Communication_Intelligence_Architecture.md` (email + SM
 - [Zola_WINH10_Audit_06_Synthesis.md](./Zola_WINH10_Audit_06_Synthesis.md)
 
 WINH10 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH10: `463667f4d3782dd3b23bb5c2362a5e088987aa5d` (`winh-hermes-audit`). Pre-audit “no SMS/Twilio in tools/” was incomplete: Twilio SMS and IMAP/SMTP email are `plugins/platforms/sms` and `email`. `send_message` is not model-callable; live gateway replies still send autonomously. No SmsSignal/EmailSignal pipeline. 12 findings (3 HIGH, 6 MEDIUM, 2 LOW, 1 OBSERVATION).
+
+## Windows security & deployment (WINH11 Phase 2–6)
+
+Document of Truth: Privacy Plan §9 Encryption/Storage/Access (core); §7 Provider Abstraction privacy line (credentials only, not swapability); §6 auth-before-data-management sentence lives at §9 L535. Master Plan §13 cited via `WINH07-AUD-05`–`08`, not re-derived. Half B: no dedicated Zola deployment doc — inventory labels (`[MECHANISM]`/`[RISK]`/`[ABSENT]`/`[UNVERIFIED]`) per WINH06. Distributed Presence E2E out of series. Do not re-audit WINH01 CLI install, WINH02-AUD-04 session token (cite), WINH07/08 approvals.
+
+- [Zola_WINH11_Audit_02_SecretsStorage.md](./Zola_WINH11_Audit_02_SecretsStorage.md)
+- [Zola_WINH11_Audit_03_TransitAndThirdParty.md](./Zola_WINH11_Audit_03_TransitAndThirdParty.md)
+- [Zola_WINH11_Audit_04_DesktopBuildAndUpdate.md](./Zola_WINH11_Audit_04_DesktopBuildAndUpdate.md)
+- [Zola_WINH11_Audit_05_ProcessPosture.md](./Zola_WINH11_Audit_05_ProcessPosture.md)
+- [Zola_WINH11_Audit_06_Synthesis.md](./Zola_WINH11_Audit_06_Synthesis.md)
+
+WINH11 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-agent` = `345cd2b057a452236de401d3534b8502a7465e8d` (match, tag `v2026.9.14`). Branch HEAD at start of WINH11: `b946ad0b630540bb935aa805db28a0518b2319f7` (`winh-hermes-audit`). Recorded scope decisions still present (fresh-start, Cognitive Engine exclusion, Environmental Awareness). Pre-audit claims verified: `signAndEditExecutable: false` plus `install.ps1` CSC disabled (unsigned Windows, not CI-signed); NSIS `perMachine: false` / `oneClick: false`; custom `windows.ps1` → `hermes update` (not electron-updater); `.env` plaintext, vault Fernet with co-located key, `state.db` plain `sqlite3.connect`. 22 findings (7 HIGH, 10 MEDIUM, 5 LOW).
 
 ## Running findings list
 
@@ -328,3 +340,25 @@ WINH10 Hermes pin re-check: `git rev-parse HEAD` at `C:\Users\test\Dev\hermes-ag
 - WINH10-AUD-11 — [MATCH] — LOW — `toolsets.py` L202–240; `send_message_tool.py` L568–588 — Broad chat-platform coverage; WhatsApp/Signal/Twilio for “text”.
 - WINH10-AUD-12 — [OBSERVATION] — — Twilio plugin; Phone Link / CPaaS / defer — Windows SMS options; not a Hermes score.
 - WINH10-AUD-13 — [RISK] — MEDIUM — `session.py` transcripts; cite `WINH04-AUD-02`/`06` — Comms bodies persist like any other turn.
+- WINH11-AUD-01 — [GAP] — HIGH — `env_loader.py` L321–372; `secret_scope.py` L111–138 — provider keys live in plaintext `<HERMES_HOME>/.env`.
+- WINH11-AUD-02 — [PARTIAL] — MEDIUM — `vault_store.py` L187–260 — autofill vault is Fernet; `vault.key` sits beside `vault.json.enc`.
+- WINH11-AUD-03 — [PARTIAL] — MEDIUM — `secret-storage-policy.ts` L13–65 — Desktop `safeStorage` (DPAPI) exists, default OFF, tokens only.
+- WINH11-AUD-04 — [GAP] — HIGH — `hermes_state.py` L675–681; `hermes_state_dbfile.py` L553–566 — `state.db` is plain `sqlite3.connect`.
+- WINH11-AUD-05 — [GAP] — HIGH — `learning_graph.py` L130–134; `state.db` — memory markdown + session DB unencrypted at rest.
+- WINH11-AUD-06 — [PARTIAL] — MEDIUM — `web_server.py` L304–311, L457–464, L636–655 — data-mgmt gate is ephemeral SPA token, not user auth (cite `WINH02-AUD-04`).
+- WINH11-AUD-07 — [GAP] — MEDIUM — cite `WINH04-AUD-11` — DWA still absent; §9 write-gate unmet.
+- WINH11-AUD-08 — [PARTIAL] — MEDIUM — `process_bootstrap.py` L387–436; `providers.py` L41 — default `verify=True`; `http://` base_url allowed; no TLS 1.2 pin.
+- WINH11-AUD-09 — [GAP] — LOW — Privacy Plan §9 L518; series scope — Distributed Presence E2E out of series (N/A, not scratch).
+- WINH11-AUD-10 — [RISK] — HIGH — `mcp_tool_config.py` `_build_safe_env` L96–118 — secret-source credentials copied into MCP child env.
+- WINH11-AUD-11 — [PARTIAL] — MEDIUM — `credential_files.py` L63–98; cite `WINH06-AUD-11`/`13` — master stores blocked; no separate Tier 1/2 grant.
+- WINH11-AUD-12 — [RISK] — HIGH — `package.json` L288; `install.ps1` L4149–4160 — Windows Desktop is built unsigned.
+- WINH11-AUD-13 — [RISK] — MEDIUM — nsis block; no `deleteAppDataOnUninstall` — uninstall leaves `HERMES_HOME` / credentials / `state.db`.
+- WINH11-AUD-14 — [ABSENT] — HIGH — searched `.github/workflows`; `notarize.mjs` L54 — no Windows Authenticode/CI signing.
+- WINH11-AUD-15 — [MECHANISM] — MEDIUM — `updater-process.ts`; `windows.ps1`; `update_cmd.py` — custom git/zip update, not electron-updater.
+- WINH11-AUD-16 — [RISK] — HIGH — `update_cmd_zip.py` L382; git path (no verify) — no commit-sig / zip checksum on updates.
+- WINH11-AUD-17 — [MECHANISM] — LOW — `package.json` L300–303 — NSIS per-user, `oneClick: false`.
+- WINH11-AUD-18 — [MECHANISM] — LOW — `package.json` L284–307 — NSIS+MSI targets; MSI extras unverified.
+- WINH11-AUD-19 — [MECHANISM] — MEDIUM — `session-windows.ts` L46–57 — Electron `contextIsolation` + `sandbox` + `nodeIntegration: false`.
+- WINH11-AUD-20 — [RISK] — MEDIUM — `windows-sandbox-fallback.ts` L15–22 — Windows can fall back to `--no-sandbox`.
+- WINH11-AUD-21 — [MECHANISM] — LOW — `config_defaults.py` L2279; `vercel_sandbox.py` L44–46 — no always-on Hermes telemetry.
+- WINH11-AUD-22 — [MECHANISM] — LOW — `gateway_windows.py` L152–189 — runs as user; UAC only for gateway task install.
