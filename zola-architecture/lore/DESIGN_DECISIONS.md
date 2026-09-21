@@ -53,3 +53,41 @@ at the end.
   `OPEN_QUESTIONS.md` are maintained incrementally through Decisions
   Locked rather than assembled once at the end.
 - **C12 — No independent content.** Pointer only to `S9`/`S11`/`C7`.
+## Scope / deferral
+- **S1 — Voice identity (voiceprint system): deferred, revisit later.**
+  No per-speaker voice recognition for v1 — voice input is treated as
+  coming from "the user" (reasonable given a Windows PC is already
+  single-user via OS login). Nothing in Hermes to extend here (`WINH09`
+  confirmed a full capability gap); building this later means a new
+  external integration (e.g. Azure Speaker Recognition), not a modification
+  of existing STT/TTS plumbing. Documented as a candidate to revisit as
+  the product evolves, not ruled out permanently.
+- **S2 — Relational Intelligence Layer: deferred.** Full five-subsystem
+  build is too much for v1. Revisit once the foundation (Temporal
+  Reasoning, Self-Model Awareness) is solid.
+- **S3 — Calibration: blocked.** Stays blocked until the underlying SMA
+  confidence/correction-signal gaps close. No standalone proxy for v1.
+- **S4 — "Text the user" channel: deferred**, with intent recorded for
+  later: the real requirement is Zola proactively surfacing/reminding
+  the user about incoming texts needing attention — not necessarily a
+  full send-capable channel. When this is picked back up, scope it as a
+  notification/awareness feature first, and reassess whether a
+  send-capable channel (Twilio SMS, already available in Hermes, vs
+  WhatsApp/Signal) is needed at all.
+- **S5 — Full-duplex voice transport: moot, not a Windows-track
+  requirement.** Hermes's chained STT→Reasoning→TTS mode already matches
+  the current sequential model; GPT-Live is OpenAI-based, not the
+  Gemini-Live style used on Android. `WINH09-AUD-07` treated as a
+  non-issue for Windows.
+- **S6 — Warm-start/speculation cache: deferred.** Accept less
+  speculative behavior than the Android Agent Map for now; revisit if
+  responsiveness becomes a real problem on Windows/Hermes.
+- **S7 — Scheduled work: use Hermes cron.** Use Hermes's existing cron
+  for prepare/brief-style scheduled work rather than a separate Zola
+  sidecar. Fall back to the sidecar approach in a later version only if
+  cron doesn't meet actual needs (cron jobs run as full unsupervised
+  `run_conversation`s — a known authority-shape tradeoff, accepted for
+  now).
+- **S8 — On-box training loop: confirmed non-goal, no decision needed.**
+  Rest of the WINH06 Section 4 scratch-vs-inherit question remains
+  blocked on `C9` (capability-acquisition architecture doc).

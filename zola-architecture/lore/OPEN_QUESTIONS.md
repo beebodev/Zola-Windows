@@ -3,25 +3,6 @@ Remaining Decisions-Locked items from `Zola_WINH00_MasterSynthesis.md`
 Section 5, not yet resolved. Resolved items move to
 `DESIGN_DECISIONS.md` and are removed from here. IDs match the master
 synthesis document.
-## Scope / deferral
-- **S1** — Voice identity (voiceprint system): in scope or deferred?
-- **S2** — Relational Intelligence Layer: full five-subsystem build, or
-  defer some subsystems (Calibration in particular)?
-- **S3** — Calibration vs SMA: blocked until SMA gaps close, or a
-  standalone proxy for v1?
-- **S4** — Literal SMS / "text the user" channel: Twilio SMS, WhatsApp/
-  Signal, or deferred?
-- **S5** — Full-duplex voice transport: an actual Windows-track
-  requirement, or zola-main/Android-only (making `WINH09-AUD-07` a
-  non-issue for Windows)?
-- **S6** — Warm-start/speculation cache vs accepting less speculative
-  behavior than the Android Agent Map?
-- **S7** — Use Hermes cron for scheduled work, or keep time-triggered
-  prepare/brief in a Zola sidecar with Hermes cron off?
-- **S8** — Partially resolved: on-box training loop is a confirmed
-  non-goal (accepted absence). Rest of WINH06 Section 4 (scratch vs
-  inherit) is blocked on `C9` (capability-acquisition architecture doc).
-*(S9, S10, S11 are resolved/closed — see note at bottom.)*
 ## Security / hardening
 - **H1** — Code signing: does Zola-Windows need its own Authenticode
   cert + signing step before real distribution? (Fact: this Hermes tag
@@ -81,8 +62,4 @@ synthesis document.
   close, draft the capability-acquisition and tool-authorization
   architecture documents before writing the Build Plan.
 ---
-*Resolved: C1–C12 except pending items above — see `DESIGN_DECISIONS.md`.
-S9 (environmental perception) — recorded scope decision, closed, not
-reopened. S10 (Distributed Presence E2E) — N/A for this series, not a
-Zola-Windows build item. S11 (identity-memory pointer) — superseded by
-C5 (identity assembly) and C7 (Layer 5 deferred).*
+*Resolved: C1–C12, S1–S11 — see DESIGN_DECISIONS.md.*
