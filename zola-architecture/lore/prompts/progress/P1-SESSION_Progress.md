@@ -2,9 +2,11 @@
 
 ## Branch
 
-- Branch: `track3-session-wrap`
+- Branch: `track3-session-wrap` (merged into `main` and deleted)
 - Base SHA: `b42ff44a0ddc29c5b9c1d53d6791ce0a0620638f`
 - Feature commit SHA: `96c8c2b10e3cca7425a27678c13050feacdb1803`
+- Branch tip merged: `af63757333ab33af844b4027f658c143f633bc58`
+- Merge commit SHA on `main`: `eecd72821d31587a824f55b97892c9f1a7841483`
 
 ## Phase status
 
@@ -50,7 +52,8 @@ Phase 4: developer reported "smoke test passed" (session listed with a last-acti
 - Existing tests: N/A. This project has no automated test suite.
 - No lore files were updated.
 - Feature commit SHA: `96c8c2b10e3cca7425a27678c13050feacdb1803`
-- Merge commit SHA on `main`: recorded after the merge.
+- Branch tip merged: `af63757333ab33af844b4027f658c143f633bc58`
+- Merge commit SHA on `main`: `eecd72821d31587a824f55b97892c9f1a7841483`
 
 ## Files
 
