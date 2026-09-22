@@ -16,9 +16,13 @@ sealed class ChatSocket : IDisposable
     private readonly Dictionary<int, TaskCompletionSource<RpcReply>> _pending = new();
     private readonly object _pendingGate = new();
 
+    private readonly SemaphoreSlim _open = new(1, 1);
     private ClientWebSocket? _socket;
+    private Task _reader = Task.CompletedTask;
     private int _nextId;
     private int _faulted;
+    private int _suppressFault;
+    private int _healthStarted;
 
     public ChatSocket(HermesProcessManager backend)
     {
@@ -46,55 +50,127 @@ sealed class ChatSocket : IDisposable
 
     public event Action<string>? Unreachable;
 
-    public async Task StartAsync()
+    public Task StartAsync()
     {
-        // P1-CLIENT: connect with ?token= then session.create once before any prompt.submit — P1-D01
+        // P1-SESSION: launch still asks the server for a new id; the client does not mint one — P1-D04
+        return OpenAsync("session.create", new Dictionary<string, string?>());
+    }
+
+    public Task BeginNewSessionAsync()
+    {
+        // P1-SESSION: a new session is a fresh /api/ws plus session.create, which assigns both ids — P1-D04
+        return OpenAsync("session.create", new Dictionary<string, string?>());
+    }
+
+    public Task ResumeStoredAsync(string storedSessionId)
+    {
+        // P1-SESSION: session.resume takes the stored id and returns a new runtime session_id — P1-D04
+        return OpenAsync("session.resume", new Dictionary<string, string?>
+        {
+            ["session_id"] = storedSessionId,
+        });
+    }
+
+    private async Task OpenAsync(string method, Dictionary<string, string?> parameters)
+    {
+        // P1-SESSION: replace the previous socket so create and resume do not share one runtime session — P1-D04
         if (_backend.Port is not int port || port <= 0 || string.IsNullOrEmpty(_backend.SessionToken))
         {
             throw new ChatUnreachableException("Backend unreachable. The health gate is still closed.");
         }
 
-        var socket = new ClientWebSocket();
-        socket.Options.Proxy = null;
-        _socket = socket;
-        var uri = new Uri($"ws://{ZolaServeCommand.BindHost}:{port}/api/ws?token={Uri.EscapeDataString(_backend.SessionToken)}");
+        await _open.WaitAsync(_lifetime.Token).ConfigureAwait(false);
         try
         {
-            await socket.ConnectAsync(uri, _lifetime.Token).ConfigureAwait(false);
+            Interlocked.Exchange(ref _suppressFault, 1);
+            AbandonPending();
+            var previous = _socket;
+            _socket = null;
+            SessionId = null;
+            try
+            {
+                previous?.Abort();
+            }
+            catch (WebSocketException)
+            {
+            }
+
+            try
+            {
+                await _reader.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+            }
+
+            var socket = new ClientWebSocket();
+            socket.Options.Proxy = null;
+            var uri = new Uri($"ws://{ZolaServeCommand.BindHost}:{port}/api/ws?token={Uri.EscapeDataString(_backend.SessionToken)}");
+            try
+            {
+                await socket.ConnectAsync(uri, _lifetime.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is WebSocketException or InvalidOperationException or OperationCanceledException)
+            {
+                // P1-SESSION: a failed upgrade still means the backend is unreachable — P1-D04
+                Interlocked.Exchange(ref _suppressFault, 0);
+                Fault(ex.Message);
+                throw new ChatUnreachableException("Backend unreachable. /api/ws did not connect.");
+            }
+
+            Interlocked.Exchange(ref _suppressFault, 0);
+            _socket = socket;
+            _reader = Task.Run(() => ReadLoopAsync());
+            if (Interlocked.Exchange(ref _healthStarted, 1) == 0)
+            {
+                _ = Task.Run(WatchHealthAsync);
+            }
+
+            RpcReply greeted;
+            try
+            {
+                greeted = await CallAsync(method, parameters).ConfigureAwait(false);
+            }
+            catch (ChatUnreachableException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Fault(ex.Message);
+                throw new ChatUnreachableException("Backend unreachable. " + method + " was not answered.");
+            }
+
+            if (!greeted.Ok || string.IsNullOrEmpty(greeted.SessionId))
+            {
+                // P1-SESSION: without a runtime session id the composer stays closed — P1-D04
+                throw new InvalidOperationException(greeted.Error ?? method + " did not return a session id.");
+            }
+
+            SessionId = greeted.SessionId;
+            StoredSessionId = greeted.StoredSessionId ?? parameters.GetValueOrDefault("session_id") ?? "";
+            SessionReady?.Invoke(SessionId, StoredSessionId);
         }
-        catch (Exception ex) when (ex is WebSocketException or InvalidOperationException or OperationCanceledException)
+        finally
         {
-            // P1-CLIENT: a failed upgrade is the unreachable state, not a hung composer — P1-D01
-            Fault(ex.Message);
-            throw new ChatUnreachableException("Backend unreachable. /api/ws did not connect.");
+            _open.Release();
+        }
+    }
+
+    private void AbandonPending()
+    {
+        // P1-SESSION: RPCs on the socket being replaced are cancelled, not reported as an unreachable backend — P1-D04
+        List<TaskCompletionSource<RpcReply>> waiters;
+        lock (_pendingGate)
+        {
+            waiters = _pending.Values.ToList();
+            _pending.Clear();
         }
 
-        _ = Task.Run(ReadLoopAsync);
-        _ = Task.Run(WatchHealthAsync);
-        RpcReply created;
-        try
+        foreach (var waiter in waiters)
         {
-            created = await CallAsync("session.create", new Dictionary<string, string?>()).ConfigureAwait(false);
+            waiter.TrySetCanceled();
         }
-        catch (ChatUnreachableException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Fault(ex.Message);
-            throw new ChatUnreachableException("Backend unreachable. session.create was not answered.");
-        }
-
-        if (!created.Ok || string.IsNullOrEmpty(created.SessionId))
-        {
-            // P1-CLIENT: without a stored session id the composer stays closed — P1-D01
-            throw new InvalidOperationException(created.Error ?? "session.create did not return a session id.");
-        }
-
-        SessionId = created.SessionId;
-        StoredSessionId = created.StoredSessionId ?? "";
-        SessionReady?.Invoke(SessionId, StoredSessionId);
     }
 
     public async Task SubmitAsync(string text)
@@ -159,6 +235,7 @@ sealed class ChatSocket : IDisposable
 
         _lifetime.Dispose();
         _send.Dispose();
+        _open.Dispose();
     }
 
     private async Task<RpcReply> CallAsync(string method, Dictionary<string, string?> parameters)
@@ -302,6 +379,12 @@ sealed class ChatSocket : IDisposable
 
                 if (!ok)
                 {
+                    // P1-SESSION: replacing the socket must not stop the health watch — P1-D04
+                    if (Volatile.Read(ref _suppressFault) != 0)
+                    {
+                        continue;
+                    }
+
                     Fault("GET /api/health failed");
                     return;
                 }
@@ -417,6 +500,12 @@ sealed class ChatSocket : IDisposable
 
     private void Fault(string reason)
     {
+        // P1-SESSION: aborting the previous socket for create or resume is not a dead backend — P1-D04
+        if (Volatile.Read(ref _suppressFault) != 0)
+        {
+            return;
+        }
+
         if (Interlocked.Exchange(ref _faulted, 1) != 0)
         {
             return;
@@ -463,7 +552,8 @@ sealed class ChatSocket : IDisposable
             null,
             ReadString(result, "status"),
             ReadString(result, "session_id"),
-            ReadString(result, "stored_session_id"));
+            // P1-SESSION: session.create returns stored_session_id; session.resume returns session_key — P1-D04
+            ReadString(result, "stored_session_id") ?? ReadString(result, "session_key") ?? ReadString(result, "resumed"));
     }
 
     private static string? DeltaChunk(JsonElement payload)

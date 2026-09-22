@@ -13,14 +13,57 @@
         </Grid.RowDefinitions>
         <!-- P1-CLIENT: readiness and non-chat socket notes stay outside the transcript — P1-D01 -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="Zola" Style="{StaticResource TitleTextBlockStyle}" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Zola" Style="{StaticResource TitleTextBlockStyle}" />
+                <!-- P1-SESSION: the session list stays hidden until this toggle is used — P1-D04 -->
+                <Button x:Name="SessionsButton" Grid.Column="1" Click="OnSessionsToggle" Content="Sessions" IsEnabled="False" />
+            </Grid>
             <TextBlock x:Name="StatusText" TextWrapping="WrapWholeWords" />
             <TextBlock x:Name="DetailText" TextWrapping="WrapWholeWords" Opacity="0.8" />
         </StackPanel>
         <!-- P1-CLIENT: the transcript is the response area message.start prepares and deltas fill — P1-D01 -->
-        <ScrollViewer x:Name="TranscriptScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel x:Name="Transcript" Spacing="8" />
-        </ScrollViewer>
+        <Grid Grid.Row="1" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ScrollViewer x:Name="TranscriptScroll" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="Transcript" Spacing="8" />
+            </ScrollViewer>
+            <!-- P1-SESSION: the list sits beside the chat and is collapsed until the toggle opens it — P1-D04 -->
+            <Border x:Name="SessionPanel" Grid.Column="1" Width="300" Padding="12" Visibility="Collapsed" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="1">
+                <Grid RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Sessions" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <Grid Grid.Row="1">
+                        <TextBlock x:Name="EmptySessionsText" Text="No saved sessions yet." TextWrapping="WrapWholeWords" Opacity="0.8" />
+                        <ListView x:Name="SessionList" IsItemClickEnabled="True" SelectionMode="None" ItemClick="OnSessionItemClick">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Spacing="2" Padding="0,4">
+                                        <TextBlock Text="{Binding Id}" TextWrapping="WrapWholeWords" />
+                                        <TextBlock Text="{Binding LastActiveText}" Opacity="0.7" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                    <StackPanel Grid.Row="2" Spacing="8">
+                        <!-- P1-SESSION: new session uses session.create on a fresh socket and shows the returned id — P1-D04 -->
+                        <Button x:Name="NewSessionButton" HorizontalAlignment="Stretch" Click="OnNewSessionClick" Content="New session" IsEnabled="False" />
+                        <Button x:Name="CloseSessionsButton" HorizontalAlignment="Stretch" Click="OnCloseSessionsClick" Content="Close" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
         <!-- P1-CLIENT: Send calls prompt.submit; Cancel calls session.interrupt — P1-D01 -->
         <Grid Grid.Row="2" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
