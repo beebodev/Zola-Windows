@@ -24,6 +24,11 @@ public sealed partial class MainWindow : Window
     private int _orphanInterruptedCompletes;
     private string _sessionDetail = "";
     private string? _routedNote;
+    private bool _sessionsOpen;
+    private bool _historyPending;
+    private bool _switchInFlight;
+    private readonly Dictionary<string, SessionRow> _sessionRows = new();
+    private readonly HashSet<string> _serverSessionIds = new();
 
     public MainWindow(HermesProcessManager backend)
     {
@@ -90,11 +95,21 @@ public sealed partial class MainWindow : Window
     private void OnSessionReady(string sessionId, string storedId)
     {
         // P1-CLIENT: store both ids once; later sends reuse them so the agent keeps context — P1-D01
-        _sessionReady = true;
-        StatusText.Text = "Session ready.";
         _sessionDetail = $"session {sessionId} · stored {storedId}";
         // P1-CLIENT: an error event can arrive before session.create's result; keep it beside the ids — P1-D01
         DetailText.Text = _routedNote is null ? _sessionDetail : _routedNote + Environment.NewLine + _sessionDetail;
+        // P1-SESSION: show the stored id as soon as session.create or session.resume acknowledges it — P1-D04
+        NoteAcknowledgedSession(storedId);
+        if (_historyPending)
+        {
+            // P1-SESSION: resume keeps the composer off until the fetched turns are on screen — P1-D04
+            StatusText.Text = "Loading earlier turns…";
+            UpdateChrome();
+            return;
+        }
+
+        _sessionReady = true;
+        StatusText.Text = "Session ready.";
         Composer.PlaceholderText = "Message";
         UpdateChrome();
     }
@@ -403,10 +418,218 @@ public sealed partial class MainWindow : Window
     private void UpdateChrome()
     {
         // P1-CLIENT: the composer is usable only with a session, no live turn, and a live backend — P1-D01
-        var canType = _sessionReady && !_streaming && !_unreachable;
+        var canType = _sessionReady && !_streaming && !_unreachable && !_switchInFlight && !_historyPending;
         Composer.IsEnabled = canType;
         SendButton.IsEnabled = canType && Composer.Text.Trim().Length > 0;
         CancelButton.IsEnabled = _streaming && !_unreachable;
+        // P1-SESSION: the list can open beside a live chat; create and resume wait until the turn is idle — P1-D04
+        var backendUp = _backend.WebSocketPermitted && !_unreachable && !_switchInFlight;
+        SessionsButton.IsEnabled = backendUp;
+        NewSessionButton.IsEnabled = backendUp && !_streaming && !_historyPending;
+    }
+
+    private async void OnSessionsToggle(object sender, RoutedEventArgs e)
+    {
+        // P1-SESSION: the same control opens and closes the list; the chat column stays in place — P1-D04
+        if (_sessionsOpen)
+        {
+            HideSessions();
+            return;
+        }
+
+        _sessionsOpen = true;
+        SessionPanel.Visibility = Visibility.Visible;
+        BindSessions();
+        try
+        {
+            var listed = await SessionCatalog.ListAsync(_backend, CancellationToken.None).ConfigureAwait(false);
+            Dispatch(() => ApplyServerSessions(listed));
+        }
+        catch (Exception ex)
+        {
+            Dispatch(() =>
+            {
+                DetailText.Text = ex.Message;
+                BindSessions();
+            });
+        }
+    }
+
+    private void OnCloseSessionsClick(object sender, RoutedEventArgs e)
+    {
+        // P1-SESSION: the panel's own close control hides the list and returns focus to the composer — P1-D04
+        HideSessions();
+    }
+
+    private void HideSessions()
+    {
+        // P1-SESSION: hiding the list leaves the transcript where it was and focuses the composer — P1-D04
+        _sessionsOpen = false;
+        SessionPanel.Visibility = Visibility.Collapsed;
+        Composer.Focus(FocusState.Programmatic);
+    }
+
+    private async void OnNewSessionClick(object sender, RoutedEventArgs e)
+    {
+        if (_switchInFlight || _streaming || _unreachable || _historyPending)
+        {
+            return;
+        }
+
+        // P1-SESSION: session.create on a fresh socket; the returned stored id is listed before any prompt — P1-D04
+        _switchInFlight = true;
+        _historyPending = false;
+        _sessionReady = false;
+        ClearTranscript();
+        StatusText.Text = "Starting a new session…";
+        UpdateChrome();
+        try
+        {
+            await _chat.BeginNewSessionAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            var message = ex.Message;
+            var stillLive = !string.IsNullOrEmpty(_chat.SessionId);
+            Dispatch(() =>
+            {
+                _sessionReady = stillLive;
+                StatusText.Text = message;
+            });
+        }
+        finally
+        {
+            Dispatch(() =>
+            {
+                _switchInFlight = false;
+                UpdateChrome();
+            });
+        }
+    }
+
+    private async void OnSessionItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not SessionRow row || _switchInFlight || _streaming || _unreachable || _historyPending)
+        {
+            return;
+        }
+
+        if (row.Id == _chat.StoredSessionId && _sessionReady)
+        {
+            // P1-SESSION: the session already on screen only closes the panel — P1-D04
+            HideSessions();
+            return;
+        }
+
+        // P1-SESSION: load messages before the socket swap so a missing session leaves the current chat up — P1-D04
+        _switchInFlight = true;
+        _historyPending = true;
+        _sessionReady = false;
+        StatusText.Text = "Resuming session…";
+        UpdateChrome();
+        var resumed = false;
+        try
+        {
+            var turns = await SessionCatalog.MessagesAsync(_backend, row.Id, CancellationToken.None).ConfigureAwait(false);
+            await _chat.ResumeStoredAsync(row.Id).ConfigureAwait(false);
+            resumed = true;
+            Dispatch(() =>
+            {
+                ClearTranscript();
+                foreach (var turn in turns)
+                {
+                    AddBubble(turn.Role == "user" ? "You" : "Zola", turn.Text, turn.Role == "user");
+                }
+
+                _historyPending = false;
+                _sessionReady = true;
+                _switchInFlight = false;
+                StatusText.Text = "Session ready.";
+                Composer.PlaceholderText = "Message";
+                UpdateChrome();
+                HideSessions();
+            });
+        }
+        catch (Exception ex)
+        {
+            var message = ex.Message;
+            var keepCurrent = !resumed && !string.IsNullOrEmpty(_chat.SessionId);
+            Dispatch(() =>
+            {
+                _historyPending = false;
+                _sessionReady = keepCurrent;
+                StatusText.Text = message;
+            });
+        }
+        finally
+        {
+            Dispatch(() =>
+            {
+                _switchInFlight = false;
+                UpdateChrome();
+            });
+        }
+    }
+
+    private void ApplyServerSessions(IReadOnlyList<SessionListItem> listed)
+    {
+        // P1-SESSION: replace list times from GET /api/sessions and keep an acknowledged id the server has not stored yet — P1-D04
+        _serverSessionIds.Clear();
+        foreach (var item in listed)
+        {
+            _serverSessionIds.Add(item.Id);
+            _sessionRows[item.Id] = SessionRow.FromServer(item);
+        }
+
+        var live = _chat.StoredSessionId;
+        foreach (var id in _sessionRows.Keys.ToList())
+        {
+            if (!_serverSessionIds.Contains(id) && id != live)
+            {
+                _sessionRows.Remove(id);
+            }
+        }
+
+        BindSessions();
+    }
+
+    private void NoteAcknowledgedSession(string storedId)
+    {
+        // P1-SESSION: the server-assigned stored id is visible in the list as soon as the RPC returns — P1-D04
+        if (string.IsNullOrEmpty(storedId))
+        {
+            return;
+        }
+
+        if (!_sessionRows.ContainsKey(storedId))
+        {
+            _sessionRows[storedId] = SessionRow.JustAcknowledged(storedId);
+        }
+
+        if (_sessionsOpen)
+        {
+            BindSessions();
+        }
+    }
+
+    private void BindSessions()
+    {
+        // P1-SESSION: the open panel shows stored id and last-activity text, newest activity first — P1-D04
+        var rows = _sessionRows.Values.OrderByDescending(row => row.SortKey).ToList();
+        SessionList.ItemsSource = rows;
+        var empty = rows.Count == 0;
+        EmptySessionsText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        SessionList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ClearTranscript()
+    {
+        // P1-SESSION: new and resumed sessions do not keep the previous transcript on screen — P1-D04
+        Transcript.Children.Clear();
+        _live = null;
+        _streaming = false;
+        _turnFinalized = true;
+        _orphanInterruptedCompletes = 0;
     }
 
     private void ScrollToEnd()
