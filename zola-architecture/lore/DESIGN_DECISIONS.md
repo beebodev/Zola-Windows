@@ -120,6 +120,16 @@ at the end.
   becomes the real source of truth and projects a curated summary down
   into MEMORY.md's flat entries so Hermes's existing prompt-injection
   mechanism keeps working unchanged.
+- **S15 — Gmail OAuth (Google API), replacing the app-password
+  adapter: deferred, stated long-term target.** *(Newly clarified
+  while scoping Track 5 for the Build Plan — not in the original
+  WINH00 Section 5 list.)* App passwords require a 2FA-enabled Google
+  account and are IMAP/SMTP-based (polling, not push); real Gmail API
+  + OAuth would be a proper long-term integration but is real
+  engineering, not a v1-sized task. Revisit once Phase 1's
+  foundational tracks are working, or sooner if the app-password path
+  breaks (Google tightens or removes app-password support for the
+  account in use).
 - **S13 — Reading incoming SMS: not deferred, needs research.**
   *(Newly discovered during the architecture-doc annotation pass — not
   in the original WINH00 Section 5 list.)* Distinct from `S4` (Zola
@@ -141,11 +151,18 @@ at the end.
 - **P2 — TTS/STT: Edge (free) for now.** ElevenLabs revisited later
   once there's a working baseline to compare quality/cost/latency
   against. Not a capability gap either way — Hermes supports both.
-- **P3 — Email channel: Gmail, via Hermes's dedicated Gmail connector**
-  (`connections_tool`/himalaya) — not generic IMAP/SMTP, and not
-  Outlook/Graph Mail. All of the user's accounts flow into a single
-  Gmail inbox. Exact wiring/OAuth setup to be confirmed as functional
-  during the Build Plan / track execution stage.
+- **P3 — Email: Gmail via the existing generic email platform adapter
+  (IMAP/SMTP, app password), OAuth deferred (see `S15`).** Corrected
+  from the original "Hermes dedicated connector" framing after
+  inspecting the repo: no dedicated/native Gmail connector exists.
+  `plugins/platforms/email/` is a generic IMAP/SMTP platform adapter
+  (poll inbox via IMAP, send via SMTP), authenticated with an app
+  password, not OAuth — Gmail is referenced only as an example host
+  (`smtp.gmail.com`/`imap.gmail.com`). For v1: configure this adapter
+  with a Gmail App Password (`EMAIL_ADDRESS`, `EMAIL_PASSWORD`,
+  `EMAIL_SMTP_HOST=smtp.gmail.com`, `EMAIL_IMAP_HOST=imap.gmail.com`)
+  — zero new engineering, works today, gated by the same two-step
+  confirmed-send pattern as `A1`.
 - **P4 — No external memory provider (Honcho/Hindsight or similar).**
   Consistent with `C4` (Zola extends her own MEMORY.md store). Closes
   off the `P-3P` (provider retention/stranding) risk category before
