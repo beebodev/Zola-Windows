@@ -4,7 +4,7 @@
 
 - Branch: `track1-client-scaffold`
 - Base SHA: `8bc3a3ca46f32f66a58558a7d271faabf609284c`
-- Tip SHA: `8bc3a3ca46f32f66a58558a7d271faabf609284c` (no commits yet; progress document is uncommitted)
+- Feature commit SHA: `b204830261c29f2a45ef2d327df2e00702daca9f`
 
 ## Phase status
 
@@ -59,7 +59,8 @@ Phase 5: developer reported "smoke test passed" (connected Zola profile, live "h
 
 - `dotnet build windows-client/Zola.Client/Zola.Client.csproj` succeeded with 0 warnings before the feature commit.
 - No automated test suite for this project.
-- Feature commit SHA and the merge commit SHA on `main` are recorded in the closeout commit that follows the merge.
+- Feature commit SHA: `b204830261c29f2a45ef2d327df2e00702daca9f`
+- Merge commit SHA on `main`: recorded after the merge.
 
 ## Files
 
