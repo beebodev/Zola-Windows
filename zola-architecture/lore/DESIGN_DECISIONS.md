@@ -91,6 +91,26 @@ at the end.
 - **S8 — On-box training loop: confirmed non-goal, no decision needed.**
   Rest of the WINH06 Section 4 scratch-vs-inherit question remains
   blocked on `C9` (capability-acquisition architecture doc).
+- **S12 — Daily Brief pipeline: not in v1.** *(Newly discovered during
+  the architecture-doc annotation pass — not in the original WINH00
+  Section 5 list.)* The proactive relationship-scoring / urgency-
+  heuristics / brief-assembly layer described in
+  `Zola_Communication_Intelligence_Architecture.md` and
+  `Zola_Sms_Intelligence_Architecture.md` (Daily Brief) is deferred.
+  Basic email and SMS read/send functionality is the v1 priority; the
+  Daily Brief pipeline is a later layer on top of that, once basics
+  work.
+- **S13 — Reading incoming SMS: not deferred, needs research.**
+  *(Newly discovered during the architecture-doc annotation pass — not
+  in the original WINH00 Section 5 list.)* Distinct from `S4` (Zola
+  *sending* texts as a notification channel — stays deferred): the
+  capability to *read* the user's own incoming text messages is a real
+  v1 goal. Android reads this natively via `Telephony.Sms.CONTENT_URI`;
+  Windows has no equivalent on-device access. Needs proper research
+  into a Windows-viable path (e.g. Microsoft Phone Link sync, a
+  Twilio-provisioned number, or another mechanism) before this can be
+  scoped or locked as a build decision. Tracked as an open research
+  item in `OPEN_QUESTIONS.md`, not resolved here.
 ## Provider / vendor
 - **P1 — Conversational model: configure existing adapters.** No
   custom provider work needed. Hermes's existing registry (Anthropic,
