@@ -41,14 +41,11 @@ at the end.
   transcripts) is not redacted. Weaker than P-CASCADE — an accepted
   posture for v1, to be stated explicitly (not left as a silent gap)
   wherever the product documents what "forget" does.
-- **C9/C10 — Write both missing architecture docs before the Build
-  Plan: Option A, locked.** A capability-acquisition architecture doc
-  (mirrors Memory Hierarchy / Identity & Personality docs, covers the
-  WINH06 domain that had no Document of Truth) and a tool-authorization
-  architecture doc (covers the WINH08 domain, same situation) both get
-  written before Stage 3. Drafting deferred until the Security (H1–H6)
-  and Authorization (A1–A9) buckets are locked, since both docs depend
-  on those answers.
+- **C9/C10 — Both architecture docs written.** `Zola_Capability_Acquisition_Architecture.md`
+  and `Zola_Tool_Authorization_Architecture.md` are written, covering
+  the WINH06 and WINH08 domains that had no Document of Truth during
+  the audit series. Drafted after `H1`–`H6` and `A1`–`A9` locked, per
+  the original plan.
 - **C11 — Lore tracking: created now.** This file, `ROADMAP.md`, and
   `OPEN_QUESTIONS.md` are maintained incrementally through Decisions
   Locked rather than assembled once at the end.

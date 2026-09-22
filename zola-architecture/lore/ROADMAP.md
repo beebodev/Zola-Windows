@@ -7,10 +7,9 @@ Status tracking for the Windows-native rebuild of Zola on Hermes Agent
    Merged to `main` at `da6c35fd997487db23bb15c08eb9056e28413e39`.
 2. ✅ **DECISIONS LOCKED** — complete. See `DESIGN_DECISIONS.md` for all
    resolved items (C1–C12, S1–S11, P1–P4, H1–H6, A1–A9).
-3. ⬜ **BUILD PLAN WRITTEN** — not started. Decisions Locked is complete;
-   unblocked to draft the two architecture docs called for in `C9`/`C10`
-   (capability-acquisition, tool-authorization), which are the immediate
-   next step before the Build Plan itself.
+3. ⬜ **BUILD PLAN WRITTEN** — Unblocked — capability-acquisition and
+   tool-authorization architecture docs are written (C9/C10). Build Plan
+   itself not yet started.
 4. ⬜ **TRACKS EXECUTED** — not started.
 5. ⬜ **VERIFICATION / SMOKE TEST** — not started.
 6. ⬜ **TRACK MERGED** — not started.
