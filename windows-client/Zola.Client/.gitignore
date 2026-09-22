@@ -1,0 +1,3 @@
+# P1-CLIENT: build output stays out of the track commit — P1-D01
+bin/
+obj/

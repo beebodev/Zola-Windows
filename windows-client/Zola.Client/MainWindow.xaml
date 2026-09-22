@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P1-CLIENT: chat surface over /api/ws; typing stays off until session.create returns — P1-D01 -->
+<Window
+    x:Class="Zola.Client.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Zola">
+    <Grid Padding="16" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <!-- P1-CLIENT: readiness and non-chat socket notes stay outside the transcript — P1-D01 -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="Zola" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock x:Name="StatusText" TextWrapping="WrapWholeWords" />
+            <TextBlock x:Name="DetailText" TextWrapping="WrapWholeWords" Opacity="0.8" />
+        </StackPanel>
+        <!-- P1-CLIENT: the transcript is the response area message.start prepares and deltas fill — P1-D01 -->
+        <ScrollViewer x:Name="TranscriptScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="Transcript" Spacing="8" />
+        </ScrollViewer>
+        <!-- P1-CLIENT: Send calls prompt.submit; Cancel calls session.interrupt — P1-D01 -->
+        <Grid Grid.Row="2" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox
+                x:Name="Composer"
+                Grid.Column="0"
+                AcceptsReturn="True"
+                IsEnabled="False"
+                MaxHeight="120"
+                PlaceholderText="Waiting for the session…"
+                TextWrapping="Wrap" />
+            <Button x:Name="SendButton" Grid.Column="1" MinWidth="88" VerticalAlignment="Bottom" Click="OnSendClick" Content="Send" IsEnabled="False" />
+            <Button x:Name="CancelButton" Grid.Column="2" MinWidth="88" VerticalAlignment="Bottom" Click="OnCancelClick" Content="Cancel" IsEnabled="False" />
+        </Grid>
+    </Grid>
+</Window>
