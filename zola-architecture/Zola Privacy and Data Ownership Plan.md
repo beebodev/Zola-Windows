@@ -300,6 +300,14 @@ A ghost memory is a deleted record that reappears because deletion was incomplet
 
 Forget means gone. Not demoted, not suppressed, not archived. When the user asks Zola to forget something, the only acceptable outcome is that it no longer exists in any layer, any cache, or any derived record.
 
+> **Windows Track (`C8`):** For Zola-Windows, "forget" is currently
+> scoped to MEMORY.md only, matching Hermes's default behavior —
+> `state.db` (raw session transcripts) is not part of the deletion
+> cascade described above. This is a known, accepted gap against the
+> guarantee above for v1, not a silent omission — it should be stated
+> explicitly wherever the product documents what "forget" does. See
+> `zola-architecture/lore/DESIGN_DECISIONS.md`.
+
 ---
 
 ## 5. Local Versus Cloud Processing
@@ -527,6 +535,19 @@ Define the minimum security requirements for data at rest and in transit so that
 - episodic memory must be encrypted at rest
 - behavioral preference data must be encrypted at rest
 - security camera-derived events must be encrypted at rest
+
+> **Windows Track (`H2`, `H4`, `C4`):** For Zola-Windows, BitLocker-at-
+> rest is accepted as satisfying both the general "platform-standard
+> encryption at minimum" requirement above and this memory-specific
+> "encrypted at rest" bullet — no application-level encryption (e.g.
+> SQLCipher) added for now (`H4`). No separate Windows Credential
+> Manager/DPAPI wrapping for secrets either; BitLocker is treated as
+> sufficient for a single-user machine (`H2`). This applies equally to
+> the extended MEMORY.md store Zola-Windows builds on top of Hermes's
+> own schema (`C4`) — the extension doesn't carry a stricter
+> encryption requirement than the base store. All of this is deferred
+> pending any future public or multi-user distribution — see
+> `zola-architecture/lore/DESIGN_DECISIONS.md`.
 
 ### Access Control
 

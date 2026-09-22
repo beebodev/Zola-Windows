@@ -139,6 +139,14 @@ Reduce perceived latency and support natural conversational timing.
 
 STT → Reasoning → TTS
 
+> **Windows Track (`S5`):** Full-duplex voice transport is not a
+> Windows-track requirement. Hermes's chained mode already matches
+> this current sequential model, and Hermes's native duplex option
+> (GPT-Live) is OpenAI-based — distinct from the Gemini-Live-style
+> duplex this document's long-term vision describes. Treated as a
+> non-issue for Windows, not a gap to close. See
+> `zola-architecture/lore/DESIGN_DECISIONS.md`.
+
 ### Long-Term Streaming Model
 
 - partial transcript interpretation
@@ -1006,6 +1014,12 @@ The phone already contains microphone and speaker access, notifications, messagi
 
 **Role:** The phone acts as the first persistent embodiment, the primary mobile interaction layer, and the contextual awareness hub.
 
+> **Windows Track (`C1`):** Zola-Windows is this document's "PC and
+> Desktop" endpoint (below), arriving first rather than later. Built
+> as a fresh native Windows client against Hermes's JSON-RPC /
+> `apps/shared` (Path B), running against `hermes serve` — not a fork
+> of Hermes's own desktop app, and not an HTTP-API-only client.
+
 ### Future Endpoint Expansion
 
 **PC and Desktop:**
@@ -1038,6 +1052,14 @@ The phone already contains microphone and speaker access, notifications, messagi
 All devices should share memory, conversational continuity, identity, personality state, and contextual understanding. The user should never feel like they are speaking to different assistants.
 
 Conversation should flow naturally between phone, PC, vehicle, and shop without restarting context, reintroducing topics, or losing continuity.
+
+> **Windows Track (`C3`):** For the Windows/PC endpoint specifically,
+> voice capture is single-owner — the native Windows client is the
+> sole JSON-RPC owner of mic/speaker capture for that endpoint,
+> consistent with the "one mind, many bodies" principle above. This
+> resolves capture ownership for the Windows endpoint only; the
+> broader cross-endpoint distributed-presence coordination this
+> section describes is a separate, larger concern not addressed here.
 
 Different endpoints adapt interaction style naturally while personality remains stable:
 - phone → concise and mobile interaction
@@ -1219,6 +1241,16 @@ Avoid tightly coupling logic to:
 ---
 
 ### Tier 1 — Foundational Cognitive APIs
+
+> **Windows Track:** Conversational Models (`P1`) — Zola-Windows
+> configures Hermes's existing adapters (Anthropic, Gemini, OpenAI,
+> Bedrock, Vertex, Azure, Moonshot, plus local models via LM Studio);
+> no custom provider work needed, and this already covers the "Future
+> abstraction targets" listed below. Speech Recognition / TTS (`P2`) —
+> Hermes's free Edge TTS/STT for now, ElevenLabs revisited once a
+> working baseline exists to compare against. The specific vendors
+> named below (Deepgram, Gemini, Gemini Live API) are this document's
+> Android-track current choices, not binding for Windows.
 
 **Speech Recognition**
 Current: Deepgram
