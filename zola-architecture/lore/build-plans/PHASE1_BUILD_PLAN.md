@@ -22,21 +22,18 @@ Daily Brief pipeline are explicitly out of scope (see Defers table).
 | 2 | Identity extension | Zola's SOUL.md + identity wiring | Low |
 | 3 | Session wrap | Client-side session resume/list against Hermes's `/api/sessions` HTTP API (`SessionDB`, not `SessionStore` — corrected) | Medium |
 | 4 | Memory extension | Raise MEMORY.md/USER.md budgets + tagging convention | Low |
-| 5 | Email (Gmail) | Configure existing IMAP/SMTP adapter for Gmail app-password | Low |
-| 6 | Confirmed send | Two-step approval UI wired to tui_gateway approval RPCs | Medium |
+| 5 | Email (Gmail) | Deferred — see S16 | Deferred |
+| 6 | Confirmed send | Deferred — see S16 | Deferred |
 **Sequencing rule:** Track 1 must merge before any other track begins
 — every other track needs a running client to build/test against, and
 Track 1 is also where Zola's dedicated `HERMES_HOME` profile gets
 established (see Track 1's new exit criterion) — Tracks 2, 3, 4 all
 assume that profile exists, so none of them should start against a
-shared/default Hermes install. Tracks 2, 3, 4, 5 are independent of
-each other and may proceed in parallel once Track 1 is merged. Track 6
-depends on Track 1 (needs the client's UI shell). Track 5's
-send-capability is gated by Track 6 as a hard requirement, not a soft
-one: the agent-facing send tool from Track 5 is not registered/enabled
-until Track 6's approval gate is merged and verified — Track 5 may
-still land first for the read/poll side (inbox reading, summarizing),
-just not with an executable send action attached.
+shared/default Hermes install. Tracks 2, 3, and 4 are independent of
+each other and may proceed in parallel once Track 1 is merged. Tracks
+5 and 6 were descoped out of Phase 1 after Track 5's Phase 2 grounding
+found no viable hard-gate path within the original config-only email
+scope (see `S16`).
 ## Decisions Resolved in This Build Plan
 - **P1-D01 — Client transport.** The native Windows client talks to
   `hermes serve` (`hermes_cli/main.py:2543` `cmd_dashboard()`, invoked
@@ -327,6 +324,9 @@ regression if raised too aggressively; the "start at 2x, tune from
 data" approach in Changes is deliberately conservative for this
 reason.
 ## Track 5 — Email (Gmail)
+**DEFERRED from Phase 1** — see `OPEN_QUESTIONS.md` S16 for why and
+what was learned. Folded into a future Google Workspace Integration
+build alongside Calendar, Drive, and Contacts.
 **Problem:** `P3` (corrected this build cycle) — Gmail via the
 existing generic email platform adapter, app-password auth, OAuth
 deferred to `S15`.
@@ -368,6 +368,9 @@ configured here doesn't support App Passwords, this track's entire
 mechanism is blocked and falls back to needing `S15`'s OAuth work
 sooner than planned.
 ## Track 6 — Confirmed Send
+**DEFERRED from Phase 1** — see `OPEN_QUESTIONS.md` S16 for why and
+what was learned. Folded into a future Google Workspace Integration
+build alongside Calendar, Drive, and Contacts.
 **Problem:** `A1` ("Confirmed Send" — draft first, explicit
 confirmation before actually sending) needed a concrete, non-terminal
 mechanism since Zola-Windows's client is a GUI, not a CLI.
@@ -458,15 +461,15 @@ At Phase 1 merge:
   in this Build Plan document, not duplicated into
   `DESIGN_DECISIONS.md`, per the template's decisions-in-plan
   convention).
-- `zola-architecture/lore/OPEN_QUESTIONS.md`: no items resolved by
-  Phase 1 — `S13` (SMS-reading research) remains open, untouched by
-  this phase.
-- `zola-architecture/lore/ROADMAP.md`: mark Phase 1 COMPLETE with each
-  track's merge SHA; add a Phase 2 stub (candidate scope: `S13`
-  resolution, `S12`'s Daily Brief pipeline, RIL/SMA subsystems, or
-  whatever Brian prioritizes next — not decided here).
+- `zola-architecture/lore/OPEN_QUESTIONS.md`: no prior items resolved
+  by Phase 1 — `S13` (SMS-reading research) remains open. `S16` was
+  added in this closeout for the deferred Google Workspace work.
+- `zola-architecture/lore/ROADMAP.md`: Phase 1 marked COMPLETE with
+  the four landed merge SHAs. Phase 2 stub lists candidates only
+  (S16 Google Workspace, the deferred Obsidian-style UI theme, voice,
+  `S13`, `S12`) — order not decided.
 ## Phase Exit Checklist
-- [ ] All 6 tracks' exit criteria checked off.
+- [ ] All 4 completed tracks' exit criteria checked off (Tracks 5 and 6 deferred — see S16).
 - [ ] Full manual smoke pass: fresh client launch → start session →
       resume session → identity check → memory write/read → email
       read → email send with approve → email send with deny.
@@ -483,6 +486,7 @@ At Phase 1 merge:
 | SMS reading | Needs Windows-viable mechanism research (`S13`) | After `S13` resolves |
 | Daily Brief pipeline (email+SMS analysis) | Explicitly deferred by Brian until core email/SMS work first (`S12`) | Post-Phase-1 |
 | Gmail OAuth / native connector | No existing code to extend; app-password adapter covers v1 (`S15`) | Post-Phase-1, revisit if app-password path breaks |
+| Gmail/Calendar/Drive/Contacts integration (full Google Workspace) | No viable hard-gate path found within original email-only scope; Brian wants full Workspace access, not email alone (`S16`) | Future dedicated build |
 | Structured/tiered memory store | Deferred long-term target (`S14`) | After real usage data exists |
 | Relational Intelligence Layer, Self-Model Awareness subsystems | Too in-depth for v1 (`S2`/`S3`) | Post-foundation |
 | Response arbitration/suppression tuning | Want to see default behavior first (`A2`) | After Phase 1 usage |
@@ -495,12 +499,14 @@ At Phase 1 merge:
 | 2 — Identity extension | Low |
 | 3 — Session wrap | Medium |
 | 4 — Memory extension | Low |
-| 5 — Email (Gmail) | Low |
-| 6 — Confirmed send | Medium |
+| 5 — Email (Gmail) | Deferred — see S16 |
+| 6 — Confirmed send | Deferred — see S16 |
 ## Footer
-Version 1.1 · Created 2026-09-21, corrected 2026-09-22 (Track 3's
+Version 1.2 · Created 2026-09-21, corrected 2026-09-22 (Track 3's
 session API, Track 6's connection model, profile-isolation moved to
-Track 1, confirmed-send hardening) · Pre-plan baseline SHA: 64999cd61d9d8c33d2b25e3590ba0a04ddd09d4c
+Track 1, confirmed-send hardening). 2026-09-22: Tracks 5 & 6 deferred
+to a future Google Workspace Integration build after Track 5's Phase 2
+grounding (see S16). · Pre-plan baseline SHA: 64999cd61d9d8c33d2b25e3590ba0a04ddd09d4c
 · Prerequisite: WINH01–WINH12 audit series (merged to `main`) +
 Decisions Locked stage (this project's `DESIGN_DECISIONS.md`,
 complete). Begin with Track 1 — no other track should start until it
