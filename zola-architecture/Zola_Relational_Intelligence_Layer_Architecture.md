@@ -39,6 +39,11 @@ and more like:
 
 ---
 
+> **Windows Track:** The full five-subsystem Relational Intelligence
+> Layer is deferred for Zola-Windows (`S2`) — basic email/SMS and
+> other foundational capability comes first. See
+> `zola-architecture/lore/DESIGN_DECISIONS.md`.
+
 ## Core Philosophy
 
 ### Relational Intelligence Is a Reasoning Lens, Not a Storage Layer
@@ -109,6 +114,17 @@ The Relational Intelligence Layer is not:
 The Relational Intelligence Layer consists of five subsystems. Each
 has a dedicated architecture document. Each reads from the shared
 infrastructure defined in this master document.
+
+> **Windows Track:** All five subsystems are deferred with the layer
+> as a whole (`S2`). The dependency order below still applies whenever
+> this is picked back up. Two subsystem-specific notes already locked
+> ahead of that work: Subsystem 2 (Self-Model Awareness) has its
+> write-authority boundary decided in advance (`A7` — see
+> `Zola_SelfModel_Awareness_Architecture.md`); Subsystem 5 (Relational
+> Calibration) is specifically **blocked**, not just deferred (`S3`) —
+> it depends on Self-Model Awareness confidence/correction signals
+> that don't exist, and a standalone proxy was explicitly rejected for
+> v1.
 
 **Subsystem 1 — Temporal Reasoning**
 Converts elapsed time into relational meaning. Understands not just
@@ -341,6 +357,14 @@ and gating.
 
 No subsystem may produce a third delivery path. New output surfaces
 require a design decision entry before they are implemented.
+
+> **Windows Track:** Whether a single-path delivery rule (as specified
+> above) is realistic to enforce against Hermes's own multiple speech
+> paths (`review.summary`, child-session completes, heartbeat) was
+> raised as `A6`, but is locked as moot for now since the whole layer
+> is deferred (`S2`). Revisit `A6` for real once RIL work resumes —
+> Hermes's actual behavior here was left unsuppressed per `A2`, which
+> may conflict with the single-path rule above.
 
 ---
 

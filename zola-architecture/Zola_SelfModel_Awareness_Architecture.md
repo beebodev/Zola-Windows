@@ -28,6 +28,11 @@ and more like:
 
 ---
 
+> **Windows Track:** Self-Model Awareness is deferred along with the
+> rest of the Relational Intelligence Layer for Zola-Windows (`S2`).
+> One decision is locked in advance of that work — see the Authority
+> Boundaries section below (`A7`).
+
 ## Core Philosophy
 
 ### Hedged Language Is the Correction Mechanism
@@ -579,6 +584,13 @@ architecture.
 ---
 
 ## Authority Boundaries
+
+> **Windows Track (`A7`):** The strict read-only boundary specified
+> below is not enforced any harder for Zola-Windows than Hermes's own
+> general write-authority model elsewhere in the agent — i.e. no
+> Windows-specific hardening added on top of whatever this document
+> specifies. Locked in advance since Self-Model Awareness itself is
+> deferred (`S2`); applies whenever this subsystem is actually built.
 
 ### Self-Model Awareness may:
 
