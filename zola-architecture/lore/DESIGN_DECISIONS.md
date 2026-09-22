@@ -20,10 +20,17 @@ at the end.
   The native Windows client is the sole JSON-RPC owner of mic/speaker
   capture (`WINH09-AUD-09`). No separate dashboard/TUI voice client
   competes for the mic. Revisit only if a companion app is added later.
-- **C4 — Memory store: Extend.** Zola modifies Hermes's own MEMORY.md
-  schema/backing store directly (this is a pinned, owned fork) rather
-  than maintaining a separate parallel memory store. MEMORY.md remains
-  the single live source of truth, extended to fit Zola's needs.
+- **C4 — Memory store: Extend (flat-file), with a stated long-term
+  target (see `S14`).** Corrected from the original framing after
+  inspecting Hermes's actual memory implementation:
+  `MEMORY.md`/`USER.md` are not a database with a schema — each is a
+  flat, budget-capped list of plain-text entries (2,200 / 1,375
+  characters, `§`-delimited, rendered directly into the system
+  prompt). "Extend" for v1 means: raise the character budget, and add
+  a lightweight in-text tagging convention (e.g. `[project]`,
+  `[person]`, `[car]`) so entries stay scannable — both cheap,
+  config/prompt-level changes, not new engineering. MEMORY.md/USER.md
+  remain the single live store for v1.
 - **C5 — Identity assembly: Extend.** Zola edits `SOUL.md` content to be
   her own identity and extends `system_prompt.py`'s assembly logic
   wherever stock Hermes doesn't support what Zola needs (e.g. dynamic
@@ -97,6 +104,22 @@ at the end.
   Basic email and SMS read/send functionality is the v1 priority; the
   Daily Brief pipeline is a later layer on top of that, once basics
   work.
+- **S14 — Structured memory store with tiers/confidence, projecting
+  into MEMORY.md: deferred, stated long-term target.** *(Newly
+  clarified while scoping `C4` for the Build Plan — not in the
+  original WINH00 Section 5 list.)* This is the real long-term goal —
+  something closer to the Android Memory Hierarchy's tiered,
+  confidence/decay model, scaled to what Windows/Hermes actually
+  needs — but is deliberately not built for v1. Building it now would
+  mean designing the "real" architecture before there's any usage data
+  from Zola-Windows to inform it, and a meaningful share of Android's
+  six-layer complexity exists to handle signal types (environmental
+  events, location history, camera-derived facts) that don't apply on
+  Windows yet. Revisit once the foundational Phase 1 tracks are
+  working and real usage patterns exist. When built, this store
+  becomes the real source of truth and projects a curated summary down
+  into MEMORY.md's flat entries so Hermes's existing prompt-injection
+  mechanism keeps working unchanged.
 - **S13 — Reading incoming SMS: not deferred, needs research.**
   *(Newly discovered during the architecture-doc annotation pass — not
   in the original WINH00 Section 5 list.)* Distinct from `S4` (Zola
