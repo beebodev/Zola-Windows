@@ -4,6 +4,7 @@
 
 - Branch: `track2-identity`
 - Base SHA: `03a9af742bb6eb7e14043884a6816a9ff636e81e`
+- Feature commit SHA: `bd0e7e56c83e55df2941ab2c841cfe4656f9bec4`
 
 ## Phase status
 
@@ -44,7 +45,8 @@ Phase 4: developer reported "smoke test passed" ("who are you?" reflected Zola's
 
 - No build command (content-only track). No automated test suite.
 - Live profile `SOUL.md` is deployed outside the repo and is not part of the feature commit.
-- Feature commit SHA and the merge commit SHA on `main` are recorded after those commits.
+- Feature commit SHA: `bd0e7e56c83e55df2941ab2c841cfe4656f9bec4`
+- Merge commit SHA on `main`: recorded after the merge.
 
 ## Files
 
