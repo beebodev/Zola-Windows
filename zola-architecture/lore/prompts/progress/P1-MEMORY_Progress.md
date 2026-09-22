@@ -4,6 +4,7 @@
 
 - Branch: `track4-memory-extension`
 - Base SHA: `c95d7b2ebaedc10d29f4991ee86c08b037a8cadc`
+- Feature commit SHA: `c96f206de308b26216d1b6983c0b9f12da19940e`
 
 ## Phase status
 
@@ -46,7 +47,8 @@ Phase 4: developer reported "smoke test passed" (recalled fact matched, the stor
 - Existing tests: N/A. This project has no automated test suite.
 - No lore files were updated (`ROADMAP.md`, `DESIGN_DECISIONS.md`, `OPEN_QUESTIONS.md`, and `S14` were left untouched).
 - Live profile `config.yaml` is outside the git repo and is not part of the feature commit. The budget snippet is in `zola-architecture/identity/MEMORY_CONVENTIONS.md`.
-- Feature commit SHA and the merge commit SHA on `main` are recorded after those commits.
+- Feature commit SHA: `c96f206de308b26216d1b6983c0b9f12da19940e`
+- Merge commit SHA on `main`: recorded after the merge.
 
 ## Files
 
