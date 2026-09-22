@@ -5,6 +5,16 @@
 **Status:** Design complete — pending Phase 12 implementation
 **Companion document:** `Zola_Communication_Intelligence_Architecture.md`
 
+> **Windows Track:** `S4` (Zola sending texts as a notification
+> channel) is deferred. `S12` (the Daily Brief pipeline this whole
+> document specifies — intelligence pipeline, brief surfacing, action
+> offers) is deferred until basic email/SMS work. `S13` (reading the
+> user's own incoming texts at all) is a real v1 goal but needs
+> research into a Windows-viable access path — this document's
+> `SmsWarmDataProvider` (component 1 below) assumes Android's on-device
+> SMS content provider, which has no Windows equivalent. See
+> `zola-architecture/lore/DESIGN_DECISIONS.md` and `OPEN_QUESTIONS.md`.
+
 ---
 
 ## Purpose
@@ -69,6 +79,13 @@ exactly two confirmation moments before any message is sent.
 ---
 
 ### 1. SmsWarmDataProvider
+
+> **Windows Track:** This component's entire data-access model
+> (`Telephony.Sms.CONTENT_URI`, on-device contact resolution) is
+> Android-only. The Windows equivalent is unresolved pending `S13`
+> research — whatever replaces this component depends entirely on
+> which access path (Phone Link, Twilio-provisioned number, etc.) that
+> research lands on.
 
 **Type:** Warm data adapter
 **Status:** Partially exists — `SmsContentProviderPoller` handles presence
@@ -253,6 +270,9 @@ SmsSignal {
 
 ### 4. SMS Brief Integration
 
+> **Windows Track:** Deferred with the rest of the Daily Brief pipeline
+> (`S12`).
+
 **Type:** Modification to existing pipeline
 **Status:** New in Phase 12
 **Owned by:** `DailyBriefAgent` / `DailyBriefAssembler`
@@ -315,6 +335,12 @@ confirmation flow above. Belt and suspenders.
 ---
 
 ### 5. SMS On-Demand Query Path
+
+> **Windows Track:** This on-demand pattern (independent of the Daily
+> Brief pipeline) is the likely shape of Zola-Windows's v1 SMS
+> capability once `S13` research identifies a Windows-viable access
+> path — not the full intelligence analyzer above, which is deferred
+> with the rest of the Daily Brief (`S12`).
 
 **Type:** Existing capability — already wired
 **Status:** Functional via `MessageReadToolAdapter` and `MessageSendToolAdapter`

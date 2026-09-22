@@ -12,6 +12,12 @@ Communication Intelligence turns raw inbox and SMS warm data into structured sig
 
 The Daily Brief is the primary consumer. Both domains share consent, privacy, and heuristics-first principles but use independent consent flags and warm-fetch gates.
 
+> **Windows Track:** This document describes the Android-built Daily
+> Brief pipeline (Phase 11 email + Phase 12 SMS) in full, including the
+> relationship-scoring and urgency-heuristics layers. For Zola-Windows,
+> the Daily Brief pipeline itself is deferred (`S12`) — basic email and
+> SMS read/send come first. See `zola-architecture/lore/DESIGN_DECISIONS.md`.
+
 ---
 
 ## Shared Principles
@@ -39,6 +45,12 @@ Signals are ephemeral pipeline artifacts. Relationship weight in `EmailSignal` i
 
 ## Domain 1 — Email Intelligence (Phase 11)
 
+> **Windows Track:** Email channel is Gmail via Hermes's dedicated
+> connector (`P3`). Whether the five-stage analysis pipeline below
+> (relationship weight, Gemini Stage-4 model pass, etc.) is built at
+> all for Windows is part of the deferred Daily Brief scope (`S12`) —
+> not yet decided beyond "not v1."
+
 **Analyzer:** `EmailIntelligenceAnalyzer`
 **Warm input:** `MessagesSummary.messages: List<MessageEntry>` (legacy aggregate fields removed P12-T6)
 **Warm fetch:** `ToolWarmStartAgent` → Gmail inbox summaries; snippet populated only when `emailAnalysisConsent` is true at map time
@@ -61,6 +73,14 @@ Key fields: `senderName`, `subject`, `unreadCount`, `relationshipWeight`, `isNoi
 ---
 
 ## Domain 2 — SMS Intelligence (Phase 12)
+
+> **Windows Track:** Reading the user's own incoming SMS is a real v1
+> goal, but the access mechanism this pipeline assumes
+> (`Telephony.Sms.CONTENT_URI`, Android-only) has no Windows
+> equivalent — needs research (`S13`). The intelligence/scoring layer
+> below is deferred with the rest of the Daily Brief (`S12`); Zola
+> *sending* texts as a notification channel stays deferred separately
+> (`S4`).
 
 **Analyzer:** `SmsIntelligenceAnalyzer`
 **Warm input:** `SmsWarmContext.threads: List<SmsThreadEntry>` from `SmsWarmDataProvider`
