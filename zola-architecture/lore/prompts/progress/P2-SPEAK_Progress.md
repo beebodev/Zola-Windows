@@ -128,11 +128,11 @@ Clock for that 81-word / 7-sentence reply: start 14:34:46.3, complete 14:34:51.0
 
 Re-run found the echo drop working, but the spent echo capture ended the follow-up window and returned to Idle, so the developer had to press Mic. After an ignored tail the client now reopens follow-up listen (0.5 s delay, at most 3 reopens) instead of cancelling the window. Developer confirms that reopen is better.
 
-Developer reported **smoke test passed** after that reopen. Required setup remains (f). Final clock: `EstimatedWordsPerSecond = 2.5`, `FirstSentenceLatencySeconds = 3.3`, `PerSentenceOverheadSeconds = 0.5`, `FollowUpMarginSeconds = 3.0`. Echo guard plus reopen is how a long-reply tail is kept from becoming a user turn without eating the next listen. Closeout waits on "proceed to closeout".
+Developer reported **smoke test passed** after that reopen. Required setup remains (f). Final clock: `EstimatedWordsPerSecond = 2.5`, `FirstSentenceLatencySeconds = 3.3`, `PerSentenceOverheadSeconds = 0.5`, `FollowUpMarginSeconds = 3.0`. `FollowUpMarginSeconds` was raised from 2.0 to 3.0 after the long-reply tail was still captured at 2.0 s, so the reopened listen window does not time out before the user can reply. Closeout waits on "proceed to closeout".
 
 ## Follow-up measurement table
 
-An early follow-up start is worse than a late one: `voice.record` while the barge-in listener is still armed opens a second capture. Developer reported smoke passed after the echo guard and reopen. Long replies can still fire on the tail; that capture is ignored and listen is reopened, so it does not become a user bubble and does not require the Mic button.
+Follow-up criterion (`P2-D06`): ✅ MET. On long replies the follow-up capture can open during Zola's last words. The echo guard drops that tail. The listener reopens so the user keeps a full reply window. `FollowUpMarginSeconds` was raised from 2.0 to 3.0 so that window does not time out first. Developer confirmed at smoke test that no trailing speech became user input. The timing estimate alone does not guarantee a clean start on long replies. The echo guard is load-bearing, not optional.
 
 | Reply | Gap category | Self-transcription | User bubbles from that utterance | Follow-up answered | Timeline log |
 |---|---|---|---|---|---|
@@ -142,9 +142,19 @@ An early follow-up start is worse than a late one: `voice.record` while the barg
 | Tool-using | developer pass | no (final) | 1 | yes | smoke pass |
 | Five-reply run | developer pass | no (final) | 1 each | yes | smoke pass |
 
+## Follow-up reopen after an ignored tail
+
+Trigger: a follow-up capture (`_followUpCaptureStarted`) delivers a non-empty `voice.transcript` that `IsEchoOfLastReply` accepts. That path writes the timeline line, shows "Ignored: that sounded like Zola's own voice.", increments `_echoIgnoreCount`, and does **not** submit.
+
+Maximum reopens per reply: `EchoReopenLimit = 3`. The increment is compared with `if (_echoIgnoreCount > EchoReopenLimit)`; the first three ignored tails reopen listen, and a fourth calls `CancelFollowUp("echo-ignored-limit")` and returns to Idle.
+
+Reopen itself: `ReopenFollowUpAfterEchoAsync` waits `EchoReopenDelaySeconds` (0.5 s), then starts `voice.record` again if `followUpGeneration` is unchanged, mode is still Voice, and no turn is running.
+
+What ends the follow-up window: a real user transcript (`CancelFollowUp("voice.transcript")` then `TranscriptReady`); `echo-ignored-limit`; Hermes no-speech / stop-phrase; typed Send; Text mode; session ready; app close; `voice.interrupted`; or a stale generation / ineligible timer fire.
+
 ## Barge-in success count
 
-Developer reported the spoken-reply and interruption steps passed. Generation-phase check under (f) was 3 of 3 before Phase 4. Playback-phase barge-in uses trigger 1500; lid-open (f) is required.
+Developer-reported playback-phase interruption during Zola's speech: the smoke interruption steps passed; exact N of tries and raised-voice count were not stated. Generation-phase check under (f) was 3 of 3 before Phase 4, none recorded as needing a raised voice. Playback-phase trigger is 1500; lid-open (f) is required.
 
 ## Final tuned constants
 
@@ -161,7 +171,7 @@ Old values from the first six-run fit: `EstimatedWordsPerSecond = 2.5`, `FirstSe
 | L1 long | 145 | 10 | 14:22:38.175 | 14:22:45 / 14:22:43.087 | −6.8 s | +23.2 s | +2.5 s |
 | L2 long | 121 | 10 | 14:23:44.874 | 14:23:52 / 14:23:50.847 | −7.1 s | +22.9 s | +2.2 s |
 
-Sentence count is unique Edge sentence files. All six new predicted gaps are ≥ 0 and ≤ ~3 s. After smoke, `FollowUpMarginSeconds` is 3.0. Long replies can still open on the tail; echo-ignore plus reopen keeps that from becoming a user turn.
+Sentence count is unique Edge sentence files. Predicted gaps at margin 2.0 were ≥ 0 and ≤ ~3 s. Smoke then still opened a long-reply follow-up on the tail, so `FollowUpMarginSeconds` was raised from 2.0 to 3.0 to keep the reopened listen window from timing out first. The estimate alone does not guarantee a clean start on long replies; the echo guard is load-bearing.
 
 ## Closeout
 
@@ -172,6 +182,8 @@ Sentence count is unique Edge sentence files. All six new predicted gaps are ≥
 - Feature commit SHA: `e911676cdfacb8594aba58e41bfcbfc2ea7b4c60`
 - Branch tip merged: `e911676cdfacb8594aba58e41bfcbfc2ea7b4c60`
 - Merge commit SHA on `main`: `29e11d0cac195ae547bb7cb42c74b31cb7b15d54`
+
+Post-merge docs reconciliation: follow-up criterion marked ✅ MET (echo guard is load-bearing). `FollowUpMarginSeconds` 2.0 → 3.0 recorded. Reopen path documented (`EchoReopenLimit = 3` already in code; no `MaxEchoReopensPerReply` added). Playback-phase interruption: developer-reported smoke pass; exact N/M not stated.
 
 ## Files
 

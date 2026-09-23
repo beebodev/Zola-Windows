@@ -68,7 +68,7 @@ Spoken replies on this machine play through the ffplay recorded under Dependenci
 | `EstimatedWordsPerSecond` | `2.5` | 2026-09-23 | passed. Unchanged. Word rate from the six silent replies. |
 | `FirstSentenceLatencySeconds` | `3.3` | 2026-09-23 | passed. Was 1.0. Fixed startup cost. |
 | `PerSentenceOverheadSeconds` | `0.5` | 2026-09-23 | passed. Was 3.0; that first fit predicted +23 s gaps. |
-| `FollowUpMarginSeconds` | `3.0` | 2026-09-23 | passed. Was 2.0 after a long-reply tail capture. |
+| `FollowUpMarginSeconds` | `3.0` | 2026-09-23 | passed. Raised 2.0 → 3.0 after a long-reply tail was still captured at 2.0 s, so the reopened listen window does not time out before the user can reply. |
 | `EchoContainmentRatio` | `0.60` | 2026-09-23 | passed. Was 0.80; Whisper `unless` → `and less` (6/8 = 75%). |
 | `EchoLookbackWords` | `20` | 2026-09-23 | passed. Last 20 spoken words of the previous reply. |
 | `EchoMinWords` | `3` | 2026-09-23 | passed. Bag-of-words skipped for 1–2 word follow-ups. |
@@ -78,4 +78,4 @@ Spoken replies on this machine play through the ffplay recorded under Dependenci
 
 The first six-run fit kept `EstimatedWordsPerSecond = 2.5` and charged `PerSentenceOverheadSeconds = 3.0` so no estimate was earlier than ffplay exit. That failed `P2-D06`: long replies were predicted +23 s late, and the barge-in listener is already closed in that gap. The same six runs fit a fixed startup plus a small per-sentence cost: `FirstSentenceLatencySeconds = 3.3`, `PerSentenceOverheadSeconds = 0.5`, `FollowUpMarginSeconds = 2.0`. Recomputed gaps (estimate + margin − actual ffplay-gone): S1 +2.2 s, S2 +2.0 s, M1 +3.0 s, M2 +0.5 s, L1 +2.5 s, L2 +2.2 s.
 
-Smoke then failed on a long reply: follow-up at 14:35:28 captured `and less you explicitly share or connect them.` (75% of those words were already in the last 20). Margin is now 3.0. Echo containment is 0.60, with a 4-word phrase match, so that tail is dropped even when Whisper splits a word. A later run showed the drop working but then Idle ate the listen window; ignored tails now reopen follow-up capture up to 3 times. Developer reported smoke test passed after that reopen.
+Smoke then failed on a long reply: follow-up at 14:35:28 captured `and less you explicitly share or connect them.` (75% of those words were already in the last 20). `FollowUpMarginSeconds` was raised 2.0 → 3.0 so the reopened listen window does not time out first. Echo containment is 0.60, with a 4-word phrase match, so that tail is dropped even when Whisper splits a word. The timing estimate alone does not guarantee a clean start on long replies; the echo guard is load-bearing. Ignored tails reopen follow-up capture up to `EchoReopenLimit` (3) times. Developer reported smoke test passed after that reopen and confirmed no trailing speech became user input.
