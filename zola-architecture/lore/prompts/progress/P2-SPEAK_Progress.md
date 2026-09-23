@@ -169,8 +169,9 @@ Sentence count is unique Edge sentence files. All six new predicted gaps are ≥
 - Existing tests: N/A. This project has no automated test suite.
 - `hermes-agent` `git status` is clean at `345cd2b057a452236de401d3534b8502a7465e8d`.
 - No lore files were updated (`ROADMAP.md`, `DESIGN_DECISIONS.md`, `OPEN_QUESTIONS.md`).
-- Feature commit SHA: (recorded after merge)
-- Merge commit SHA on `main`: (recorded after merge)
+- Feature commit SHA: `e911676cdfacb8594aba58e41bfcbfc2ea7b4c60`
+- Branch tip merged: `e911676cdfacb8594aba58e41bfcbfc2ea7b4c60`
+- Merge commit SHA on `main`: `29e11d0cac195ae547bb7cb42c74b31cb7b15d54`
 
 ## Files
 
