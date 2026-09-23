@@ -56,7 +56,12 @@ public sealed partial class MainWindow : Window
         _backend.StateChanged += (_, _) => DispatcherQueue.TryEnqueue(Render);
         Composer.TextChanged += (_, _) => UpdateChrome();
         Composer.PreviewKeyDown += OnComposerKeyDown;
-        Closed += (_, _) => _chat.Dispose();
+        Closed += (_, _) =>
+        {
+            // P2-SPEAK: app close cancels a pending follow-up before the socket is disposed — P2-D06
+            _voice.Shutdown();
+            _chat.Dispose();
+        };
         Render();
     }
 
@@ -102,6 +107,8 @@ public sealed partial class MainWindow : Window
 
     private void OnSessionReady(string sessionId, string storedId)
     {
+        // P2-SPEAK: every SessionReady cancels a leftover follow-up from the previous session — P2-D06
+        _voice.OnSessionReady();
         // P1-CLIENT: store both ids once; later sends reuse them so the agent keeps context — P1-D01
         _sessionDetail = $"session {sessionId} · stored {storedId}";
         // P1-CLIENT: an error event can arrive before session.create's result; keep it beside the ids — P1-D01
@@ -136,6 +143,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // P2-SPEAK: typed Send is the only path that cancels follow-up as a typed submit — P2-D12
+        _voice.OnTypedSubmit();
         // P2-VOICE: Send keeps the composer read and clear, then uses the shared submit — P2-D05
         Composer.Text = "";
         await SubmitTurnAsync(text);
@@ -321,6 +330,11 @@ public sealed partial class MainWindow : Window
         {
             VoiceStateText.Text = "Thinking";
         }
+        else if (_voice.Speaking)
+        {
+            // P2-SPEAK: Speaking is the simulated-clock estimate, not measured playback — P2-D08
+            VoiceStateText.Text = "Speaking";
+        }
         else if (_voice.RecorderState == VoiceController.StateTranscribing)
         {
             VoiceStateText.Text = "Transcribing";
@@ -343,8 +357,9 @@ public sealed partial class MainWindow : Window
         {
             MicIndicatorText.Text = "Mic: recording";
         }
-        else if (_streaming)
+        else if (_streaming || _voice.Speaking)
         {
+            // P2-SPEAK: barge-in keeps the mic while a turn runs or the speaking estimate is still open — P2-D12
             MicIndicatorText.Text = "Mic: listening for interruptions";
         }
         else
@@ -441,6 +456,8 @@ public sealed partial class MainWindow : Window
 
         _turnFinalized = false;
         _streaming = true;
+        // P2-SPEAK: the controller owns the speaking estimate; the window only forwards the event — P2-D12
+        _voice.OnTurnStarted();
         StatusText.Text = "Responding…";
         UpdateChrome();
         ScrollToEnd();
@@ -456,6 +473,8 @@ public sealed partial class MainWindow : Window
         // P1-CLIENT: each message.delta appends one chunk into the prepared response — P1-D01
         _live ??= AddLiveBubble();
         _live.Body.Text += chunk;
+        // P2-SPEAK: the controller counts the accumulated reply, not this chunk alone — P2-D12
+        _voice.OnTurnDelta(chunk);
         ScrollToEnd();
     }
 
@@ -496,6 +515,8 @@ public sealed partial class MainWindow : Window
             StyleLive("interrupted", text, replaceText: fromComplete && text.Length > 0);
             // P2-VOICE: the styled bubble stays in the transcript; the next message.start opens a new one — P2-D12
             _live = null;
+            // P2-SPEAK: interrupted complete starts no follow-up timer — P2-D12
+            _voice.OnTurnCompleted("interrupted");
             StatusText.Text = "Interrupted.";
             UpdateChrome();
             return;
@@ -512,6 +533,8 @@ public sealed partial class MainWindow : Window
         StyleLive(outcome, text, replaceText: text.Length > 0);
         // P2-VOICE: the styled bubble stays in the transcript; the next message.start opens a new one — P2-D12
         _live = null;
+        // P2-SPEAK: complete starts the follow-up timer; error does not — P2-D12
+        _voice.OnTurnCompleted(outcome);
         StatusText.Text = outcome == "error" ? "The turn ended with an error." : "Session ready.";
         UpdateChrome();
     }
