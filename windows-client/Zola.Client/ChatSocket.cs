@@ -10,6 +10,25 @@ sealed class ChatSocket : IDisposable
     private const int RpcTimeoutMs = 45_000;
     private const int HealthIntervalMs = 2_000;
 
+    // P2-VOICE: voice event names and payload fields are named constants on this socket — P2-D01
+    private const string EventVoiceStatus = "voice.status";
+    private const string EventVoiceTranscript = "voice.transcript";
+    private const string EventVoiceInterrupted = "voice.interrupted";
+    private const string EventWakeDetected = "wake.detected";
+    private const string FieldState = "state";
+    private const string FieldText = "text";
+    private const string FieldStopPhrase = "stop_phrase";
+    private const string FieldNoSpeechLimit = "no_speech_limit";
+    private const string FieldPhrase = "phrase";
+    private const string FieldProfile = "profile";
+    private const string FieldStartNewSession = "start_new_session";
+    private const string FieldEnabled = "enabled";
+    private const string FieldAvailable = "available";
+    private const string FieldAudioAvailable = "audio_available";
+    private const string FieldSttAvailable = "stt_available";
+    private const string FieldDetails = "details";
+    private const string FieldReason = "reason";
+
     private readonly HermesProcessManager _backend;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SemaphoreSlim _send = new(1, 1);
@@ -49,6 +68,15 @@ sealed class ChatSocket : IDisposable
     public event Action<string>? Routed;
 
     public event Action<string>? Unreachable;
+
+    // P2-VOICE: voice.status, voice.transcript, voice.interrupted, and wake.detected become typed events — P2-D01
+    public event Action<string>? VoiceStatusChanged;
+
+    public event Action<VoiceTranscript>? VoiceTranscriptReceived;
+
+    public event Action? VoiceInterrupted;
+
+    public event Action<string, string?, bool>? WakeDetected;
 
     public Task StartAsync()
     {
@@ -212,6 +240,12 @@ sealed class ChatSocket : IDisposable
         }
 
         InterruptAcknowledged?.Invoke(reply.Status ?? "");
+    }
+
+    public Task<RpcReply> InvokeAsync(string method, Dictionary<string, string?> parameters)
+    {
+        // P2-VOICE: voice methods use the same JSON-RPC send as chat, without a second socket — P2-D01
+        return CallAsync(method, parameters);
     }
 
     public void Dispose()
@@ -492,6 +526,28 @@ sealed class ChatSocket : IDisposable
                 // P1-CLIENT: an error event is routed aside so it is not parsed as a streamed token — P1-D01
                 Routed?.Invoke(hasPayload ? ReadString(payload, "message") ?? "error" : "error");
                 return;
+            case EventVoiceStatus:
+                // P2-VOICE: recorder state is a status event, not assistant text — P2-D01
+                VoiceStatusChanged?.Invoke(hasPayload ? ReadString(payload, FieldState) ?? "" : "");
+                return;
+            case EventVoiceTranscript:
+                // P2-VOICE: text, stop phrase, and no-speech limit are one transcript event — P2-D01
+                VoiceTranscriptReceived?.Invoke(new VoiceTranscript(
+                    hasPayload ? ReadString(payload, FieldText) ?? "" : "",
+                    hasPayload && ReadBool(payload, FieldStopPhrase) == true,
+                    hasPayload && ReadBool(payload, FieldNoSpeechLimit) == true));
+                return;
+            case EventVoiceInterrupted:
+                // P2-VOICE: barge-in is parsed now; Track 2 is what acts on it beyond a status line — P2-D01
+                VoiceInterrupted?.Invoke();
+                return;
+            case EventWakeDetected:
+                // P2-VOICE: wake.detected is parsed for Track 3 and has no subscriber in this track — P2-D01
+                WakeDetected?.Invoke(
+                    hasPayload ? ReadString(payload, FieldPhrase) ?? "" : "",
+                    hasPayload ? ReadString(payload, FieldProfile) : null,
+                    hasPayload && ReadBool(payload, FieldStartNewSession) == true);
+                return;
             default:
                 // P1-CLIENT: reasoning.delta and other event types are read and not appended — P1-D01
                 return;
@@ -553,7 +609,14 @@ sealed class ChatSocket : IDisposable
             ReadString(result, "status"),
             ReadString(result, "session_id"),
             // P1-SESSION: session.create returns stored_session_id; session.resume returns session_key — P1-D04
-            ReadString(result, "stored_session_id") ?? ReadString(result, "session_key") ?? ReadString(result, "resumed"));
+            ReadString(result, "stored_session_id") ?? ReadString(result, "session_key") ?? ReadString(result, "resumed"),
+            // P2-VOICE: voice.toggle and voice.record answers are read here without changing chat replies — P2-D01
+            ReadBool(result, FieldEnabled),
+            ReadBool(result, FieldAvailable),
+            ReadBool(result, FieldAudioAvailable),
+            ReadBool(result, FieldSttAvailable),
+            ReadString(result, FieldDetails),
+            ReadString(result, FieldReason));
     }
 
     private static string? DeltaChunk(JsonElement payload)
@@ -591,7 +654,43 @@ sealed class ChatSocket : IDisposable
         return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
     }
 
-    private readonly record struct RpcReply(bool Ok, string? Error, string? Status, string? SessionId, string? StoredSessionId);
+    private static bool? ReadBool(JsonElement obj, string name)
+    {
+        // P2-VOICE: voice flags are JSON booleans, not the string fields chat already reads — P2-D01
+        if (!obj.TryGetProperty(name, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.True)
+        {
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.False)
+        {
+            return false;
+        }
+
+        return null;
+    }
+
+    // P2-VOICE: voice replies add optional fields; chat still reads Ok, Error, Status, and the session ids — P2-D01
+    internal readonly record struct RpcReply(
+        bool Ok,
+        string? Error,
+        string? Status,
+        string? SessionId,
+        string? StoredSessionId,
+        bool? Enabled = null,
+        bool? Available = null,
+        bool? AudioAvailable = null,
+        bool? SttAvailable = null,
+        string? Details = null,
+        string? Reason = null);
+
+    // P2-VOICE: one transcript carries the text plus the stop-phrase and no-speech flags — P2-D01
+    internal readonly record struct VoiceTranscript(string Text, bool IsStopPhrase, bool IsNoSpeechLimit);
 }
 
 // P1-CLIENT: socket loss and health loss share one exception so the composer cannot keep waiting — P1-D01

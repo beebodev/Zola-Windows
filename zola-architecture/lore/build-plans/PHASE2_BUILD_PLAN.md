@@ -260,25 +260,45 @@ listener catches it (`P2-D05`), with no client work beyond handling the
 events.
 
 (b) **After Zola finishes**, the client cannot observe the end of playback
-(see Grounding summary), so it starts one follow-up capture after an
-estimated speaking time:
-1. On `message.complete` with status `complete` for a turn that was spoken,
-   start a timer:
-   `delay = FollowUpMarginSeconds + (spokenWords / EstimatedWordsPerSecond)`.
-   - `spokenWords` is counted from the final text after the same basic
-     markdown stripping the client already does for display.
-   - Start values: `EstimatedWordsPerSecond = 2.5`, `FollowUpMarginSeconds = 1.0`.
-   - Cap: `FollowUpMaxDelaySeconds = 90`.
-   - All three are named constants.
-2. When the timer fires, send `voice.record start` with the current runtime
-   `session_id`, but only if all of these hold: still in Voice mode, no capture
-   already active, no new turn has started, and the user hasn't typed.
-3. The capture then ends one of two ways:
+(see Grounding summary). It estimates the end with a **simulated playback
+clock** that follows the reply as it streams, then starts one follow-up
+capture.
+
+*v1.1 change:* v1.0 counted the whole reply's words from
+`message.complete`. That was wrong: Hermes speaks sentence by sentence
+while the text is still generating. By `message.complete`, most of a long
+reply may already have been spoken, so v1.0's delay would have started
+listening long after she finished.
+
+1. On `message.start` for a spoken turn, set
+   `estimatedSpeechEnd = now + FirstSentenceLatencySeconds`.
+2. On every `message.delta`, count the words in that chunk after the same
+   markdown stripping used for display, then set:
+   `estimatedSpeechEnd = max(estimatedSpeechEnd, now) + chunkWords / EstimatedWordsPerSecond`.
+   This models one speaker playing sentences in order:
+   - Speech can't finish before its text exists.
+   - Speech that falls behind stacks up.
+   - A pause for a tool call is absorbed by the `max(…, now)`.
+3. On `message.complete` with status `complete`, set a single-shot timer
+   for `max(0, estimatedSpeechEnd − now) + FollowUpMarginSeconds`, capped
+   at `FollowUpMaxDelaySeconds`.
+
+Constants and start values (named constants, all tuned in Track 2):
+- `EstimatedWordsPerSecond = 2.5`
+- `FirstSentenceLatencySeconds = 1.0`
+- `FollowUpMarginSeconds = 1.0`
+- `FollowUpMaxDelaySeconds = 90`
+
+4. When the timer fires, send `voice.record start` with the current runtime
+   `session_id`, but only if all of these hold: still in Voice mode, no
+   capture already active, no new turn has started, and the user hasn't
+   typed. These are the resting/follow-up rules in `P2-D12`.
+5. The capture then ends one of two ways:
    - The user speaks: a transcript is submitted and the cycle repeats.
    - Nothing is said: Hermes's fixed 15 s no-speech timeout
      (`AudioRecorder._max_wait`) ends it, and the client returns to resting
      state (wake word armed).
-4. Cancel the pending timer on any of: a `voice.transcript` (barge-in
+6. Cancel the pending timer on any of: a `voice.transcript` (barge-in
    already started the next turn), `voice.interrupted`, a typed submit, a
    mode switch to Text, or a session switch.
 
@@ -290,11 +310,27 @@ Accepted costs:
 - A too-long estimate leaves a short gap in which speech is missed: barge-in
   has stopped and the follow-up capture has not started yet.
 
-Track 2's smoke test measures both. A precise version, either client-side
-Windows audio-meter observation or a small Hermes patch adding an
-end-of-playback event and a configurable no-speech timeout, is filed as new
-`S17`, not built here. This addresses WINH09-AUD-16 within the as-is
-constraint without fully closing it.
+**This implementation is provisional.**
+- Track 2 must measure the real gap between the moment Zola's speech ends
+  (heard) and the follow-up capture starting (indicator shows
+  *Recording*).
+- Measure it across four replies:
+  - a short reply (one sentence);
+  - a medium reply (about four sentences);
+  - a long reply (ten or more sentences);
+  - a reply that includes a tool call.
+- Target in every case:
+  - no self-transcription;
+  - the capture starts within about 3 s of her last word.
+- If tuning the constants cannot meet this, Track 2 stops BLOCKED and
+  reports the measurements, and Brian decides whether to escalate `S17`. It
+  does **not** mark the track complete with an unusable follow-up.
+
+A precise version is filed as new `S17`, not built here. It would be either
+client-side Windows audio-meter observation or a small Hermes patch adding
+an end-of-playback event and a configurable no-speech timeout. This
+addresses WINH09-AUD-16 within the as-is constraint without fully closing
+it.
 
 **P2-D07 — Voice/Text mode toggle; both modes always work.**
 - A two-state mode toggle in the client, **Voice** or **Text**. The app
@@ -326,9 +362,25 @@ Reconnect and failure handling:
   *Listening* (`voice.status listening`), *Transcribing*
   (`voice.status transcribing`), *Thinking* (turn running), and *Speaking*
   (Track 2).
-- *Speaking* is the client's estimate from `P2-D06`: the period between
-  `message.complete` and the follow-up timer firing. The label says so in a
-  code comment.
+- *Speaking* is the client's estimate from `P2-D06`: from `message.start`
+  until the simulated playback clock runs out. The label says so in a code
+  comment.
+- **Honest microphone indicator** *(v1.1)*: next to the voice state, a
+  separate mic indicator always says what Hermes's mic is doing, from
+  `P2-D12`'s table:
+  - *Mic: listening for "Hey Zola"*
+  - *Mic: recording*
+  - *Mic: listening for interruptions* (Voice mode while a turn runs or
+    Zola speaks, because Hermes's barge-in listener has the mic open)
+  - *Mic: off* (Text mode, or voice unavailable)
+
+  Why this matters: in Voice mode, Hermes opens the mic during **every**
+  turn, typed ones included (`prompt_turn.py` 190–191). That must be
+  visible, not implied.
+- Privacy wording: never describe the pipeline as offline.
+  - Speech-to-text is on-device (`P2-D02`).
+  - Edge TTS sends reply text to Microsoft's online speech service.
+  - The conversational model is a cloud provider.
 - This is a plain status element. The Obsidian Interface attention-level
   indicator that will later visualize these same states is deferred.
 
@@ -351,6 +403,7 @@ Starting values (all tunable in smoke tests):
 - `voice.barge_in: true`
 - `voice.stop_phrases: ["stop"]`
 - `voice.thinking_sound: true`
+- `security.allow_lazy_installs: false` (*v1.1*, see `P2-D10`)
 
 **P2-D10 — Optional Python dependencies are installed only with Brian's approval; Hermes source is never edited.**
 - Voice needs packages that may not be in the Python environment the client
@@ -365,6 +418,14 @@ Starting values (all tunable in smoke tests):
 - Installing packages into the environment is allowed. Editing any file in
   the `hermes-agent` checkout is not: it stays read-only, and
   `git status` there must be clean at every closeout.
+- *v1.1:* during Track 1 Phase 2, calling `check_voice_requirements()` with
+  `stt.provider` unset made Hermes lazy-install faster-whisper 1.2.1,
+  sounddevice 0.5.5 and numpy 2.4.3 as a side effect. These are Hermes's
+  own pinned versions, and Brian accepted them after the fact.
+- To enforce this decision structurally, the Zola profile sets
+  `security.allow_lazy_installs: false` (added to `P2-D09`'s Track 1 keys).
+  Hermes can then never install packages silently. A missing dependency
+  becomes a requirement hint instead.
 
 **P2-D11 — No separate pre-build audit for Phase 2.**
 - WINH09 already audited this exact pinned tag's voice surface, and the
@@ -373,6 +434,62 @@ Starting values (all tunable in smoke tests):
   confirms by approving this plan.
 - Each track's Phase 2 re-reads its files in full (`G-PATTERN`). A conflict
   with this plan stops the track (`G-ARCH`).
+
+**P2-D12 — One owner for voice state; exactly one listener active per state; one utterance, one turn.** *(v1.1)*
+
+**Single owner.**
+- `VoiceController.cs` is the only place that:
+  - decides which listening mechanism should be active;
+  - sends `voice.record` / `wake.*`;
+  - turns a transcript into a submit.
+- `MainWindow` only renders its state and forwards clicks and keys.
+- Tracks 2 and 3 extend `VoiceController`. They do not add voice logic to
+  `MainWindow.xaml.cs`.
+
+**Microphone ownership table (Voice mode unless stated):**
+
+| Zola state | Hermes listener that should be active | Client may start `voice.record`? | Client acts on `wake.detected`? |
+|---|---|---|---|
+| Resting | Wake detector (Track 3); none before Track 3 | Yes (mic button / hotkey) | Yes |
+| Recording | `voice.record` capture (Hermes pauses the wake detector) | No (a second press = stop) | No |
+| Transcribing | None new | No | No |
+| Thinking (turn running) | Barge-in listener (`barge_in: true`) | **No**: mic button and hotkey disabled | **No**: ignored |
+| Speaking (simulated clock running) | Barge-in listener | **No** | **No**: ignored |
+| Follow-up | `voice.record` capture | Only the one `P2-D06` follow-up capture | No |
+| Text mode | None (`voice.toggle off`, `wake.stop`) | No | No (wake stopped) |
+
+**Why the Thinking/Speaking rows matter.**
+- If the client opened a `voice.record` capture while Hermes's barge-in
+  listener already had the mic, both would hear the same sentence. The
+  result would be two `voice.transcript` events and two submitted turns.
+- The same happens if "Hey Zola" is said while Zola speaks:
+  - the barge-in listener trips and emits the words as a transcript;
+  - `wake.detected` may also fire.
+- Acting on only one of them keeps it to a single turn.
+
+**Duplicate and stale protection.**
+- Hermes provides no utterance ID. The guarantee rests on three things:
+  1. The table above: at most one Hermes listener that produces
+     transcripts at any time.
+  2. The existing runtime-`session_id` filter: events from a previous
+     session's socket are dropped.
+  3. The client ignores `voice.transcript` while in Text mode.
+- Text matching is **not** used. Saying the same thing twice is
+  legitimate.
+- Each track's Phase 2 must confirm from source which listener emitted
+  each transcript path, and write down any case the table does not
+  cover. Found cases are handled by fixing the state rules, never by
+  de-duplicating text.
+
+**Running-turn submits.**
+- Track 1 Phase 2 found that `prompt.submit` during a running turn is
+  accepted. Hermes either redirects it into the live turn
+  (`{status:"redirected"}`) or queues it and interrupts
+  (`{status:"queued"}`).
+- The client therefore submits every transcript once, immediately, and
+  never holds or re-submits it.
+- The client renders the "You" bubble without disturbing an open assistant
+  bubble.
 
 ---
 
@@ -471,10 +588,22 @@ Auto-detect would silently pick a cloud provider if faster-whisper is missing
 - `Ctrl+Space` keyboard accelerator on the window, same action (`P2-D04`).
 - Voice/Text mode toggle.
 - Voice state indicator in the status area (`P2-D08`).
+- Honest mic indicator (`P2-D08` v1.1). Track 1 states:
+  - *Mic: recording*
+  - *Mic: listening for interruptions*, while a turn runs in Voice mode
+  - *Mic: off*
+
+  Track 3 adds *Mic: listening for "Hey Zola"*.
+- Mic button and hotkey are **disabled while a turn is running** (`P2-D12`).
+  Hermes's barge-in listener already has the mic in that state.
 - `TranscriptReady` → append a user bubble and call the **existing** submit
   path used by the Send button. There must be no second submit path
   ("One authority per responsibility").
-- Composer and Send remain enabled in both modes.
+- A transcript arriving during a running turn (barge-in) is submitted
+  immediately. Hermes redirects or queues it (`P2-D12`), and the client
+  never holds or re-submits.
+- Composer and Send remain enabled in both modes. The typed Send guard
+  while streaming is unchanged from Phase 1.
 - Tag: `// P2-VOICE: … — P2-D0X`.
 
 ### Exit criteria
@@ -501,6 +630,15 @@ Auto-detect would silently pick a cloud provider if faster-whisper is missing
       session. This confirms `session_id` is passed and the re-sync runs.
 - [ ] With the Zola serve killed, the mic control is disabled along with the
       composer (Phase 1's unreachable state still holds).
+- [ ] While a turn is running in Voice mode, the mic button and hotkey are
+      disabled, and the mic indicator reads *Mic: listening for
+      interruptions*. In Text mode it reads *Mic: off* (`P2-D08`,
+      `P2-D12`).
+- [ ] Speaking over a running turn produces exactly **one** user bubble and
+      one submitted turn, with no duplicated or orphaned assistant bubbles
+      (`P2-D12`).
+- [ ] Live profile has `security.allow_lazy_installs: false`, and
+      `pip check` on the Hermes interpreter is clean (`P2-D10` v1.1).
 - [ ] `git status` in `C:\Users\test\Dev\hermes-agent` is clean.
 - [ ] `dotnet build windows-client/Zola.Client/Zola.Client.csproj` passes
       with 0 warnings.
@@ -572,12 +710,19 @@ Barge-in handling:
 
 Follow-up window (`P2-D06`):
 - Named constants: `EstimatedWordsPerSecond = 2.5`,
-  `FollowUpMarginSeconds = 1.0`, `FollowUpMaxDelaySeconds = 90`.
-- On `MessageCompleted` with status `complete` while in Voice mode with
-  spoken replies on:
-  1. Compute the delay from the final text's word count.
-  2. Set the indicator to *Speaking*.
-  3. Start a single-shot timer.
+  `FirstSentenceLatencySeconds = 1.0`, `FollowUpMarginSeconds = 1.0`,
+  `FollowUpMaxDelaySeconds = 90`.
+- Simulated playback clock (`P2-D06` v1.1), while in Voice mode with spoken
+  replies on:
+  - `MessageStarted` initializes `estimatedSpeechEnd`.
+  - Each `MessageDelta` advances it.
+  - `MessageCompleted` with status `complete` starts the single-shot timer
+    for the remaining estimate plus the margin.
+  - The indicator shows *Speaking* from `MessageStarted` until the timer
+    fires.
+  - Log (debug level) each turn's `message.start` time, `message.complete`
+    time, final `estimatedSpeechEnd`, and timer fire time. Track 2's
+    measurement uses these.
 - On fire, if still eligible (`P2-D06` conditions), call
   `StartCaptureAsync()`. Track 1's handlers then take over.
 - Cancel on:
@@ -613,6 +758,14 @@ Follow-up window (`P2-D06`):
       reflects being interrupted.
 - [ ] After a reply finishes, asking a follow-up question without the wake
       word or button is transcribed and answered.
+- [ ] Follow-up measurement (`P2-D06` v1.1): for a short, a medium, a long,
+      and a tool-using reply, the gap from her last spoken word to the mic
+      indicator showing *Mic: recording* is recorded in the progress doc.
+      Each gap is within about 3 s, with no self-transcription. If that
+      can't be met by tuning, the track stops BLOCKED (not COMPLETE).
+- [ ] Thinking/Speaking states: the mic button and hotkey are disabled, and
+      the mic indicator reads *Mic: listening for interruptions*
+      (`P2-D12`).
 - [ ] After a reply finishes, staying silent returns the indicator to
       *Idle* on its own. With the fixed timeout this takes about 15 s after
       the capture starts.
@@ -629,9 +782,10 @@ Follow-up window (`P2-D06`):
   4. Then stay silent until she stops listening.
   5. Pass signals: each step behaves as in the criteria above, and no
      self-transcription is seen.
-  6. Brian reports whether the post-reply gap felt too long or too short.
-     `EstimatedWordsPerSecond` / `FollowUpMarginSeconds` are tuned at this
-     step, and final values are recorded in the progress doc.
+  6. Run the four follow-up measurement replies. Tune
+     `EstimatedWordsPerSecond`, `FirstSentenceLatencySeconds` and
+     `FollowUpMarginSeconds` until the targets hold. Record the final values
+     and the measured gaps in the progress doc.
   7. Brian may try alternate Edge voices here (`tts.edge.voice`); the final
      choice is recorded in `VOICE_CONFIG.md`.
 
@@ -703,6 +857,11 @@ detection to `phrase`. If it does not, stop (`G-ARCH`).
    and `capture`. `capture` must be `local`.
 2. If sherpa-onnx is missing, stop BLOCKED with the install command
    (`P2-D10`).
+   - With `security.allow_lazy_installs: false` set in Track 1, Hermes
+     cannot auto-install it.
+   - Confirm from `wake_word_engines.py` whether the separate model download
+     (`urllib.request.urlretrieve`) is also blocked by that setting, or
+     still runs on first arm. Report which.
 3. The one-time ~13 MB model download from GitHub happens on first arm.
    Record where it landed.
 
@@ -727,8 +886,17 @@ This is necessary for two reasons:
   `busy / wake_owned`.
 
 Detection:
-- On `wake.detected`, call `StartCaptureAsync()`: the same path as the mic
-  button.
+- On `wake.detected`, call `StartCaptureAsync()` (the same path as the mic
+  button) **only in the Resting state** of `P2-D12`'s table. In every other
+  state, ignore it and log that it was ignored.
+
+  Most important case: saying "Hey Zola" while Zola is thinking or
+  speaking. Hermes's barge-in listener already turns that speech into a
+  transcript, so acting on `wake.detected` too would create a second
+  capture and a second turn.
+- Phase 2 must confirm from source whether the wake detector stays armed
+  during a running turn and during TTS playback. Record which listeners can
+  fire for one "Hey Zola" said while she speaks.
 - Ignore `start_new_session`. The current session continues, per `P2-D04`.
   Hermes resumes the detector itself after the capture's terminal event.
 
@@ -758,6 +926,11 @@ Tag: `// P2-WAKE: [rationale] — P2-D04`.
       word works again without any click.
 - [ ] After New session and after Resume, the wake word still works and the
       mic button never returns `busy / wake_owned`.
+- [ ] Saying "Hey Zola, stop talking about that" while Zola is speaking
+      produces exactly **one** user bubble and one turn, with no second
+      capture started (`P2-D12`).
+- [ ] Mic indicator reads *Mic: listening for "Hey Zola"* in the Resting
+      state, and *Mic: off* in Text mode.
 - [ ] Text mode: saying "Hey Zola" does nothing, and `wake.status` shows
       `listening: false`.
 - [ ] "Hey Hermes" does **not** wake Zola.
@@ -795,7 +968,7 @@ this.
 After all three tracks are merged to `main`:
 
 ### DESIGN_DECISIONS.md
-- Record `P2-D01` through `P2-D11` in a new "Phase 2 — Voice" section, with
+- Record `P2-D01` through `P2-D12` in a new "Phase 2 — Voice" section, with
   each track's final tuned values (Whisper model, Edge voice,
   `silence_duration`, follow-up constants, wake `sensitivity`).
 - **Correct `P2`:** replace "TTS/STT: Edge (free)" with "TTS: Edge (free);
@@ -869,7 +1042,18 @@ After all three tracks are merged to `main`:
   4. Timeout → wake again.
   5. Switch to Text → typed turn silent → back to Voice.
   6. Resume an older session → wake word works there.
-- [ ] `DESIGN_DECISIONS.md`: `P2-D01`–`P2-D11` recorded, and `P2` corrected.
+  7. Close Zola, relaunch from the normal shortcut (no terminal open), and
+     confirm the voice pipeline reconnects: wake word armed and mic
+     indicator correct.
+  8. Say "Hey Zola" from normal speaking distance across the room, not
+     leaning into the laptop.
+  9. All on the Latitude 7430 that Zola actually runs on.
+- [ ] One voice-state owner: every `voice.record` / `wake.*` call and every
+      transcript-to-submit decision lives in `VoiceController.cs`
+      (`P2-D12`), verified by searching the client source.
+- [ ] No utterance ever produced two submitted turns in any track's smoke
+      test (`P2-D12`).
+- [ ] `DESIGN_DECISIONS.md`: `P2-D01`–`P2-D12` recorded, and `P2` corrected.
 - [ ] `OPEN_QUESTIONS.md`: `S17`, `S18`, `S19` filed.
 - [ ] `ROADMAP.md`: Phase 2 COMPLETE with SHAs, and Phase 3 stub added.
 - [ ] Master Plan Tier 1 Windows note corrected.
@@ -905,8 +1089,13 @@ After all three tracks are merged to `main`:
 
 ---
 
-*Phase 2 Build Plan version 1.0*
-*Created 2026-09-22*
+*Phase 2 Build Plan version 1.1*
+*Created 2026-09-22. v1.1 2026-09-23 (review amendments):*
+*P2-D06 simulated playback clock, and follow-up made provisional and*
+*measured; P2-D08 honest mic indicator and privacy wording; P2-D10*
+*lazy-installs off; new P2-D12 (single voice-state owner, mic-ownership*
+*table, one-utterance-one-turn, running-turn submits). Track 1/2/3 exit*
+*criteria and combined smoke pass extended to match.*
 *Base SHA: `8964bdce9a7361e3887a43b3dd381f5f979e9a64` (pre-plan baseline; tracks record their actual branch point)*
 *Prerequisite audit: none. WINH09 (merged at `da6c35fd997487db23bb15c08eb9056e28413e39`) plus the source grounding recorded above (`P2-D11`).*
 *All Phase 2 decisions locked before plan was written (Brian, 2026-09-22).*

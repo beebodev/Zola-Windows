@@ -14,6 +14,7 @@ public sealed partial class MainWindow : Window
 {
     private readonly HermesProcessManager _backend;
     private readonly ChatSocket _chat;
+    private readonly VoiceController _voice;
     private LiveResponse? _live;
     private bool _connectStarted;
     private bool _socketOwnsStatus;
@@ -27,6 +28,7 @@ public sealed partial class MainWindow : Window
     private bool _sessionsOpen;
     private bool _historyPending;
     private bool _switchInFlight;
+    private bool _modeSwitching;
     private readonly Dictionary<string, SessionRow> _sessionRows = new();
     private readonly HashSet<string> _serverSessionIds = new();
 
@@ -37,6 +39,12 @@ public sealed partial class MainWindow : Window
         AppWindow.Resize(new Windows.Graphics.SizeInt32(960, 720));
         _backend = backend;
         _chat = new ChatSocket(backend);
+        // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
+        _voice = new VoiceController(_chat);
+        _voice.StateChanged += () => Dispatch(ApplyVoiceChrome);
+        _voice.TranscriptReady += text => Dispatch(() => _ = SubmitTurnAsync(text));
+        _voice.VoiceChatEnded += () => Dispatch(OnVoiceChatEnded);
+        _voice.StatusMessage += message => Dispatch(() => OnVoiceStatusMessage(message));
         _chat.SessionReady += (sessionId, storedId) => Dispatch(() => OnSessionReady(sessionId, storedId));
         _chat.SubmitAcknowledged += status => Dispatch(() => OnSubmitAcknowledged(status));
         _chat.MessageStarted += () => Dispatch(OnMessageStarted);
@@ -100,6 +108,12 @@ public sealed partial class MainWindow : Window
         DetailText.Text = _routedNote is null ? _sessionDetail : _routedNote + Environment.NewLine + _sessionDetail;
         // P1-SESSION: show the stored id as soon as session.create or session.resume acknowledges it — P1-D04
         NoteAcknowledgedSession(storedId);
+        // P2-VOICE: every new socket re-syncs Voice mode, including new session and resume — P2-D07
+        if (_voice.Mode == VoiceController.ModeVoice)
+        {
+            _ = SyncVoiceAsync();
+        }
+
         if (_historyPending)
         {
             // P1-SESSION: resume keeps the composer off until the fetched turns are on screen — P1-D04
@@ -122,12 +136,30 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // P1-CLIENT: show the user turn locally; prompt.submit's status is not the assistant reply — P1-D01
+        // P2-VOICE: Send keeps the composer read and clear, then uses the shared submit — P2-D05
         Composer.Text = "";
+        await SubmitTurnAsync(text);
+    }
+
+    private async Task SubmitTurnAsync(string text)
+    {
+        // P2-VOICE: transcripts and typed sends share this prompt.submit; a live turn is not a reason to hold the transcript — P2-D05
+        if (!_sessionReady || _unreachable || text.Length == 0)
+        {
+            return;
+        }
+
+        // P2-VOICE: a transcript during a running turn adds the You bubble and leaves the open assistant bubble streaming — P2-D12
+        var duringTurn = _streaming;
         AddBubble("You", text, mine: true);
-        _streaming = true;
-        _turnFinalized = false;
-        StatusText.Text = "Sending…";
+        if (!duringTurn)
+        {
+            // P1-CLIENT: show the user turn locally; prompt.submit's status is not the assistant reply — P1-D01
+            _streaming = true;
+            _turnFinalized = false;
+            StatusText.Text = "Sending…";
+        }
+
         UpdateChrome();
         try
         {
@@ -141,12 +173,189 @@ public sealed partial class MainWindow : Window
         {
             Dispatch(() =>
             {
-                _streaming = false;
-                _turnFinalized = true;
+                // P2-VOICE: a failed barge-in submit does not settle the turn that is still running — P2-D12
+                if (!duringTurn)
+                {
+                    _streaming = false;
+                    _turnFinalized = true;
+                }
+
                 StatusText.Text = ex.Message;
                 UpdateChrome();
             });
         }
+    }
+
+    private async Task SyncVoiceAsync()
+    {
+        // P2-VOICE: voice.toggle status, then on, runs after the socket reports a session — P2-D07
+        try
+        {
+            await _voice.SyncVoiceModeAsync().ConfigureAwait(false);
+        }
+        catch (ChatUnreachableException ex)
+        {
+            Dispatch(() => ShowUnreachable(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Dispatch(() =>
+            {
+                StatusText.Text = ex.Message;
+                UpdateChrome();
+            });
+        }
+    }
+
+    private async void OnMicClick(object sender, RoutedEventArgs e)
+    {
+        // P2-VOICE: the mic button uses the controller's capture gate and toggle — P2-D04
+        await ToggleVoiceCaptureAsync();
+    }
+
+    private async void OnVoiceHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        // P2-VOICE: Ctrl+Space is the same capture toggle as the mic button — P2-D04
+        args.Handled = true;
+        await ToggleVoiceCaptureAsync();
+    }
+
+    private async Task ToggleVoiceCaptureAsync()
+    {
+        // P2-VOICE: the button and the hotkey do nothing unless the controller allows a capture — P2-D12
+        if (!_voice.CanStartCapture)
+        {
+            return;
+        }
+
+        try
+        {
+            await _voice.ToggleCaptureAsync().ConfigureAwait(false);
+        }
+        catch (ChatUnreachableException ex)
+        {
+            Dispatch(() => ShowUnreachable(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Dispatch(() =>
+            {
+                StatusText.Text = ex.Message;
+                UpdateChrome();
+            });
+        }
+    }
+
+    private async void OnModeClick(object sender, RoutedEventArgs e)
+    {
+        // P2-VOICE: the header control switches Voice and Text without a second voice owner — P2-D07
+        if (_unreachable || _modeSwitching || string.IsNullOrEmpty(_chat.SessionId))
+        {
+            return;
+        }
+
+        _modeSwitching = true;
+        UpdateChrome();
+        try
+        {
+            if (_voice.Mode == VoiceController.ModeVoice)
+            {
+                await _voice.EnterTextModeAsync().ConfigureAwait(false);
+            }
+            else
+            {
+                await _voice.EnterVoiceModeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (ChatUnreachableException ex)
+        {
+            Dispatch(() => ShowUnreachable(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Dispatch(() =>
+            {
+                StatusText.Text = ex.Message;
+                UpdateChrome();
+            });
+        }
+        finally
+        {
+            Dispatch(() =>
+            {
+                _modeSwitching = false;
+                UpdateChrome();
+            });
+        }
+    }
+
+    private void OnVoiceChatEnded()
+    {
+        // P2-VOICE: a spoken stop ends the exchange with a status line and no turn — P2-D05
+        StatusText.Text = "Voice chat ended";
+        UpdateChrome();
+    }
+
+    private void OnVoiceStatusMessage(string message)
+    {
+        // P2-VOICE: busy, no speech, and interrupt notices stay on the status line — P2-D08
+        StatusText.Text = message;
+        UpdateChrome();
+    }
+
+    private void ApplyVoiceChrome()
+    {
+        // P2-VOICE: the window copies session and turn facts into the controller, which owns the mic rule — P2-D12
+        _voice.SetCaptureGate(_sessionReady, _backend.WebSocketPermitted && !_unreachable, _streaming);
+        var unavailable = !_voice.IsAvailable && _voice.Mode == VoiceController.ModeText;
+        if (unavailable)
+        {
+            var details = _voice.UnavailableDetails;
+            VoiceStateText.Text = details.Length == 0 ? "Voice unavailable" : "Voice unavailable — " + details;
+        }
+        else if (_voice.Mode == VoiceController.ModeText)
+        {
+            VoiceStateText.Text = "Text mode";
+        }
+        else if (_streaming)
+        {
+            VoiceStateText.Text = "Thinking";
+        }
+        else if (_voice.RecorderState == VoiceController.StateTranscribing)
+        {
+            VoiceStateText.Text = "Transcribing";
+        }
+        else if (_voice.CaptureActive || _voice.RecorderState == VoiceController.StateListening)
+        {
+            VoiceStateText.Text = "Listening";
+        }
+        else
+        {
+            VoiceStateText.Text = "Idle";
+        }
+
+        // P2-VOICE: recording, barge-in, and off are a separate line from the voice state — P2-D08
+        if (_voice.Mode != VoiceController.ModeVoice || !_voice.IsAvailable)
+        {
+            MicIndicatorText.Text = "Mic: off";
+        }
+        else if (_voice.CaptureActive)
+        {
+            MicIndicatorText.Text = "Mic: recording";
+        }
+        else if (_streaming)
+        {
+            MicIndicatorText.Text = "Mic: listening for interruptions";
+        }
+        else
+        {
+            MicIndicatorText.Text = "Mic: off";
+        }
+
+        ModeButton.Content = _voice.Mode == VoiceController.ModeVoice ? "Voice" : "Text";
+        ModeButton.IsEnabled = !_unreachable && !_modeSwitching && !string.IsNullOrEmpty(_chat.SessionId);
+        MicButton.IsEnabled = _voice.CanStartCapture;
+        MicButton.Content = _voice.CaptureActive ? "Listening" : "Mic";
     }
 
     private void OnSubmitAcknowledged(string status)
@@ -218,7 +427,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // P1-CLIENT: message.start clears the in-progress response so deltas do not stick to the previous turn — P1-D01
+        // P2-VOICE: open a new assistant bubble when none is live; clear only a second message.start before message.complete — P2-D12
         if (_live is not null && !_turnFinalized)
         {
             _live.Body.Text = "";
@@ -285,6 +494,8 @@ public sealed partial class MainWindow : Window
             }
 
             StyleLive("interrupted", text, replaceText: fromComplete && text.Length > 0);
+            // P2-VOICE: the styled bubble stays in the transcript; the next message.start opens a new one — P2-D12
+            _live = null;
             StatusText.Text = "Interrupted.";
             UpdateChrome();
             return;
@@ -299,6 +510,8 @@ public sealed partial class MainWindow : Window
         _streaming = false;
         var outcome = string.Equals(status, "error", StringComparison.Ordinal) ? "error" : "complete";
         StyleLive(outcome, text, replaceText: text.Length > 0);
+        // P2-VOICE: the styled bubble stays in the transcript; the next message.start opens a new one — P2-D12
+        _live = null;
         StatusText.Text = outcome == "error" ? "The turn ended with an error." : "Session ready.";
         UpdateChrome();
     }
@@ -426,6 +639,8 @@ public sealed partial class MainWindow : Window
         var backendUp = _backend.WebSocketPermitted && !_unreachable && !_switchInFlight;
         SessionsButton.IsEnabled = backendUp;
         NewSessionButton.IsEnabled = backendUp && !_streaming && !_historyPending;
+        // P2-VOICE: composer enablement stays the Phase 1 rule; voice chrome is applied beside it — P2-D07
+        ApplyVoiceChrome();
     }
 
     private async void OnSessionsToggle(object sender, RoutedEventArgs e)
