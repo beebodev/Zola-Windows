@@ -2,10 +2,13 @@
 
 ## Branch
 
-- Branch: `track1-voice-core`
+- Branch: `track1-voice-core` (merged into `main` and deleted)
 - Plan-commit SHA on `main`: `c8c83f7dcf146c2626d18adc840c0fad645f6903`
 - Base SHA (branch created from the plan-commit): `c8c83f7dcf146c2626d18adc840c0fad645f6903`
 - Build-plan v1.1 commit on `track1-voice-core`: `791769362190fa7b50058f13c692fb360a19e1b5`
+- Feature commit SHA: `8fafbbe07022dba94abd7e3834ac00460808ec67`
+- Branch tip merged: `8fafbbe07022dba94abd7e3834ac00460808ec67`
+- Merge commit SHA on `main`: `8bfbf64272949957da8ca333416431c802cbb660`
 
 ## Phase status
 
@@ -189,7 +192,9 @@ The developer reported the smoke test passed after the bubble fix. That covers t
 - `hermes-agent` `git status` is clean at `345cd2b057a452236de401d3534b8502a7465e8d`.
 - `python.exe -m pip check`: `No broken requirements found.`
 - No lore files were updated (`ROADMAP.md`, `DESIGN_DECISIONS.md`, `OPEN_QUESTIONS.md`).
-- Feature commit SHA and the merge commit SHA on `main` are recorded in the docs commit after the merge.
+- Feature commit SHA: `8fafbbe07022dba94abd7e3834ac00460808ec67`
+- Branch tip merged: `8fafbbe07022dba94abd7e3834ac00460808ec67`
+- Merge commit SHA on `main`: `8bfbf64272949957da8ca333416431c802cbb660`
 
 ## Files
 
