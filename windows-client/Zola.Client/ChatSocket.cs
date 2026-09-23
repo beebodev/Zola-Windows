@@ -26,6 +26,8 @@ sealed class ChatSocket : IDisposable
     private const string FieldAvailable = "available";
     private const string FieldAudioAvailable = "audio_available";
     private const string FieldSttAvailable = "stt_available";
+    // P2-SPEAK: voice.toggle replies report spoken replies in tts — P2-D03
+    private const string FieldTts = "tts";
     private const string FieldDetails = "details";
     private const string FieldReason = "reason";
 
@@ -616,7 +618,9 @@ sealed class ChatSocket : IDisposable
             ReadBool(result, FieldAudioAvailable),
             ReadBool(result, FieldSttAvailable),
             ReadString(result, FieldDetails),
-            ReadString(result, FieldReason));
+            ReadString(result, FieldReason),
+            // P2-SPEAK: tts is the spoken-reply flag; chat replies leave it unset — P2-D03
+            ReadBool(result, FieldTts));
     }
 
     private static string? DeltaChunk(JsonElement payload)
@@ -687,7 +691,9 @@ sealed class ChatSocket : IDisposable
         bool? AudioAvailable = null,
         bool? SttAvailable = null,
         string? Details = null,
-        string? Reason = null);
+        string? Reason = null,
+        // P2-SPEAK: null until a voice.toggle reply includes tts — P2-D03
+        bool? Tts = null);
 
     // P2-VOICE: one transcript carries the text plus the stop-phrase and no-speech flags — P2-D01
     internal readonly record struct VoiceTranscript(string Text, bool IsStopPhrase, bool IsNoSpeechLimit);
