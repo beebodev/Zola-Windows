@@ -20,6 +20,9 @@ at the end.
   The native Windows client is the sole JSON-RPC owner of mic/speaker
   capture (`WINH09-AUD-09`). No separate dashboard/TUI voice client
   competes for the mic. Revisit only if a companion app is added later.
+  Phase 2 (`P2-D01`): "sole owner" means the Windows client is the only
+  process that issues `voice.*` / `wake.*` RPCs to Zola's serve. The
+  physical device handle belongs to that serve child.
 - **C4 — Memory store: Extend (flat-file), with a stated long-term
   target (see `S14`).** Corrected from the original framing after
   inspecting Hermes's actual memory implementation:
@@ -65,7 +68,8 @@ at the end.
   confirmed a full capability gap); building this later means a new
   external integration (e.g. Azure Speaker Recognition), not a modification
   of existing STT/TTS plumbing. Documented as a candidate to revisit as
-  the product evolves, not ruled out permanently.
+  the product evolves, not ruled out permanently. Phase 2: still deferred;
+  the wake word does not identify the speaker.
 - **S2 — Relational Intelligence Layer: deferred.** Full five-subsystem
   build is too much for v1. Revisit once the foundation (Temporal
   Reasoning, Self-Model Awareness) is solid.
@@ -148,7 +152,8 @@ at the end.
   via LM Studio) already covers the Master Plan's abstraction targets,
   including live model/provider switching (`model_switch.py`). Default
   model(s) to configure get pinned down in the Build Plan.
-- **P2 — TTS/STT: Edge (free) for now.** ElevenLabs revisited later
+- **P2 — TTS: Edge (free) for now; STT: local faster-whisper (see
+  P2-D02).** Edge has no speech-to-text. ElevenLabs revisited later
   once there's a working baseline to compare quality/cost/latency
   against. Not a capability gap either way — Hermes supports both.
 - **P3 — Email: Gmail via the existing generic email platform adapter
@@ -231,3 +236,118 @@ six independent ones.
 - **A9 — One policy vs path-dependent gating: confirmed moot.** `C1`
   locked a single integration path (Path B); gating is uniform by
   construction, no path-dependent split to design for.
+## Phase 2 — Voice
+Recorded from `PHASE2_BUILD_PLAN.md` v1.1 (`P2-D01`–`P2-D12`) and from
+the three track progress docs (`P2-D13`–`P2-D17`). Full wording lives
+in the plan; this section is the lore pointer plus execution
+corrections and final tuned values.
+- **P2-D01 — Hermes owns the audio devices; the client drives voice
+  over `/api/ws`.** Mic, STT, TTS playback, barge-in, and wake
+  detection run in the Zola `hermes serve` child. The client never
+  opens an audio device and never uses `/api/audio/*`. Clarifies `C3`
+  as annotated above. See the plan.
+- **P2-D02 — Speech-to-text is local faster-whisper, pinned
+  explicitly.** `stt.provider: local`, `stt.local.model: base` (CPU on
+  the Latitude 7430). Turns off Hermes's cloud STT fallback. Corrects
+  `P2`.
+- **P2-D03 — Spoken replies: Edge, default voice, on by default in
+  Voice mode.** `tts.provider: edge`, `tts.edge.voice:
+  en-US-AriaNeural`. The client reads `voice.toggle status` and sends
+  `tts` only when speech is off, because the action flips. Hermes
+  speaks; the client plays no audio.
+- **P2-D04 — Starting a voice turn: "Hey Zola" first; mic button and
+  `Ctrl+Space` as fallback.** Sherpa, `phrase: "hey zola"`,
+  `capture: local`, `start_new_session: false`,
+  `profile_routing: false`, `sensitivity: 0.6`. Directed-speech
+  (`S19`) stays deferred.
+  Handover correction (plan Track 3 "release and retry once" on
+  `owned` is wrong): Hermes `wake.stop` releases only the caller's
+  own lease. The client retries `wake.start` 3 times, 1 s apart,
+  relying on dead-transport release. The old socket sends `wake.stop`
+  before it is aborted (`P2-WAKE`).
+- **P2-D05 — Every voice transcript is sent immediately.** Non-empty
+  `voice.transcript` without a stop phrase is a user bubble and
+  `prompt.submit` on the current session. No draft-and-edit.
+- **P2-D06 — Follow-up listening uses Hermes as-is.** Barge-in while
+  she speaks; after that, one estimated-delay `voice.record`. The
+  clock is provisional; final constants are `P2-D15`. A precise
+  end-of-playback signal is `S17`.
+- **P2-D07 — Voice/Text mode toggle; both modes always work.** Launch
+  defaults to Voice. Text composer stays enabled in both. Text mode
+  turns voice and wake off. Every new `/api/ws` re-syncs Voice state.
+- **P2-D08 — Voice state indicator comes from events only.** Separate
+  honest mic indicator: listening for "Hey Zola" / recording /
+  listening for interruptions / off. Never call the pipeline offline:
+  STT is on-device; Edge TTS and the conversational model are cloud.
+- **P2-D09 — Configuration lives in the live profile, with a
+  canonical copy in the repo.** Live:
+  `%LOCALAPPDATA%\hermes\profiles\zola\config.yaml`. Canonical:
+  `zola-architecture/identity/VOICE_CONFIG.md`.
+- **P2-D10 — Optional Python dependencies are installed only with
+  Brian's approval; Hermes source is never edited.** Enforced by
+  `security.allow_lazy_installs: false`. Installed set is `P2-D17`.
+  Hermes packaging gap: `wake.sherpa` omits `pypinyin`, which
+  `sherpa_onnx.text2token` needs even for English phrases (`P2-WAKE`).
+- **P2-D11 — No separate pre-build audit for Phase 2.** WINH09 already
+  covered this pinned tag's voice surface.
+- **P2-D12 — One owner for voice state; one listener per state; one
+  utterance, one turn.** `VoiceController.cs` alone sends
+  `voice.record` / `wake.*` and turns a transcript into a submit.
+  `MainWindow` only forwards and renders. Running-turn
+  `prompt.submit` is accepted (redirect or queue); the client submits
+  once and never holds.
+Phase 1 client defects fixed in Phase 2 (`P2-VOICE`):
+- Each new turn overwrote the previous assistant bubble.
+- Interjection/submit handling was tied to that overwrite; the
+  event-driven bubble lifecycle now keeps earlier replies on screen.
+### Decisions added during execution
+- **P2-D13 — Runaway-loop guard.** Three consecutive spoken turns
+  ended by `voice.interrupted`, with no completed turn in between,
+  switch the client to Text mode with a lid/mic/speaker notice. Added
+  because a closed laptop lid caused an endless self-interruption
+  loop (`P2-SPEAK`).
+- **P2-D14 — Echo guard (final, position-anchored rule).** Follow-up
+  captures only. Transcripts under 3 words are never dropped. Digit
+  tokens and list markers are stripped on both sides. Drop when an
+  in-order run (at most 1 unmatched word) is at least 3 words and
+  0.60 of the transcript, and ends within
+  `max(3, ceil(0.25 × n))` words of Zola's most recent spoken words
+  (rolling 20-word haystack). `EchoReopenLimit = 3`. History, each
+  replaced after review or dry-run against logged transcripts: (1)
+  P2-SPEAK shipped 0.80 bag-of-words; (2) lowered at P2-SPEAK smoke
+  to 0.60 bag-of-words plus a 4-word phrase match after Whisper
+  heard 'unless' as 'and less'; (3) P2-WAKE mid-smoke added a
+  rolling tail and a digit-fragment rule; review showed this version
+  would drop real follow-ups (e.g. 'What's the population of
+  France?') and short number answers; (4) contiguous 0.80 / 5-word
+  run: dry run dropped a user quoting Zola; (5) end-anchored
+  contiguous: dry run missed number-heavy echoes; (6) final:
+  digit-stripped, gap-tolerant, end-anchored (this rule).
+- **P2-D15 — Simulated playback clock, final model.** Speech
+  estimate: `FirstSentenceLatencySeconds = 3.3`, plus
+  `EstimatedWordsPerSecond = 2.5`, plus
+  `PerSentenceOverheadSeconds = 0.5` per sentence. Spoken-word
+  weighting: digit tokens count as `max(1, digitCount)` words;
+  a.m./p.m. count as 2; all-caps 2–5 letter acronyms count one word
+  per letter. `FollowUpMarginSeconds = 3.0`. Fitted from six
+  measured replies. The per-sentence cost is ffplay starting once
+  per sentence (`P2-SPEAK`, `P2-WAKE`).
+- **P2-D16 — Machine setup is a hard requirement for spoken
+  replies.** Required: lid **open**, mic input 100, Windows audio
+  enhancements **ON** (echo cancellation), speakers ~15, and FFmpeg
+  (`ffplay`) on PATH. With the lid closed, speaker bleed reached the
+  mic louder than the user's voice (about 9,600 vs 2,800–4,200 RMS).
+  The built-in mic array sits in the lid bezel (`P2-SPEAK`).
+- **P2-D17 — No automatic installs.**
+  `security.allow_lazy_installs: false` in the Zola profile. Every
+  Python or system dependency is installed only with developer
+  approval. Installed set: faster-whisper 1.2.1, sounddevice 0.5.5,
+  numpy 2.4.3 (accepted after an unapproved lazy install);
+  sherpa-onnx 1.13.4, sentencepiece 0.2.2, pypinyin 0.55.0;
+  FFmpeg 9.0.2 via winget.
+### Final tuned values
+Whisper `base`; Edge `en-US-AriaNeural`; `silence_duration` 1.5;
+clock as `P2-D15`; `EchoReopenLimit` 3; wake `sensitivity` 0.6
+(0 false wakes in 10 min of video audio, seated in front of the
+laptop, 2026-09-24). Canonical table:
+`zola-architecture/identity/VOICE_CONFIG.md`.

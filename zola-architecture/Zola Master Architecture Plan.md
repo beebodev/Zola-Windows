@@ -1247,7 +1247,8 @@ Avoid tightly coupling logic to:
 > Bedrock, Vertex, Azure, Moonshot, plus local models via LM Studio);
 > no custom provider work needed, and this already covers the "Future
 > abstraction targets" listed below. Speech Recognition / TTS (`P2`) —
-> Hermes's free Edge TTS/STT for now, ElevenLabs revisited once a
+> Edge TTS (free) and local faster-whisper STT (on-device) (`P2-D02`)
+> for now, ElevenLabs revisited once a
 > working baseline exists to compare against. The specific vendors
 > named below (Deepgram, Gemini, Gemini Live API) are this document's
 > Android-track current choices, not binding for Windows.
