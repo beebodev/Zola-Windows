@@ -200,7 +200,8 @@ public sealed partial class MainWindow : Window
         // P2-VOICE: voice.toggle status, then on, runs after the socket reports a session — P2-D07
         try
         {
-            await _voice.SyncVoiceModeAsync().ConfigureAwait(false);
+            // P2-WAKE: SessionReady and Voice-mode entry arm after the voice sync — P2-D04
+            await _voice.SyncVoiceAndWakeAsync().ConfigureAwait(false);
         }
         catch (ChatUnreachableException ex)
         {
@@ -361,6 +362,25 @@ public sealed partial class MainWindow : Window
         {
             // P2-SPEAK: barge-in keeps the mic while a turn runs or the speaking estimate is still open — P2-D12
             MicIndicatorText.Text = "Mic: listening for interruptions";
+        }
+        else if (_switchInFlight || _historyPending)
+        {
+            // P2-WAKE: session replace is the reconnect window; the old socket already disarmed — P2-D08
+            MicIndicatorText.Text = "Reconnecting voice…";
+        }
+        else if (_voice.WakeUnavailable || _voice.WakeHeldElsewhere)
+        {
+            // P2-WAKE: push-to-talk stays enabled when the detector is unavailable or held — P2-D08
+            MicIndicatorText.Text = "Wake word unavailable";
+        }
+        else if (_voice.Resting && _voice.WakeArmed && _voice.WakePaused)
+        {
+            MicIndicatorText.Text = "Wake listening paused";
+        }
+        else if (_voice.Resting && _voice.WakeArmed && !_voice.WakePaused)
+        {
+            // P2-WAKE: confirmed listening is the Resting indicator — P2-D08
+            MicIndicatorText.Text = "Mic: listening for \"Hey Zola\"";
         }
         else
         {

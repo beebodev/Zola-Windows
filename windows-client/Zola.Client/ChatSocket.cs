@@ -30,6 +30,16 @@ sealed class ChatSocket : IDisposable
     private const string FieldTts = "tts";
     private const string FieldDetails = "details";
     private const string FieldReason = "reason";
+    // P2-WAKE: wake.* replies add started/stopped/paused/resumed/listening and status flags — P2-D04
+    private const string FieldStarted = "started";
+    private const string FieldStopped = "stopped";
+    private const string FieldPaused = "paused";
+    private const string FieldResumed = "resumed";
+    private const string FieldListening = "listening";
+    private const string FieldOwnedByCaller = "owned_by_caller";
+    private const string FieldAudioSilent = "audio_silent";
+    private const string FieldHint = "hint";
+    internal const string ErrorTimeout = "timeout";
 
     private readonly HermesProcessManager _backend;
     private readonly CancellationTokenSource _lifetime = new();
@@ -80,6 +90,9 @@ sealed class ChatSocket : IDisposable
 
     public event Action<string, string?, bool>? WakeDetected;
 
+    // P2-WAKE: wake.stop must run on the old socket before Abort; VoiceController owns the handler — P2-D04
+    public Func<Task>? BeforeReplaceAsync { get; set; }
+
     public Task StartAsync()
     {
         // P1-SESSION: launch still asks the server for a new id; the client does not mint one — P1-D04
@@ -112,6 +125,18 @@ sealed class ChatSocket : IDisposable
         await _open.WaitAsync(_lifetime.Token).ConfigureAwait(false);
         try
         {
+            // P2-WAKE: disarm the old transport while Send still works; skip if that socket is already dead — P2-D04
+            if (_socket is { State: WebSocketState.Open } && BeforeReplaceAsync is { } replacing)
+            {
+                try
+                {
+                    await replacing().ConfigureAwait(false);
+                }
+                catch (ChatUnreachableException)
+                {
+                }
+            }
+
             Interlocked.Exchange(ref _suppressFault, 1);
             AbandonPending();
             var previous = _socket;
@@ -250,6 +275,12 @@ sealed class ChatSocket : IDisposable
         return CallAsync(method, parameters);
     }
 
+    public Task<RpcReply> InvokeAsync(string method, Dictionary<string, string?> parameters, TimeSpan timeout, bool faultOnTimeout)
+    {
+        // P2-WAKE: wake.start can download the sherpa model; a timeout must not Fault the socket — P2-D04
+        return CallAsync(method, parameters, timeout, faultOnTimeout);
+    }
+
     public void Dispose()
     {
         // P1-CLIENT: window close cancels the read loop without treating it as a second shutdown of hermes — P1-D01
@@ -274,7 +305,12 @@ sealed class ChatSocket : IDisposable
         _open.Dispose();
     }
 
-    private async Task<RpcReply> CallAsync(string method, Dictionary<string, string?> parameters)
+    private Task<RpcReply> CallAsync(string method, Dictionary<string, string?> parameters)
+    {
+        return CallAsync(method, parameters, TimeSpan.FromMilliseconds(RpcTimeoutMs), faultOnTimeout: true);
+    }
+
+    private async Task<RpcReply> CallAsync(string method, Dictionary<string, string?> parameters, TimeSpan timeout, bool faultOnTimeout)
     {
         // P1-CLIENT: integer ids stay clear of server srq- request ids on the same socket — P1-D01
         var id = Interlocked.Increment(ref _nextId);
@@ -294,7 +330,7 @@ sealed class ChatSocket : IDisposable
         try
         {
             await SendTextAsync(JsonSerializer.Serialize(payload)).ConfigureAwait(false);
-            return await pending.Task.WaitAsync(TimeSpan.FromMilliseconds(RpcTimeoutMs), _lifetime.Token).ConfigureAwait(false);
+            return await pending.Task.WaitAsync(timeout, _lifetime.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -302,6 +338,12 @@ sealed class ChatSocket : IDisposable
         }
         catch (TimeoutException)
         {
+            if (!faultOnTimeout)
+            {
+                // P2-WAKE: a wake.start timeout reconciles via wake.status instead of killing the socket — P2-D04
+                return new RpcReply(false, ErrorTimeout, null, null, null);
+            }
+
             Fault("the request was not answered");
             throw new ChatUnreachableException("Backend unreachable. The request was not answered.");
         }
@@ -544,7 +586,7 @@ sealed class ChatSocket : IDisposable
                 VoiceInterrupted?.Invoke();
                 return;
             case EventWakeDetected:
-                // P2-VOICE: wake.detected is parsed for Track 3 and has no subscriber in this track — P2-D01
+                // P2-WAKE: VoiceController is the only subscriber and decides whether a capture starts — P2-D04
                 WakeDetected?.Invoke(
                     hasPayload ? ReadString(payload, FieldPhrase) ?? "" : "",
                     hasPayload ? ReadString(payload, FieldProfile) : null,
@@ -620,7 +662,16 @@ sealed class ChatSocket : IDisposable
             ReadString(result, FieldDetails),
             ReadString(result, FieldReason),
             // P2-SPEAK: tts is the spoken-reply flag; chat replies leave it unset — P2-D03
-            ReadBool(result, FieldTts));
+            ReadBool(result, FieldTts),
+            // P2-WAKE: wake.start/stop/pause/resume/status fields; other RPCs leave them unset — P2-D04
+            ReadBool(result, FieldStarted),
+            ReadBool(result, FieldStopped),
+            ReadBool(result, FieldPaused),
+            ReadBool(result, FieldResumed),
+            ReadBool(result, FieldListening),
+            ReadBool(result, FieldOwnedByCaller),
+            ReadBool(result, FieldAudioSilent),
+            ReadString(result, FieldHint));
     }
 
     private static string? DeltaChunk(JsonElement payload)
@@ -693,7 +744,16 @@ sealed class ChatSocket : IDisposable
         string? Details = null,
         string? Reason = null,
         // P2-SPEAK: null until a voice.toggle reply includes tts — P2-D03
-        bool? Tts = null);
+        bool? Tts = null,
+        // P2-WAKE: null until a wake.* reply includes the field — P2-D04
+        bool? Started = null,
+        bool? Stopped = null,
+        bool? Paused = null,
+        bool? Resumed = null,
+        bool? Listening = null,
+        bool? OwnedByCaller = null,
+        bool? AudioSilent = null,
+        string? Hint = null);
 
     // P2-VOICE: one transcript carries the text plus the stop-phrase and no-speech flags — P2-D01
     internal readonly record struct VoiceTranscript(string Text, bool IsStopPhrase, bool IsNoSpeechLimit);
