@@ -328,5 +328,5 @@ Modified:
 ### SHAs
 
 - Plan commit on `main`: `5994e8bc4e1167c59304ec4b2317f8c9ed9ac94f`
-- Implementation commit: *(recorded in the follow-up docs commit)*
+- Implementation commit: `104698ba10cffd3f12bcedd8e983ae1334520923`
 - Merge SHA on `main`: *(recorded after merge)*
