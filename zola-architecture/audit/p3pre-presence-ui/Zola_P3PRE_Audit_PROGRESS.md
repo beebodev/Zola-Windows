@@ -27,6 +27,7 @@ Spike folder (outside both repos, never committed): `C:\Users\test\Dev\zola-spik
 | 8 | Synthesis | COMPLETE |
 | 9 | Closeout | COMPLETE |
 | Audit documents commit | `0b331c2b6d3b70d8b6af4777393eb20d2ffb162d` | |
+| Merge commit on main | `c2d6110fec5d9ee6c40a0d42d963d3838ab6fd63` | |
 
 ## Guardrails summary
 
