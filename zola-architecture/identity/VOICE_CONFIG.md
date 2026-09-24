@@ -97,10 +97,10 @@ The keyword model is not a pip package. `_ensure_sherpa_model` downloads it with
 | `FirstSentenceLatencySeconds` | `3.3` | 2026-09-23 | passed. Was 1.0. Fixed startup cost. |
 | `PerSentenceOverheadSeconds` | `0.5` | 2026-09-23 | passed. Was 3.0; that first fit predicted +23 s gaps. |
 | `FollowUpMarginSeconds` | `3.0` | 2026-09-23 | passed. Raised 2.0 → 3.0 after a long-reply tail was still captured at 2.0 s, so the reopened listen window does not time out before the user can reply. |
-| `EchoContainmentRatio` | `0.60` | 2026-09-23 | Track 2 specified 0.80. Lowered 0.80 → 0.60 after Whisper `unless` → `and less` (6/8 = 75%). **No longer used** for matching after P2-WAKE review (bag-of-words at 0.60 drops real follow-ups). |
+| `EchoContainmentRatio` | `0.60` | 2026-09-23 | Removed (P3-STATE) |
 | `EchoLookbackWords` | `20` | 2026-09-23 | last 20 spoken words across completed replies (rolling haystack kept). |
-| `EchoMinWords` | `3` | 2026-09-23 | Track 2 bag-of-words floor. **No longer used**; see `EchoMinContiguousWords`. |
-| `EchoPhraseWords` | `4` | 2026-09-23 | Track 2 phrase match. **No longer used**. |
+| `EchoMinWords` | `3` | 2026-09-23 | Removed (P3-STATE) |
+| `EchoPhraseWords` | `4` | 2026-09-23 | Removed (P3-STATE) |
 | `EchoContiguousRatio` | `0.80` | 2026-09-23 | Retired. |
 | `EchoLongRunWords` | `5` | 2026-09-23 | Retired. |
 | `EchoMinContiguousWords` | `3` | 2026-09-23 | Under 3 echo-words never dropped. |
