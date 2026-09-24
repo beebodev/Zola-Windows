@@ -25,7 +25,8 @@ Spike folder (outside both repos, never committed): `C:\Users\test\Dev\zola-spik
 | 6 | HUD and Dock Data-Source Inventory | COMPLETE |
 | 7 | Carry-over Confirmation | COMPLETE |
 | 8 | Synthesis | COMPLETE |
-| 9 | Closeout | IN PROGRESS |
+| 9 | Closeout | COMPLETE |
+| Audit documents commit | `0b331c2b6d3b70d8b6af4777393eb20d2ffb162d` | |
 
 ## Guardrails summary
 
