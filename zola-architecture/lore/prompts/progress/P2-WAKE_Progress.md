@@ -291,12 +291,32 @@ Final live client after the position-anchored echo rebuild: PID `11080`, session
 
 ## Closeout
 
-- `dotnet build windows-client/Zola.Client/Zola.Client.csproj` — recorded after the feature commit (0 warnings required).
+- `dotnet build windows-client/Zola.Client/Zola.Client.csproj` succeeded with 0 warnings and 0 errors.
 - Existing tests: N/A. This project has no automated test suite.
 - `hermes-agent` `git status` is clean at `345cd2b057a452236de401d3534b8502a7465e8d` (pinned `v2026.9.14`).
 - No lore files were updated (`ROADMAP.md`, `DESIGN_DECISIONS.md`, `OPEN_QUESTIONS.md`).
 - Final sensitivity: `0.6`.
-- Feature / merge SHAs: recorded on `main` after merge.
+- Feature commit SHA: `06038ca28a3d8a58484e12490f5a0afe7d0c834f`
+- Branch tip merged: `06038ca28a3d8a58484e12490f5a0afe7d0c834f`
+- Merge commit SHA on `main`: `0c375efee1ea58d937a1e468ab614bfcf109e0f6`
+
+### Exit criteria (PHASE2_BUILD_PLAN.md v1.1 Track 3)
+
+| Criterion | Result |
+|---|---|
+| Live `config.yaml` `wake_word` block matches `VOICE_CONFIG.md` verbatim | ✅ MET |
+| `wake.status` reports `available: true`, `capture: "local"`, `listening: true`, `owned_by_caller: true` in Voice | ✅ MET |
+| "Hey Zola, what time is it?" idle → current session | ✅ MET |
+| Detection with client minimized / unfocused | ✅ MET |
+| Re-arm after voice turn and follow-up timeout, no click | ✅ MET |
+| After New session and Resume, wake works; mic never `busy / wake_owned` | ✅ MET |
+| Wake while speaking → one user bubble, one turn (`P2-D12`) | ✅ MET |
+| Mic: listening for "Hey Zola" in Resting; *Mic: off* in Text | ✅ MET |
+| Text mode: "Hey Zola" does nothing; `listening: false` | ✅ MET |
+| "Hey Hermes" does not wake Zola | ✅ MET |
+| `hermes-agent` `git status` clean | ✅ MET |
+| `dotnet build` 0 warnings | ✅ MET |
+| Smoke HUMAN-RUN 1–10 + (a)(b)(c); 0 false wakes at 0.6 in front of laptop | ✅ MET |
 
 ## Files
 
