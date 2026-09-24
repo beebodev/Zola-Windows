@@ -15,6 +15,7 @@ public sealed partial class MainWindow : Window
     private readonly HermesProcessManager _backend;
     private readonly ChatSocket _chat;
     private readonly VoiceController _voice;
+    private readonly ZolaDisplayStateModel _display;
     private LiveResponse? _live;
     private bool _connectStarted;
     private bool _socketOwnsStatus;
@@ -41,6 +42,8 @@ public sealed partial class MainWindow : Window
         _chat = new ChatSocket(backend);
         // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
         _voice = new VoiceController(_chat);
+        // P3-STATE: the window renders the display record and does not derive it — P3-D03
+        _display = new ZolaDisplayStateModel(_voice, DispatcherQueue);
         _voice.StateChanged += () => Dispatch(ApplyVoiceChrome);
         _voice.TranscriptReady += text => Dispatch(() => _ = SubmitTurnAsync(text));
         _voice.VoiceChatEnded += () => Dispatch(OnVoiceChatEnded);
@@ -59,6 +62,8 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             // P2-SPEAK: app close cancels a pending follow-up before the socket is disposed — P2-D06
+            // P3-STATE: window close stops the stale-thinking timer — P3-D04
+            _display.Dispose();
             _voice.Shutdown();
             _chat.Dispose();
         };
@@ -315,87 +320,30 @@ public sealed partial class MainWindow : Window
 
     private void ApplyVoiceChrome()
     {
-        // P2-VOICE: the window copies session and turn facts into the controller, which owns the mic rule — P2-D12
-        _voice.SetCaptureGate(_sessionReady, _backend.WebSocketPermitted && !_unreachable, _streaming);
-        var unavailable = !_voice.IsAvailable && _voice.Mode == VoiceController.ModeText;
-        if (unavailable)
-        {
-            var details = _voice.UnavailableDetails;
-            VoiceStateText.Text = details.Length == 0 ? "Voice unavailable" : "Voice unavailable — " + details;
-        }
-        else if (_voice.Mode == VoiceController.ModeText)
-        {
-            VoiceStateText.Text = "Text mode";
-        }
-        else if (_streaming)
-        {
-            VoiceStateText.Text = "Thinking";
-        }
-        else if (_voice.Speaking)
-        {
-            // P2-SPEAK: Speaking is the simulated-clock estimate, not measured playback — P2-D08
-            VoiceStateText.Text = "Speaking";
-        }
-        else if (_voice.RecorderState == VoiceController.StateTranscribing)
-        {
-            VoiceStateText.Text = "Transcribing";
-        }
-        else if (_voice.CaptureActive || _voice.RecorderState == VoiceController.StateListening)
-        {
-            VoiceStateText.Text = "Listening";
-        }
-        else
-        {
-            VoiceStateText.Text = "Idle";
-        }
-
-        // P2-VOICE: recording, barge-in, and off are a separate line from the voice state — P2-D08
-        if (_voice.Mode != VoiceController.ModeVoice || !_voice.IsAvailable)
-        {
-            MicIndicatorText.Text = "Mic: off";
-        }
-        else if (_voice.CaptureActive)
-        {
-            MicIndicatorText.Text = "Mic: recording";
-        }
-        else if (_streaming || _voice.Speaking)
-        {
-            // P2-SPEAK: barge-in keeps the mic while a turn runs or the speaking estimate is still open — P2-D12
-            MicIndicatorText.Text = "Mic: listening for interruptions";
-        }
-        else if (_switchInFlight || _historyPending)
-        {
-            // P2-WAKE: session replace is the reconnect window; the old socket already disarmed — P2-D08
-            MicIndicatorText.Text = "Reconnecting voice…";
-        }
-        else if (_voice.WakeUnavailable || _voice.WakeHeldElsewhere)
-        {
-            // P2-WAKE: push-to-talk stays enabled when the detector is unavailable or held — P2-D08
-            MicIndicatorText.Text = "Wake word unavailable";
-        }
-        else if (_voice.Resting && _voice.WakeArmed && _voice.WakePaused)
-        {
-            MicIndicatorText.Text = "Wake listening paused";
-        }
-        else if (_voice.Resting && _voice.WakeArmed && !_voice.WakePaused)
-        {
-            // P2-WAKE: confirmed listening is the Resting indicator — P2-D08
-            MicIndicatorText.Text = "Mic: listening for \"Hey Zola\"";
-        }
-        else
-        {
-            MicIndicatorText.Text = "Mic: off";
-        }
-
-        ModeButton.Content = _voice.Mode == VoiceController.ModeVoice ? "Voice" : "Text";
-        ModeButton.IsEnabled = !_unreachable && !_modeSwitching && !string.IsNullOrEmpty(_chat.SessionId);
-        MicButton.IsEnabled = _voice.CanStartCapture;
-        MicButton.Content = _voice.CaptureActive ? "Listening" : "Mic";
+        // P3-STATE: the window assigns chrome from the display record — P3-D03
+        _display.UpdateWindowFacts(
+            _sessionReady,
+            _backend.WebSocketPermitted && !_unreachable,
+            _streaming,
+            _switchInFlight,
+            _historyPending,
+            _modeSwitching,
+            _unreachable,
+            !string.IsNullOrEmpty(_chat.SessionId));
+        var s = _display.Current;
+        VoiceStateText.Text = s.VoiceLabel;
+        MicIndicatorText.Text = s.MicLine;
+        ModeButton.Content = s.ModeWord;
+        ModeButton.IsEnabled = s.ModeButtonEnabled;
+        MicButton.IsEnabled = s.MicButtonEnabled;
+        MicButton.Content = s.MicButtonContent;
     }
 
     private void OnSubmitAcknowledged(string status)
     {
         // P1-CLIENT: streaming, queued, steered, and redirected are acks, not reply text — P1-D01
+        // P3-STATE: a turn event resets the stale-thinking clock — P3-D04
+        _display.NoteTurnActivity();
         if (_unreachable || _turnFinalized)
         {
             return;
@@ -457,6 +405,8 @@ public sealed partial class MainWindow : Window
 
     private void OnMessageStarted()
     {
+        // P3-STATE: a turn event resets the stale-thinking clock — P3-D04
+        _display.NoteTurnActivity();
         if (_unreachable)
         {
             return;
@@ -485,6 +435,8 @@ public sealed partial class MainWindow : Window
 
     private void OnMessageDelta(string chunk)
     {
+        // P3-STATE: a turn event resets the stale-thinking clock — P3-D04
+        _display.NoteTurnActivity();
         if (_unreachable || _turnFinalized)
         {
             return;
@@ -562,6 +514,8 @@ public sealed partial class MainWindow : Window
     private void OnRouted(string note)
     {
         // P1-CLIENT: non-turn frames update the detail line and never the assistant text — P1-D01
+        // P3-STATE: a turn event resets the stale-thinking clock — P3-D04
+        _display.NoteTurnActivity();
         if (_unreachable || string.IsNullOrWhiteSpace(note))
         {
             return;

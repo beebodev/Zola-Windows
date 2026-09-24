@@ -45,14 +45,12 @@ sealed class VoiceController
     private const double FollowUpMarginSeconds = 3.0;
     private const double FollowUpMaxDelaySeconds = 90;
     private const double MaxEstimatedSpeechSeconds = 300;
-    // P2-SPEAK: follow-up echo uses a tail bag-of-words check plus a short phrase run; 80% missed an STT split of unless — P2-D12
-    private const double EchoContainmentRatio = 0.60;
+    // P3-STATE: unused bag-of-words echo constants are removed; the live rule is P2-D14 — P3-D15
+    // P2-SPEAK: follow-up echo uses a tail bag-of-words check plus a short phrase run; 80% missed an STT split of unless — P2-D14
     private const int EchoLookbackWords = 20;
-    private const int EchoMinWords = 3;
-    private const int EchoPhraseWords = 4;
     private const int EchoReopenLimit = 3;
     private const double EchoReopenDelaySeconds = 0.5;
-    // P2-WAKE: drop a follow-up only when a ≥3-word in-order run is ≥0.60 of it and ends near her last spoken words — P2-D12
+    // P2-WAKE: drop a follow-up only when a ≥3-word in-order run is ≥0.60 of it and ends near her last spoken words — P2-D14
     private const int EchoMinContiguousWords = 3;
     private const double EchoAnchoredRatio = 0.60;
     private const int EchoEndSlackWords = 3;
@@ -71,8 +69,9 @@ sealed class VoiceController
     // P2-SPEAK: three consecutive voice.interrupted trips with no complete in between pause Voice — P2-D12
     private const int SelfInterruptLimit = 3;
     // P2-SPEAK: one append-only line per spoken turn for Phase 5 measurement — P2-D06
-    private const string TimelineClientFolder = "ZolaClient";
-    private const string TimelineLogFolder = "logs";
+    // P3-STATE: display-state.log shares this folder — P3-D03
+    internal const string TimelineClientFolder = "ZolaClient";
+    internal const string TimelineLogFolder = "logs";
     private const string TimelineLogFile = "voice-timeline.log";
 
     // P2-WAKE: wake RPC names, params, reasons, and timings are named constants — P2-D04
