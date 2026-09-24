@@ -70,7 +70,9 @@ Plan-vs-prompt, resolved in Phase 3 by following this closeout prompt (Brian's o
 
 ## Closeout
 
-- Feature / merge SHAs: recorded on `main` after merge.
+- Feature commit SHA: `fb3ef5b7b713157b92f4e937d7846410a8bccd27`
+- Branch tip merged: `fb3ef5b7b713157b92f4e937d7846410a8bccd27`
+- Merge commit SHA on `main`: `1cd52d54ba923e3bcad172c483b13c6c09ed7edf`
 - `hermes-agent` `git status` is clean at `345cd2b057a452236de401d3534b8502a7465e8d` (pinned `v2026.9.14`).
 - No client, config, or Hermes source was changed in this prompt.
 
