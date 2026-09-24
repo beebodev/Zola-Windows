@@ -296,11 +296,10 @@ Shown:
 
 | Element | Source | Honest wording |
 |---|---|---|
-| Voice line | `ZolaDisplayState.VoiceLabel` | Header "VOICE"; value e.g. "• LISTENING". **Never titled "ATTENTION".** |
-| Mic line | `ZolaDisplayState.MicLine` | Header "MIC"; value from Audit 01's priority, in upper case |
+| Voice block | `ZolaDisplayState.VoiceLabel` and `ZolaDisplayState.MicLine` | One header, "VOICE"; two value lines: "• " + voice label, then the mic line. **Never titled "ATTENTION".** *(v1.2: one block instead of separate VOICE and MIC headers, because the mic line already starts with "Mic:".)* Values are rendered upper-case at display time, as on Android. That is presentation only; the model's strings are unchanged. |
 | Time | local clock, refreshed on the minute | Header "TIME"; value `HH:mm` |
 | Session | `ChatSocket` runtime session id (short form) | Header "SESSION" |
-| Link | `ChatSocket` connected / unreachable | "LOCAL LINK • CONNECTED" / "OFFLINE". It must **not** say "encrypted": the link is loopback `ws://` |
+| Link | `ZolaDisplayState.LinkLabel` *(v1.2, added to the model so the window does not derive connection state)* | First match: unreachable or backend not reachable → "OFFLINE"; switch in flight or history pending → "LOCAL LINK • RECONNECTING"; session ready → "LOCAL LINK • CONNECTED"; else "LOCAL LINK • CONNECTING". It must **not** say "encrypted": the link is loopback `ws://` |
 | Notices | the existing `StatusText` / `DetailText` content | A notice line above the dock that collapses when empty |
 
 Hidden this phase, because no source supports them:
@@ -340,6 +339,13 @@ image asset and was not imported. Resolves P3PRE Q-L.
   pixels.
 - **Muted amber (3.98:1)** is used only for section and right-panel headers, at ≥14 px. It is
   never used for values.
+- **Conversation tokens (v1.2):** long-form reading text uses `ObsidianTextPrimary #E8DDD0`
+  (contrast 14.96) and bubbles use `ObsidianSurface #141414`. Both are Android `Color.kt:16–18`
+  values listed in K7. User bubbles get an amber-muted border, assistant bubbles an amber-dark
+  border, and "Interrupted" is badged in amber muted. **The one colour not taken from Android** is
+  `ZolaErrorColor #D9534F`, used only for the error badge and the error bubble border, because
+  errors must read as errors. Bubble maximum width is a token (`ZolaBubbleMaxWidth = 380`),
+  replacing the hard-coded 720.
 - **Theme:** the window forces a dark theme (`RequestedTheme = Dark`). Chat bubbles stop
   reading system theme brushes (`BubbleBrush`, Audit 07).
 - **Font files:** `rajdhani_regular.ttf` and `rajdhani_semibold.ttf` are committed under
@@ -408,6 +414,10 @@ The layout has these layers, back to front:
    content.
 
 Dock icons are `FontIcon` glyphs from Segoe Fluent Icons, in amber primary. No new icon asset.
+*(v1.2)* Each dock button's content is a glyph above a named label `TextBlock`, for example
+`ModeButtonLabel` and `MicButtonLabel`. `ApplyVoiceChrome` sets the label `Text` from
+`ZolaDisplayState` instead of replacing `Button.Content`, so the icon survives. The button
+`x:Name`s are unchanged.
 
 Window: initial size 1280×800, **minimum 900×640**. No title-bar customization this phase.
 
@@ -1096,7 +1106,10 @@ After all five tracks are merged to `main`:
 
 ---
 
-*Phase 3 Build Plan version 1.1*
+*Phase 3 Build Plan version 1.2*
+*v1.2 (2026-09-24, before Track 2): the HUD voice block merges the VOICE and MIC headers; `LinkLabel`
+added to `ZolaDisplayState`; conversation tokens plus one non-Android error colour; dock label
+TextBlocks. Track 1 merged at `2fb98126eed05561c86b7b3e67ed454b0e7ef331`.*
 *v1.1 (peer review, 2026-09-24): P3-D04 order (Speaking > streaming; Text mode last) plus
 stale-state recovery and DORMANT stillness; P3-D09 adaptive cadence; P3-D14 mouth onset and
 ease-out; Track 3 failure table, guarded LoadAsync, UI-thread scene attach; Track 5 composition
