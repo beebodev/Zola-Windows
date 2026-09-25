@@ -403,7 +403,7 @@ The layout has these layers, back to front:
    - right top: the VOICE block (header, voice label, mic line; `P3-D06` v1.2), divider, TIME
      *(v1.3 wording fix)*.
 4. **Notice line**, directly above the dock.
-5. **Dock**, bottom centre, always visible:
+5. **Dock**, bottom centre; *(v1.4)* hidden until needed, per `P3-D17`:
    - **Voice/Text** (`ModeButton`)
    - **Mic** (`MicButton`)
    - separator
@@ -479,6 +479,36 @@ from `S17` (speaker metering), which stays deferred.
   "Removed (P3-STATE)".
 
 Behaviour is unchanged.
+
+**P3-D17 — The dock is hidden until needed (v1.4, developer decision 2026-09-25).**
+The dock fades in when any of these is true, and fades out `DockHideDelaySeconds` (2) after none
+is:
+- the pointer is inside the bottom reveal zone (`DockRevealZoneHeight`, a token);
+- keyboard focus is inside the dock (Tab still reaches it while hidden);
+- the conversation overlay or the sessions panel is open;
+- a turn is running (`_streaming`), so Cancel is always one click away.
+
+Rules:
+- Hidden means opacity 0, not `Collapsed`, so Tab and automation still reach the buttons.
+- The fade runs over `DockFadeMilliseconds`; with reduced motion it is instant.
+- Exactly one method decides dock visibility.
+- No button, handler or `x:Name` changes.
+
+**P3-D18 — The notice line fades; problems stay (v1.4, developer decision 2026-09-25).**
+The notice line (`StatusText` / `DetailText`) is presentation-only here. No message text and none
+of the existing writers change.
+- A new or changed message shows, then fades after `NoticeHoldSeconds` (4).
+- The line stays up while something is actually wrong or in progress, the "sticky" condition:
+  - unreachable;
+  - switch in flight;
+  - history pending;
+  - or the last turn ended in an error, until the next turn starts.
+- `DetailText` (the session/stored detail) is shown **only** while the sticky condition is true.
+  The session id is already in the HUD.
+- When the conversation overlay is open, the notice line is centred in the space the overlay does
+  not cover. This fixes the 900-px overlap.
+- Exactly one method decides notice visibility. It is triggered by a text-changed callback on the
+  two `TextBlock`s plus `UpdateChrome`, so none of the 25+ existing writers is touched.
 
 **P3-D16 — No `hermes-agent` edits; no Python installs.** Carries forward `P2-D10`/`P2-D17`.
 Phase 3 is client-only. `git status` in `C:\Users\test\Dev\hermes-agent` must be clean at every
@@ -867,6 +897,18 @@ particles and corner brackets do not exist.
   constant. The GLB file is not modified.
 - Record the working-set difference.
 
+**Dock and notice (v1.4):** implement `P3-D17` and `P3-D18` in `MainWindow.xaml(.cs)` and
+tokens.
+
+**Iteration aid (v1.4):** a `#if DEBUG` hook reloads the look values from
+`%LOCALAPPDATA%\ZolaClient\debug\presence-look.json` without a rebuild, so tuning rounds are
+fast. The approved values are then written into `PresenceLook.cs` as constants. The JSON file
+is never read in Release builds and is never committed.
+
+**Memory after reloads (v1.4, from Track 3):** the resting working set is about 1.3 GB after
+reloads, versus about 790 MB cold. Re-measure it with the texture-size decision, and decide with
+numbers whether explicit disposal of the old scene on reload is worth adding.
+
 **Shell polish carried from the Track 2 review (v1.3):**
 - the `Composer` focus underline still uses the system accent; restyle it with the amber tokens;
 - the conversation overlay's 0.88 opacity lets the HUD show through under its header; tune it
@@ -889,7 +931,16 @@ Tag: `// P3-LOOK: … — P3-D13`.
       cheek, hair and chest samples as Audit 03 for reference, without pass/fail numbers.
 - [ ] Background glow and floor rings are in-scene; the window background outside them stays
       `#080808`.
-- [ ] Particles ≤ 40; brackets use tokens.
+- [ ] Particles ≤ 40; brackets use tokens. The decoration layer sits between the presence and
+      the HUD (`ZolaLayerDecoration`, between 0 and 10) and is not hit-testable.
+- [ ] *(v1.4)* The dock follows `P3-D17` and the notice line follows `P3-D18`. Each has exactly
+      one deciding method (search). No existing `StatusText`/`DetailText` writer changed (diff).
+- [ ] *(v1.4)* The shell polish list is done: composer accent, overlay opacity, notice at 900 px,
+      dock glyphs, mantra indent.
+- [ ] *(v1.4)* The debug look-reload reads its JSON only under `#if DEBUG`, and the JSON is not
+      committed.
+- [ ] *(v1.4)* Reload memory re-measured with the chosen texture size; the explicit-disposal
+      decision recorded with numbers.
 - [ ] Texture decision recorded with the final working set, the **peak** working set during
       load, and the load time, for both 2048² and 1024². An in-memory downscale can raise
       peak memory and load time even when final memory falls.
@@ -966,6 +1017,9 @@ voice or window facts directly (`P3-D03`).
     | Dormant | `Squint` 0.25, steady glow at 40%; no blink, breathing or head motion |
 
   - `MouthController` per `P3-D14`.
+  - *(v1.4, Track 3 finding)* `BlinkLeft` / `BlinkRight` are **her** left and right, the
+    anatomical convention (`BlinkLeft` closes the eye on the viewer's right). Asymmetric blinks
+    use them as-is; do not swap them.
   - `HeadMotionController`:
     - Listening: a forward pitch of 2°, spring-smoothed (attention lean);
     - an idle micro-turn of ±1.5° yaw every 8–15 s, standing in for saccade (`P3-D05`).
@@ -1026,7 +1080,7 @@ rather than shipping over budget.
 After all five tracks are merged to `main`:
 
 ### DESIGN_DECISIONS.md
-- Add a "Phase 3 — Presence UI" section recording `P3-D01` through `P3-D16`, with the final
+- Add a "Phase 3 — Presence UI" section recording `P3-D01` through `P3-D18`, with the final
   tuned values:
   - Track 4: lighting, bloom and texture size;
   - Track 5: expression weights, breathing, mouth cycler and idle frame rate;
@@ -1109,7 +1163,7 @@ After all five tracks are merged to `main`:
   9. Kill the serve process: Dormant plus "OFFLINE".
   10. Relaunch.
   11. 2 minutes idle: GPU ≤ 10%, nothing busy.
-- [ ] `DESIGN_DECISIONS.md` has `P3-D01`–`P3-D16`, and `P2-D08` is annotated.
+- [ ] `DESIGN_DECISIONS.md` has `P3-D01`–`P3-D18`, and `P2-D08` is annotated.
 - [ ] `OPEN_QUESTIONS.md` has `S24`–`S26` and `S28`–`S29` filed (plus `S27` if needed) and
       `S17` updated.
 - [ ] `ROADMAP.md` marks Phase 3 COMPLETE and has the Phase 4 stub.
@@ -1130,7 +1184,7 @@ After all five tracks are merged to `main`:
 | Orbitron wordmark | Rajdhani chosen (`P3-D08`) | Not planned |
 | Decorative waveform | It would look like a live audio reading; the space is reserved (`P3-D07` v1.3) | A real meter in Track 5, or `S27` |
 | Markdown rendering in bubbles | Pre-existing plain-text bubbles | `S29` |
-| Title-bar customization, dock auto-hide | Not needed for v1 of the shell | Future client polish |
+| Title-bar customization | Not needed for v1 of the shell | Future client polish |
 | Persisted Voice/Text mode, window size and panel state | Still no client settings store | Future client-settings work |
 | Stuck "Thinking" on a missing `message.complete` | Pre-existing Phase 1 behaviour | `S26` |
 | Global hotkey | Unchanged | `S18` |
@@ -1150,7 +1204,11 @@ After all five tracks are merged to `main`:
 
 ---
 
-*Phase 3 Build Plan version 1.3*
+*Phase 3 Build Plan version 1.4*
+*v1.4 (2026-09-25, before Track 4): `P3-D17` dock hidden until needed; `P3-D18` notice line fades,
+problems stay; Track 4 adds dock/notice, a debug look-reload aid, and the reload-memory
+re-measure; Track 5 notes her-left blink convention. Track 3 merged at
+`f61e1ae014bdf22bc0cab04e128bd93f0ffdebe5`.*
 *v1.3 (2026-09-24, before Track 3): `P3-D07` three-line tagline, mantra indent and reserved
 waveform space; `P3-D11` voice-block wording and composer focus return; Track 3 background from
 the token, lock/unlock without a new package, "PRESENCE UNAVAILABLE" fallback, two helper
