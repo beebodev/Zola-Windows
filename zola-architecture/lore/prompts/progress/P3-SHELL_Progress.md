@@ -337,3 +337,4 @@ Track 1 carried ⚠️ (XAML initial `Text="Idle"` / `Text="Mic: off"`): **resol
 
 - Plan v1.2 commit on `main`: `a03fda5389305f84668e63e437d9ee9f1b27d500`
 - Implementation commit: `021210e71809dc1fb67ac644a7a40685219f28aa`
+- Merge SHA on `main`: `b8bf6a15c8b806bca0fea499dbcfce0535e92932`
