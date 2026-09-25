@@ -4,8 +4,10 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 using Windows.System;
 using Windows.UI.Core;
+using Zola.Client.Presence;
 
 namespace Zola.Client;
 
@@ -34,6 +36,7 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, SessionRow> _sessionRows = new();
     private readonly HashSet<string> _serverSessionIds = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _clockTimer;
+    private PresenceView? _presence;
     private const int SessionIdDisplayLength = 8;
     private const string SessionHudPrefix = "SESSION ";
     private const string SessionHudEmpty = "SESSION —";
@@ -65,6 +68,14 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         ApplyWindowMetrics();
         SizeChanged += OnWindowSizeChanged;
+        // P3-RENDER: host the viewport in PresenceHost and pause when the window cannot be seen — P3-D02
+        _presence = new PresenceView(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        PresenceHost.Children.Add(_presence);
+        AppWindow.Changed += OnAppWindowChanged;
+        VisibilityChanged += OnWindowVisibilityChanged;
+#if DEBUG
+        AddPresenceDebugAccelerators();
+#endif
         _clockTimer = DispatcherQueue.CreateTimer();
         _clockTimer.IsRepeating = true;
         _clockTimer.Tick += OnClockTick;
@@ -96,6 +107,10 @@ public sealed partial class MainWindow : Window
             // P3-SHELL: window close also stops the HUD clock — P3-D06
             _clockTimer.Stop();
             _clockTimer.Tick -= OnClockTick;
+            CompositionTarget.Rendering -= OnFirstShellRender;
+            AppWindow.Changed -= OnAppWindowChanged;
+            VisibilityChanged -= OnWindowVisibilityChanged;
+            _presence?.Dispose();
             _display.Dispose();
             _voice.Shutdown();
             _chat.Dispose();
@@ -959,7 +974,93 @@ public sealed partial class MainWindow : Window
     {
         SizeConversationOverlay();
         NoticeHost.MaxWidth = AppWindow.Size.Width * Token<double>(TokenNoticeMaxFraction);
+        _presence?.NoteRootLoaded();
+        CompositionTarget.Rendering += OnFirstShellRender;
     }
+
+    private void OnFirstShellRender(object? sender, object e)
+    {
+        CompositionTarget.Rendering -= OnFirstShellRender;
+        if (_presence is null)
+        {
+            return;
+        }
+
+        _presence.NoteRenderOpportunity();
+        _ = _presence.LoadAsync();
+    }
+
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (sender.Presenter is not OverlappedPresenter presenter || _presence is null)
+        {
+            return;
+        }
+
+        if (presenter.State == OverlappedPresenterState.Minimized)
+        {
+            _presence.PauseRendering("minimized");
+        }
+        else
+        {
+            _presence.ResumeRendering("minimized");
+        }
+    }
+
+    private void OnWindowVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args)
+    {
+        if (_presence is null)
+        {
+            return;
+        }
+
+        if (args.Visible)
+        {
+            _presence.ResumeRendering("hidden");
+        }
+        else
+        {
+            _presence.PauseRendering("hidden");
+        }
+    }
+
+#if DEBUG
+    private void AddPresenceDebugAccelerators()
+    {
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F9, OnDebugBlinkHotkey));
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F10, OnDebugReloadHotkey));
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F11, OnDebugMorphHotkey));
+    }
+
+    private static KeyboardAccelerator CreatePresenceAccelerator(VirtualKey key, TypedEventHandler<KeyboardAccelerator, KeyboardAcceleratorInvokedEventArgs> handler)
+    {
+        var accelerator = new KeyboardAccelerator
+        {
+            Key = key,
+            Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift,
+        };
+        accelerator.Invoked += handler;
+        return accelerator;
+    }
+
+    private void OnDebugBlinkHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _presence?.DebugBlink();
+    }
+
+    private void OnDebugReloadHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _presence?.DebugReload();
+    }
+
+    private void OnDebugMorphHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _presence?.DebugMorphStep();
+    }
+#endif
 
     private void SizeConversationOverlay()
     {
