@@ -319,13 +319,19 @@ These are filed as `S25`. Resolves P3PRE Q-E and `P3PRE-AUD` rows marked [RISK] 
 **P3-D07 — Identity text is kept, as an explicit exception to §14.**
 These items carry no runtime state. They are kept as Zola's identity, not as status claims:
 - the "ZOLA" wordmark;
-- the tagline "PERSISTENT CONVERSATIONAL INTELLIGENCE", on two lines;
+- the tagline "PERSISTENT CONVERSATIONAL INTELLIGENCE", on **three** lines
+  ("PERSISTENT" / "CONVERSATIONAL" / "INTELLIGENCE"), as on Android *(v1.3)*;
 - the five mantra lines "I AM HERE. / I AM LISTENING. / I UNDERSTAND. / I REMEMBER. /
   I PROTECT.";
 - the "OBSIDIAN INTERFACE" label.
 
-The copy is exactly the Android copy. The waveform icon is omitted, because it is an Android
-image asset and was not imported. Resolves P3PRE Q-L.
+The copy is exactly the Android copy. *(v1.3, developer decision after the Track 2 review.)* The
+layout follows Android: the mantra is indented from the identity column's left edge by the token
+`ZolaMantraIndent`, and the space to its left, where Android draws a decorative waveform, is
+**reserved and left empty**. A decorative waveform would look like a live audio reading, so it is
+not drawn. Track 5 evaluates filling that space with a **real** mic-input meter. It may do so only
+if `VoiceController` already exposes an input level without any voice-pipeline change. Otherwise
+the space stays empty and the meter is filed as `S27`. Resolves P3PRE Q-L.
 
 **P3-D08 — Visual tokens, fonts and scale.**
 - **Tokens:** the K7 colour values, verbatim, as `Color` + `SolidColorBrush` resources in one
@@ -394,7 +400,8 @@ The layout has these layers, back to front:
 3. **HUD**:
    - left top: identity block;
    - left bottom: "OBSIDIAN INTERFACE", then the link and session lines;
-   - right top: VOICE, MIC, divider, TIME.
+   - right top: the VOICE block (header, voice label, mic line; `P3-D06` v1.2), divider, TIME
+     *(v1.3 wording fix)*.
 4. **Notice line**, directly above the dock.
 5. **Dock**, bottom centre, always visible:
    - **Voice/Text** (`ModeButton`)
@@ -409,7 +416,10 @@ The layout has these layers, back to front:
    - it holds `TranscriptScroll`/`Transcript`, the `Composer`, `SendButton` and a close
      button;
    - Esc closes it;
-   - the transcript keeps filling while it is hidden.
+   - the transcript keeps filling while it is hidden;
+   - *(v1.3, Track 2 smoke finding)* after a **typed** send, focus returns to `Composer` when
+     the turn ends, but only if the overlay is still open. Closing the overlay, opening
+     sessions, or switching mode cancels the return. Voice turns never move focus.
 7. **Sessions panel**: a left-side panel in the same style, containing today's `SessionPanel`
    content.
 
@@ -723,7 +733,8 @@ references added by the commands.
 
 **`Presence/PresenceView.cs` (new, `UserControl` built in code):**
 - Constructs `Viewport3DX` in code (`P3PRE-AUD-19`):
-  - `BackgroundColor = #FF080808`;
+  - `BackgroundColor` from the `ZolaBackground` token (`#080808`), read from resources, not a
+    literal *(v1.3)*;
   - camera per the Grounding summary;
   - FXAA left at default unless Track 4 changes it.
 - `LoadAsync()` imports `ms-appx`-resolved `Assets/Presence/zola.glb` **off the UI thread**. It
@@ -739,13 +750,16 @@ references added by the commands.
 - Rendering stays lazy (on demand):
   - `PauseRendering()` / `ResumeRendering()` for minimize and occlusion, from
     `AppWindow.Changed` / visibility;
-  - `SessionSwitch` lock/unlock handling that pauses on lock and resumes and re-validates on
-    unlock.
+  - session lock/unlock handling that pauses on lock and resumes and re-validates on unlock.
+    *(v1.3)* `Microsoft.Win32.SystemEvents.SessionSwitch` may need a package that WinUI apps
+    do not reference. If it is not available without a new package, use
+    `WTSRegisterSessionNotification` plus a window subclass (`SetWindowSubclass`) for
+    `WM_WTSSESSION_CHANGE`, through P/Invoke. No new package either way.
 - **Failure handling (v1.1)**:
 
   | Failure | Handling |
   |---|---|
-  | GLB missing, unreadable or fails import | Static fallback: the wordmark centred on `#080808`, logged `P3-RENDER: presence unavailable — <reason>` |
+  | GLB missing, unreadable or fails import | Static fallback: `#080808` with one centred line, "PRESENCE UNAVAILABLE", in the muted header style *(v1.3: replaces a centred wordmark, which would duplicate the HUD's)*. Logged `P3-RENDER: presence unavailable — <reason>` |
   | Morph weight count ≠ 15 | Static fallback (never drive the wrong targets) |
   | Recoverable device loss (lock, sleep, driver reset) | Recreate or reinitialize rendering and reload the scene, then log `P3-RENDER: device recovered` |
   | Unrecoverable renderer failure, process still healthy | Static fallback |
@@ -762,12 +776,21 @@ references added by the commands.
 
 **`Presence/MorphTarget.cs` (new):** the K3 enum plus one comment line citing `P3-D02`.
 
+*(v1.3)* Two helper files are allowed, so `PresenceView` stays readable:
+- `Presence/GlbTextureLocator.cs`: the GLB JSON walk to `Image_1` (`P3-D02`);
+- `Presence/SessionLockWatcher.cs`: lock/unlock and suspend/resume notifications (the same
+  window subclass can receive `WM_POWERBROADCAST`).
+
+Presence log lines go to `%LOCALAPPDATA%\ZolaClient\logs\presence.log`, the same folder as the
+display-state log.
+
 **`MainWindow.xaml.cs`:** create `PresenceView` into `PresenceHost` and call `LoadAsync` after
 the window shows. Nothing else.
 
 ### Exit criteria
 - [ ] The bust renders centred on `#080808` with the four textures, as in the L9 baseline, at
-      launch and at 900×640, 1280×800 and 1920×1080.
+      launch and at 900×640, 1280×800 and maximized *(v1.3: maximized replaces a 1920×1080
+      resize, which spans monitors on a multi-monitor setup)*.
 - [ ] A debug-only command (behind `#if DEBUG`, not in the dock) sets `Blink both` = 1, then
       resets. The face deforms and returns to neutral.
 - [ ] Deleting the GLB from the output folder gives the static fallback plus the log line, and
@@ -843,6 +866,18 @@ particles and corner brackets do not exist.
 - The developer picks. If 1024² is chosen, the load-time downscale ships behind a named
   constant. The GLB file is not modified.
 - Record the working-set difference.
+
+**Shell polish carried from the Track 2 review (v1.3):**
+- the `Composer` focus underline still uses the system accent; restyle it with the amber tokens;
+- the conversation overlay's 0.88 opacity lets the HUD show through under its header; tune it
+  against the rendered bust;
+- at 900 px the overlay covers the right end of the notice line; the notice line must stay
+  readable when the overlay is open;
+- the Voice/Text (`E8D4`) and Sessions (`E8A5`) glyphs do not match their names; choose glyphs
+  that do;
+- `ZolaMantraIndent` 124 sits further right than Android; tune it to match (about 100 is
+  expected);
+- corner brackets (already listed above).
 
 Tag: `// P3-LOOK: … — P3-D13`.
 
@@ -1013,6 +1048,13 @@ After all five tracks are merged to `main`:
   more visible by Phase 3.
 - **Update `S17`:** an end-of-playback or speaker-meter signal would also give real mouth
   amplitude (`P3-D14`).
+- **File `S27` — Mic-input meter in the identity block (v1.3).** Only if Track 5 could not
+  fill the reserved space honestly (`P3-D07`).
+- **File `S28` — Session UI retirement (v1.3).** The developer expects his memory system to
+  make sessions unnecessary. When it does, remove the SESSION HUD line and the Sessions dock
+  button together.
+- **File `S29` — Markdown rendering in chat bubbles (v1.3).** Bubbles are plain text, so fenced
+  code, lists and links show as raw markdown. This predates Phase 3.
 - `S13`, `S16`, `S18`–`S23` unchanged.
 
 ### ROADMAP.md
@@ -1068,7 +1110,8 @@ After all five tracks are merged to `main`:
   10. Relaunch.
   11. 2 minutes idle: GPU ≤ 10%, nothing busy.
 - [ ] `DESIGN_DECISIONS.md` has `P3-D01`–`P3-D16`, and `P2-D08` is annotated.
-- [ ] `OPEN_QUESTIONS.md` has `S24`–`S26` filed and `S17` updated.
+- [ ] `OPEN_QUESTIONS.md` has `S24`–`S26` and `S28`–`S29` filed (plus `S27` if needed) and
+      `S17` updated.
 - [ ] `ROADMAP.md` marks Phase 3 COMPLETE and has the Phase 4 stub.
 - [ ] The presence UI doc has its Windows Track notes.
 
@@ -1085,7 +1128,8 @@ After all five tracks are merged to `main`:
 | Audio-driven lip-sync and precise speaking end | No amplitude signal; client plays no audio (`P3-D14`) | `S17` |
 | `ALERT` mode being produced | No urgency or security signal on Windows | With `S25` |
 | Orbitron wordmark | Rajdhani chosen (`P3-D08`) | Not planned |
-| Waveform icon | Android image asset, not imported (`P3-D07`) | Future identity polish |
+| Decorative waveform | It would look like a live audio reading; the space is reserved (`P3-D07` v1.3) | A real meter in Track 5, or `S27` |
+| Markdown rendering in bubbles | Pre-existing plain-text bubbles | `S29` |
 | Title-bar customization, dock auto-hide | Not needed for v1 of the shell | Future client polish |
 | Persisted Voice/Text mode, window size and panel state | Still no client settings store | Future client-settings work |
 | Stuck "Thinking" on a missing `message.complete` | Pre-existing Phase 1 behaviour | `S26` |
@@ -1106,7 +1150,13 @@ After all five tracks are merged to `main`:
 
 ---
 
-*Phase 3 Build Plan version 1.2*
+*Phase 3 Build Plan version 1.3*
+*v1.3 (2026-09-24, before Track 3): `P3-D07` three-line tagline, mantra indent and reserved
+waveform space; `P3-D11` voice-block wording and composer focus return; Track 3 background from
+the token, lock/unlock without a new package, "PRESENCE UNAVAILABLE" fallback, two helper
+files, presence log, maximized instead of 1920×1080; Track 4 shell polish from the Track 2
+review; `S27`–`S29` for the lore closeout. Track 2 merged at
+`b8bf6a15c8b806bca0fea499dbcfce0535e92932`.*
 *v1.2 (2026-09-24, before Track 2): the HUD voice block merges the VOICE and MIC headers; `LinkLabel`
 added to `ZolaDisplayState`; conversation tokens plus one non-Android error colour; dock label
 TextBlocks. Track 1 merged at `2fb98126eed05561c86b7b3e67ed454b0e7ef331`.*
