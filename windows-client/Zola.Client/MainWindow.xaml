@@ -5,96 +5,318 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Zola">
-    <!-- P2-VOICE: Ctrl+Space starts or stops capture; Window has no accelerator collection, so the root grid owns it — P2-D04 -->
-    <Grid Padding="16" RowSpacing="12">
+    <!-- P3-SHELL: one-cell obsidian shell; Ctrl+Space stays on the root grid — P3-D11 -->
+    <Grid
+        x:Name="RootGrid"
+        Background="{StaticResource ZolaBackgroundBrush}"
+        IsTabStop="True"
+        RequestedTheme="Dark"
+        UseSystemFocusVisuals="False"
+        Loaded="OnRootLoaded">
         <Grid.KeyboardAccelerators>
+            <!-- P2-VOICE: Ctrl+Space starts or stops capture; Window has no accelerator collection, so the root grid owns it — P2-D04 -->
             <KeyboardAccelerator Key="Space" Modifiers="Control" Invoked="OnVoiceHotkey" />
+            <KeyboardAccelerator Key="Escape" Invoked="OnEscapeKey" />
         </Grid.KeyboardAccelerators>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
-        <!-- P1-CLIENT: readiness and non-chat socket notes stay outside the transcript — P1-D01 -->
-        <StackPanel Grid.Row="0" Spacing="4">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Text="Zola" Style="{StaticResource TitleTextBlockStyle}" />
-                <!-- P2-VOICE: Voice or Text is chosen here; both leave the composer usable — P2-D07 -->
-                <Button x:Name="ModeButton" Grid.Column="1" Margin="0,0,8,0" Click="OnModeClick" Content="Voice" IsEnabled="False" />
-                <!-- P1-SESSION: the session list stays hidden until this toggle is used — P1-D04 -->
-                <Button x:Name="SessionsButton" Grid.Column="2" Click="OnSessionsToggle" Content="Sessions" IsEnabled="False" />
-            </Grid>
-            <TextBlock x:Name="StatusText" TextWrapping="WrapWholeWords" />
-            <TextBlock x:Name="DetailText" TextWrapping="WrapWholeWords" Opacity="0.8" />
-            <!-- P2-VOICE: voice state comes from recorder events and the turn, not from a pipeline probe — P2-D08 -->
-            <TextBlock x:Name="VoiceStateText" Text="Idle" TextWrapping="WrapWholeWords" />
-            <!-- P2-VOICE: this line says what the microphone is doing, separate from the voice state — P2-D08 -->
-            <TextBlock x:Name="MicIndicatorText" Text="Mic: off" TextWrapping="WrapWholeWords" />
+
+        <!-- P3-SHELL: Track 3 inserts the viewport only into this host — P3-D11 -->
+        <Grid
+            x:Name="PresenceHost"
+            Canvas.ZIndex="{StaticResource ZolaLayerPresence}" />
+
+        <!-- P3-SHELL: identity, voice block, time, session, and link only — P3-D06 -->
+        <Grid
+            Canvas.ZIndex="{StaticResource ZolaLayerHud}"
+            IsHitTestVisible="False"
+            Margin="{StaticResource ZolaHudMargin}">
+            <!-- P3-SHELL: identity copy and mantra indent match the Android HUD layout — P3-D07 -->
+            <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Spacing="{StaticResource ZolaSpace8}">
+                <TextBlock Text="ZOLA" Style="{StaticResource ZolaWordmarkStyle}" />
+                <StackPanel>
+                    <TextBlock Text="PERSISTENT" Style="{StaticResource ZolaTaglineStyle}" />
+                    <TextBlock Text="CONVERSATIONAL" Style="{StaticResource ZolaTaglineStyle}" />
+                    <TextBlock Text="INTELLIGENCE" Style="{StaticResource ZolaTaglineStyle}" />
+                </StackPanel>
+                <StackPanel Margin="{StaticResource ZolaMantraIndent}">
+                    <TextBlock Text="I AM HERE." Style="{StaticResource ZolaMantraStyle}" />
+                    <TextBlock Text="I AM LISTENING." Style="{StaticResource ZolaMantraStyle}" />
+                    <TextBlock Text="I UNDERSTAND." Style="{StaticResource ZolaMantraStyle}" />
+                    <TextBlock Text="I REMEMBER." Style="{StaticResource ZolaMantraStyle}" />
+                    <TextBlock Text="I PROTECT." Style="{StaticResource ZolaMantraStyle}" />
+                </StackPanel>
+                <Rectangle
+                    Height="{StaticResource ZolaDividerThickness}"
+                    HorizontalAlignment="Stretch"
+                    Fill="{StaticResource ZolaDividerBrush}" />
+            </StackPanel>
+
+            <StackPanel HorizontalAlignment="Left" VerticalAlignment="Bottom" Spacing="{StaticResource ZolaSpace4}">
+                <TextBlock Text="OBSIDIAN INTERFACE" Style="{StaticResource ZolaFooterStyle}" />
+                <TextBlock x:Name="LinkText" Style="{StaticResource ZolaFooterStyle}" />
+                <TextBlock x:Name="SessionText" Style="{StaticResource ZolaFooterStyle}" />
+            </StackPanel>
+
+            <StackPanel
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Width="{StaticResource ZolaRightHudMaxWidth}"
+                Padding="{StaticResource ZolaRightHudPad}"
+                Spacing="{StaticResource ZolaSpace4}">
+                <TextBlock Text="VOICE" Style="{StaticResource ZolaRightHeaderStyle}" TextAlignment="Right" />
+                <TextBlock x:Name="VoiceStateText" Style="{StaticResource ZolaRightValueStyle}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
+                <TextBlock x:Name="MicIndicatorText" Style="{StaticResource ZolaRightValueStyle}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
+                <Rectangle
+                    Height="{StaticResource ZolaDividerThickness}"
+                    HorizontalAlignment="Stretch"
+                    Fill="{StaticResource ZolaDividerBrush}" />
+                <TextBlock Text="TIME" Style="{StaticResource ZolaRightHeaderStyle}" TextAlignment="Right" />
+                <TextBlock x:Name="TimeText" Style="{StaticResource ZolaTimeStyle}" TextAlignment="Right" />
+            </StackPanel>
+        </Grid>
+
+        <!-- P3-SHELL: notices sit above the dock and collapse visually when empty — P3-D06 -->
+        <StackPanel
+            x:Name="NoticeHost"
+            Canvas.ZIndex="{StaticResource ZolaLayerNotice}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Bottom"
+            IsHitTestVisible="False"
+            Margin="{StaticResource ZolaNoticeMargin}"
+            Spacing="{StaticResource ZolaSpace4}">
+            <TextBlock
+                x:Name="StatusText"
+                HorizontalAlignment="Center"
+                Style="{StaticResource ZolaNoticeStyle}"
+                TextAlignment="Center"
+                TextWrapping="WrapWholeWords" />
+            <TextBlock
+                x:Name="DetailText"
+                HorizontalAlignment="Center"
+                Style="{StaticResource ZolaNoticeStyle}"
+                TextAlignment="Center"
+                TextWrapping="WrapWholeWords" />
         </StackPanel>
-        <!-- P1-CLIENT: the transcript is the response area message.start prepares and deltas fill — P1-D01 -->
-        <Grid Grid.Row="1" ColumnSpacing="12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <ScrollViewer x:Name="TranscriptScroll" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel x:Name="Transcript" Spacing="8" />
-            </ScrollViewer>
-            <!-- P1-SESSION: the list sits beside the chat and is collapsed until the toggle opens it — P1-D04 -->
-            <Border x:Name="SessionPanel" Grid.Column="1" Width="300" Padding="12" Visibility="Collapsed" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="1">
-                <Grid RowSpacing="8">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="Sessions" Style="{StaticResource SubtitleTextBlockStyle}" />
-                    <Grid Grid.Row="1">
-                        <TextBlock x:Name="EmptySessionsText" Text="No saved sessions yet." TextWrapping="WrapWholeWords" Opacity="0.8" />
-                        <ListView x:Name="SessionList" IsItemClickEnabled="True" SelectionMode="None" ItemClick="OnSessionItemClick">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Spacing="2" Padding="0,4">
-                                        <TextBlock Text="{Binding Id}" TextWrapping="WrapWholeWords" />
-                                        <TextBlock Text="{Binding LastActiveText}" Opacity="0.7" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                    </Grid>
-                    <StackPanel Grid.Row="2" Spacing="8">
-                        <!-- P1-SESSION: new session uses session.create on a fresh socket and shows the returned id — P1-D04 -->
-                        <Button x:Name="NewSessionButton" HorizontalAlignment="Stretch" Click="OnNewSessionClick" Content="New session" IsEnabled="False" />
-                        <Button x:Name="CloseSessionsButton" HorizontalAlignment="Stretch" Click="OnCloseSessionsClick" Content="Close" />
+
+        <!-- P3-SHELL: dock is always visible; Cancel is shown only while a turn runs — P3-D11 -->
+        <Border
+            x:Name="DockHost"
+            Canvas.ZIndex="{StaticResource ZolaLayerDock}"
+            Style="{StaticResource ZolaDockHostStyle}">
+            <StackPanel Orientation="Horizontal" Spacing="{StaticResource ZolaSpace8}" VerticalAlignment="Center">
+                <Button
+                    x:Name="ModeButton"
+                    Style="{StaticResource ZolaDockButtonStyle}"
+                    Click="OnModeClick"
+                    IsEnabled="False"
+                    AutomationProperties.Name="Mode">
+                    <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE8D4;"
+                            HorizontalAlignment="Center" />
+                        <TextBlock x:Name="ModeButtonLabel" Style="{StaticResource ZolaDockLabelStyle}" />
                     </StackPanel>
+                </Button>
+                <Button
+                    x:Name="MicButton"
+                    Style="{StaticResource ZolaDockButtonStyle}"
+                    Click="OnMicClick"
+                    IsEnabled="False"
+                    AutomationProperties.Name="Mic">
+                    <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE720;"
+                            HorizontalAlignment="Center" />
+                        <TextBlock x:Name="MicButtonLabel" Style="{StaticResource ZolaDockLabelStyle}" />
+                    </StackPanel>
+                </Button>
+                <Rectangle
+                    Width="{StaticResource ZolaDockSeparatorWidth}"
+                    Height="{StaticResource ZolaDockIconSize}"
+                    VerticalAlignment="Center"
+                    Fill="{StaticResource ZolaAmberMutedBrush}" />
+                <Button
+                    x:Name="ConversationButton"
+                    Style="{StaticResource ZolaDockButtonStyle}"
+                    Click="OnConversationClick"
+                    AutomationProperties.Name="Conversation">
+                    <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE8F2;"
+                            HorizontalAlignment="Center" />
+                        <TextBlock Style="{StaticResource ZolaDockLabelStyle}" Text="CONVERSATION" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    x:Name="SessionsButton"
+                    Style="{StaticResource ZolaDockButtonStyle}"
+                    Click="OnSessionsToggle"
+                    IsEnabled="False"
+                    AutomationProperties.Name="Sessions">
+                    <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE8A5;"
+                            HorizontalAlignment="Center" />
+                        <TextBlock Style="{StaticResource ZolaDockLabelStyle}" Text="SESSIONS" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    x:Name="CancelButton"
+                    Style="{StaticResource ZolaDockButtonStyle}"
+                    Click="OnCancelClick"
+                    IsEnabled="False"
+                    Visibility="Collapsed"
+                    AutomationProperties.Name="Cancel">
+                    <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE711;"
+                            HorizontalAlignment="Center" />
+                        <TextBlock Style="{StaticResource ZolaDockLabelStyle}" Text="CANCEL" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <!-- P3-SHELL: conversation overlay is right-side, collapsed until the dock opens it — P3-D11 -->
+        <Border
+            x:Name="ConversationOverlay"
+            Canvas.ZIndex="{StaticResource ZolaLayerPanel}"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Stretch"
+            Margin="{StaticResource ZolaPanelAboveDockMargin}"
+            Style="{StaticResource ZolaPanelBorderStyle}"
+            Visibility="Collapsed">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0" Margin="{StaticResource ZolaHeaderBottomMargin}">
+                    <TextBlock Text="CONVERSATION" Style="{StaticResource ZolaSectionHeaderStyle}" VerticalAlignment="Center" />
+                    <Button
+                        HorizontalAlignment="Right"
+                        Style="{StaticResource ZolaDockButtonStyle}"
+                        Click="OnConversationCloseClick"
+                        AutomationProperties.Name="Close conversation">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE711;" />
+                    </Button>
                 </Grid>
-            </Border>
-        </Grid>
-        <!-- P1-CLIENT: Send calls prompt.submit; Cancel calls session.interrupt — P1-D01 -->
-        <Grid Grid.Row="2" ColumnSpacing="8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBox
-                x:Name="Composer"
-                Grid.Column="0"
-                AcceptsReturn="True"
-                IsEnabled="False"
-                MaxHeight="120"
-                PlaceholderText="Waiting for the session…"
-                TextWrapping="Wrap" />
-            <!-- P2-VOICE: the mic toggles voice.record; the label shows listening or idle — P2-D04 -->
-            <Button x:Name="MicButton" Grid.Column="1" MinWidth="88" VerticalAlignment="Bottom" Click="OnMicClick" Content="Mic" IsEnabled="False" />
-            <Button x:Name="SendButton" Grid.Column="2" MinWidth="88" VerticalAlignment="Bottom" Click="OnSendClick" Content="Send" IsEnabled="False" />
-            <Button x:Name="CancelButton" Grid.Column="3" MinWidth="88" VerticalAlignment="Bottom" Click="OnCancelClick" Content="Cancel" IsEnabled="False" />
-        </Grid>
+                <!-- P1-CLIENT: the transcript is the response area message.start prepares and deltas fill — P1-D01 -->
+                <ScrollViewer
+                    x:Name="TranscriptScroll"
+                    Grid.Row="1"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="Transcript" Spacing="{StaticResource ZolaSpace8}" />
+                </ScrollViewer>
+                <!-- P1-CLIENT: Send calls prompt.submit; Cancel calls session.interrupt — P1-D01 -->
+                <Grid Grid.Row="2" ColumnSpacing="{StaticResource ZolaSpace8}" Margin="{StaticResource ZolaComposerTopMargin}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox
+                        x:Name="Composer"
+                        Grid.Column="0"
+                        Style="{StaticResource ZolaComposerStyle}"
+                        AcceptsReturn="True"
+                        IsEnabled="False"
+                        PlaceholderText="Waiting for the session…"
+                        TextWrapping="Wrap" />
+                    <Button
+                        x:Name="SendButton"
+                        Grid.Column="1"
+                        Style="{StaticResource ZolaTextButtonStyle}"
+                        VerticalAlignment="Bottom"
+                        Click="OnSendClick"
+                        Content="Send"
+                        IsEnabled="False" />
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- P1-SESSION: the list is collapsed until the toggle opens it — P1-D04 -->
+        <Border
+            x:Name="SessionPanel"
+            Canvas.ZIndex="{StaticResource ZolaLayerPanel}"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Stretch"
+            Width="{StaticResource SessionsPanelWidth}"
+            Margin="{StaticResource ZolaPanelAboveDockMargin}"
+            Style="{StaticResource ZolaPanelBorderStyle}"
+            Visibility="Collapsed">
+            <Grid RowSpacing="{StaticResource ZolaSpace8}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="SESSIONS" Style="{StaticResource ZolaSectionHeaderStyle}" />
+                <Grid Grid.Row="1">
+                    <TextBlock
+                        x:Name="EmptySessionsText"
+                        Style="{StaticResource ZolaNoticeStyle}"
+                        Text="No saved sessions yet."
+                        TextWrapping="WrapWholeWords" />
+                    <ListView
+                        x:Name="SessionList"
+                        Background="Transparent"
+                        Foreground="{StaticResource ZolaTextPrimaryBrush}"
+                        IsItemClickEnabled="True"
+                        SelectionMode="None"
+                        ItemClick="OnSessionItemClick">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="Padding" Value="{StaticResource ZolaSessionItemPadding}" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                                    <TextBlock Text="{Binding Id}" Style="{StaticResource ZolaBodyStyle}" TextWrapping="WrapWholeWords" />
+                                    <TextBlock Text="{Binding LastActiveText}" Style="{StaticResource ZolaFooterStyle}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+                <StackPanel Grid.Row="2" Spacing="{StaticResource ZolaSpace8}">
+                    <!-- P1-SESSION: new session uses session.create on a fresh socket and shows the returned id — P1-D04 -->
+                    <Button
+                        x:Name="NewSessionButton"
+                        Style="{StaticResource ZolaTextButtonStyle}"
+                        HorizontalAlignment="Stretch"
+                        Click="OnNewSessionClick"
+                        Content="New session"
+                        IsEnabled="False" />
+                    <Button
+                        x:Name="CloseSessionsButton"
+                        Style="{StaticResource ZolaTextButtonStyle}"
+                        HorizontalAlignment="Stretch"
+                        Click="OnCloseSessionsClick"
+                        Content="Close" />
+                </StackPanel>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

@@ -19,7 +19,8 @@ public sealed record ZolaDisplayState(
     bool ModeButtonEnabled,
     bool MicButtonEnabled,
     string MicButtonContent,
-    PresenceMode PresenceMode);
+    PresenceMode PresenceMode,
+    string LinkLabel);
 
 // P3-STATE: one model owns the voice label, the mic line, and presence mode — P3-D03
 public sealed class ZolaDisplayStateModel : IDisposable
@@ -43,8 +44,13 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private const string ModeWordText = "Text";
     private const string MicContentListening = "Listening";
     private const string MicContentMic = "Mic";
+    // P3-SHELL: HUD link line is first-match from facts the model already has — P3-D06
+    private const string LinkOfflineLabel = "OFFLINE";
+    private const string LinkReconnectingLabel = "LOCAL LINK • RECONNECTING";
+    private const string LinkConnectedLabel = "LOCAL LINK • CONNECTED";
+    private const string LinkConnectingLabel = "LOCAL LINK • CONNECTING";
     private const string DisplayStateLogFile = "display-state.log";
-    private const string DisplayStateLineFormat = "P3-STATE: display state voice=\"{0}\" mic=\"{1}\" mode={2}";
+    private const string DisplayStateLineFormat = "P3-STATE: display state voice=\"{0}\" mic=\"{1}\" mode={2} link=\"{3}\"";
     private const string FactLineFormat = "P3-STATE: fact {0}={1}";
     private const string FactUnreachable = "unreachable";
     private const string FactSwitchInFlight = "switchInFlight";
@@ -64,7 +70,8 @@ public sealed class ZolaDisplayStateModel : IDisposable
         false,
         false,
         MicContentMic,
-        PresenceMode.Dormant);
+        PresenceMode.Dormant,
+        LinkOfflineLabel);
 
     private readonly VoiceController _voice;
     private readonly DispatcherQueueTimer _staleTimer;
@@ -76,6 +83,7 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private bool _modeSwitching;
     private bool _backendReachable;
     private bool _hasSessionId;
+    private bool _sessionReady;
     private int _turnGeneration;
     private int _warnedGeneration;
     private long _lastActivityTicks;
@@ -116,6 +124,7 @@ public sealed class ZolaDisplayStateModel : IDisposable
         _modeSwitching = modeSwitching;
         _backendReachable = backendReachable;
         _hasSessionId = hasSessionId;
+        _sessionReady = sessionReady;
         Recompute();
     }
 
@@ -277,6 +286,24 @@ public sealed class ZolaDisplayStateModel : IDisposable
             presenceMode = PresenceMode.Idle;
         }
 
+        string linkLabel;
+        if (_unreachable || !_backendReachable)
+        {
+            linkLabel = LinkOfflineLabel;
+        }
+        else if (_switchInFlight || _historyPending)
+        {
+            linkLabel = LinkReconnectingLabel;
+        }
+        else if (_sessionReady)
+        {
+            linkLabel = LinkConnectedLabel;
+        }
+        else
+        {
+            linkLabel = LinkConnectingLabel;
+        }
+
         var next = new ZolaDisplayState(
             voiceLabel,
             micLine,
@@ -284,7 +311,8 @@ public sealed class ZolaDisplayStateModel : IDisposable
             modeButtonEnabled,
             micButtonEnabled,
             micButtonContent,
-            presenceMode);
+            presenceMode,
+            linkLabel);
         var first = !_hasWindowFacts;
         var differs = next != Current;
         _hasWindowFacts = true;
@@ -296,7 +324,7 @@ public sealed class ZolaDisplayStateModel : IDisposable
         Current = next;
         if (first || differs)
         {
-            WriteDisplayLog(string.Format(DisplayStateLineFormat, next.VoiceLabel, next.MicLine, next.PresenceMode));
+            WriteDisplayLog(string.Format(DisplayStateLineFormat, next.VoiceLabel, next.MicLine, next.PresenceMode, next.LinkLabel));
         }
 
         if (differs)

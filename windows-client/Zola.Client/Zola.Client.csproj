@@ -25,4 +25,10 @@
     <!-- P1-CLIENT: command-line query so an already-running zola serve is attached, not killed — P1-D01 -->
     <PackageReference Include="System.Management" Version="9.0.4" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- P3-SHELL: Rajdhani plus OFL ship beside the unpackaged exe — P3-D08 -->
+    <Content Include="Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
