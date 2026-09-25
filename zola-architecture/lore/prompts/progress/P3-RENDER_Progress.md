@@ -372,7 +372,7 @@ Already on `main` (Phase 1): `zola-architecture/lore/build-plans/PHASE3_BUILD_PL
 ### SHAs
 
 - Plan v1.3 commit on `main`: `eba07383ab752bb0e7a4e75d6eeea10636ff7de3`
-- Implementation commit: *(recorded in 6e)*
+- Implementation commit: `52f41e1edd33d19efe64d4174fed023918127f55`
 - Merge SHA on `main`: *(recorded in 6h)*
 
 ## Discrepancies
