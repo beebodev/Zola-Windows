@@ -1,10 +1,10 @@
 using Microsoft.UI.Input;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.System;
-using Windows.UI;
 using Windows.UI.Core;
 
 namespace Zola.Client;
@@ -30,14 +30,44 @@ public sealed partial class MainWindow : Window
     private bool _historyPending;
     private bool _switchInFlight;
     private bool _modeSwitching;
+    private bool _returnFocusToComposer;
     private readonly Dictionary<string, SessionRow> _sessionRows = new();
     private readonly HashSet<string> _serverSessionIds = new();
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _clockTimer;
+    private const int SessionIdDisplayLength = 8;
+    private const string SessionHudPrefix = "SESSION ";
+    private const string SessionHudEmpty = "SESSION —";
+    private const string TimeFormat = "HH:mm";
+    private const string VoiceBulletPrefix = "• ";
+    private const string TokenWindowWidth = "ZolaWindowWidth";
+    private const string TokenWindowHeight = "ZolaWindowHeight";
+    private const string TokenWindowMinWidth = "ZolaWindowMinWidth";
+    private const string TokenWindowMinHeight = "ZolaWindowMinHeight";
+    private const string TokenOverlayMaxWidth = "ConversationOverlayMaxWidth";
+    private const string TokenOverlayMaxFraction = "ConversationOverlayMaxFraction";
+    private const string TokenNoticeMaxFraction = "ZolaNoticeMaxFraction";
+    private const string TokenBubbleMaxWidth = "ZolaBubbleMaxWidth";
+    private const string TokenBubblePadding = "ZolaBubblePadding";
+    private const string TokenBubbleCornerRadius = "ZolaBubbleCornerRadius";
+    private const string TokenBubbleBorderThickness = "ZolaBubbleBorderThickness";
+    private const string TokenSpace4 = "ZolaSpace4";
+    private const string TokenUserBubble = "ZolaUserBubbleBrush";
+    private const string TokenAssistantBubble = "ZolaAssistantBubbleBrush";
+    private const string TokenAmberMuted = "ZolaAmberMutedBrush";
+    private const string TokenAmberDark = "ZolaAmberDarkBrush";
+    private const string TokenError = "ZolaErrorBrush";
+    private const string TokenBodyStyle = "ZolaBodyStyle";
+    private const string TokenBubbleHeadingStyle = "ZolaBubbleHeadingStyle";
 
     public MainWindow(HermesProcessManager backend)
     {
         // P1-CLIENT: the window subscribes before start so the first ready state can open the socket — P1-D01
         InitializeComponent();
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(960, 720));
+        ApplyWindowMetrics();
+        SizeChanged += OnWindowSizeChanged;
+        _clockTimer = DispatcherQueue.CreateTimer();
+        _clockTimer.IsRepeating = true;
+        _clockTimer.Tick += OnClockTick;
         _backend = backend;
         _chat = new ChatSocket(backend);
         // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
@@ -63,11 +93,18 @@ public sealed partial class MainWindow : Window
         {
             // P2-SPEAK: app close cancels a pending follow-up before the socket is disposed — P2-D06
             // P3-STATE: window close stops the stale-thinking timer — P3-D04
+            // P3-SHELL: window close also stops the HUD clock — P3-D06
+            _clockTimer.Stop();
+            _clockTimer.Tick -= OnClockTick;
             _display.Dispose();
             _voice.Shutdown();
             _chat.Dispose();
         };
         Render();
+        ApplyVoiceChrome();
+        UpdateClock();
+        UpdateSessionHud();
+        StartClock();
     }
 
     private void Render()
@@ -152,6 +189,8 @@ public sealed partial class MainWindow : Window
         _voice.OnTypedSubmit();
         // P2-VOICE: Send keeps the composer read and clear, then uses the shared submit — P2-D05
         Composer.Text = "";
+        // P3-SHELL: typed send returns focus to the composer when the turn ends — P3-D11
+        _returnFocusToComposer = true;
         await SubmitTurnAsync(text);
     }
 
@@ -270,6 +309,7 @@ public sealed partial class MainWindow : Window
         }
 
         _modeSwitching = true;
+        _returnFocusToComposer = false;
         UpdateChrome();
         try
         {
@@ -331,12 +371,14 @@ public sealed partial class MainWindow : Window
             _unreachable,
             !string.IsNullOrEmpty(_chat.SessionId));
         var s = _display.Current;
-        VoiceStateText.Text = s.VoiceLabel;
-        MicIndicatorText.Text = s.MicLine;
-        ModeButton.Content = s.ModeWord;
+        // P3-SHELL: HUD and dock labels are presentation-only upper-case; the model strings stay as they are — P3-D06
+        VoiceStateText.Text = VoiceBulletPrefix + s.VoiceLabel.ToUpperInvariant();
+        MicIndicatorText.Text = s.MicLine.ToUpperInvariant();
+        ModeButtonLabel.Text = s.ModeWord.ToUpperInvariant();
+        MicButtonLabel.Text = s.MicButtonContent.ToUpperInvariant();
+        LinkText.Text = s.LinkLabel;
         ModeButton.IsEnabled = s.ModeButtonEnabled;
         MicButton.IsEnabled = s.MicButtonEnabled;
-        MicButton.Content = s.MicButtonContent;
     }
 
     private void OnSubmitAcknowledged(string status)
@@ -417,7 +459,7 @@ public sealed partial class MainWindow : Window
         {
             _live.Body.Text = "";
             _live.Badge.Visibility = Visibility.Collapsed;
-            _live.Border.Background = BubbleBrush(mine: false, outcome: "complete");
+            ApplyBubbleChrome(_live.Border, mine: false, "complete");
         }
         else
         {
@@ -570,10 +612,11 @@ public sealed partial class MainWindow : Window
             _live.Body.Text = text;
         }
 
-        _live.Border.Background = BubbleBrush(mine: false, outcome: outcome);
+        ApplyBubbleChrome(_live.Border, mine: false, outcome);
         if (outcome is "error" or "interrupted")
         {
             _live.Badge.Text = outcome == "error" ? "Error" : "Interrupted";
+            _live.Badge.Foreground = Token<Brush>(outcome == "error" ? TokenError : TokenAmberMuted);
             _live.Badge.Visibility = Visibility.Visible;
         }
         else
@@ -587,20 +630,20 @@ public sealed partial class MainWindow : Window
     private LiveResponse AddLiveBubble()
     {
         // P1-CLIENT: a fresh assistant bubble is the response area for this turn — P1-D01
-        var badge = new TextBlock { FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Visibility = Visibility.Collapsed };
-        var body = new TextBlock { TextWrapping = TextWrapping.WrapWholeWords, IsTextSelectionEnabled = true };
-        var stack = new StackPanel { Spacing = 4 };
+        var badge = new TextBlock { Style = Token<Style>(TokenBubbleHeadingStyle), Visibility = Visibility.Collapsed };
+        var body = new TextBlock { Style = Token<Style>(TokenBodyStyle), TextWrapping = TextWrapping.WrapWholeWords, IsTextSelectionEnabled = true };
+        var stack = new StackPanel { Spacing = Token<double>(TokenSpace4) };
         stack.Children.Add(badge);
         stack.Children.Add(body);
         var border = new Border
         {
             Child = stack,
-            Padding = new Thickness(12),
-            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(Token<double>(TokenBubblePadding)),
+            CornerRadius = new CornerRadius(Token<double>(TokenBubbleCornerRadius)),
             HorizontalAlignment = HorizontalAlignment.Left,
-            MaxWidth = 720,
-            Background = BubbleBrush(mine: false, outcome: "complete"),
+            MaxWidth = Token<double>(TokenBubbleMaxWidth),
         };
+        ApplyBubbleChrome(border, mine: false, "complete");
         Transcript.Children.Add(border);
         return new LiveResponse(border, badge, body);
     }
@@ -608,20 +651,21 @@ public sealed partial class MainWindow : Window
     private void AddBubble(string title, string text, bool mine)
     {
         // P1-CLIENT: the user's own send is local; it is not a socket frame — P1-D01
-        var heading = new TextBlock { Text = title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
-        var body = new TextBlock { Text = text, TextWrapping = TextWrapping.WrapWholeWords, IsTextSelectionEnabled = true };
-        var stack = new StackPanel { Spacing = 4 };
+        var heading = new TextBlock { Text = title, Style = Token<Style>(TokenBubbleHeadingStyle) };
+        var body = new TextBlock { Text = text, Style = Token<Style>(TokenBodyStyle), TextWrapping = TextWrapping.WrapWholeWords, IsTextSelectionEnabled = true };
+        var stack = new StackPanel { Spacing = Token<double>(TokenSpace4) };
         stack.Children.Add(heading);
         stack.Children.Add(body);
-        Transcript.Children.Add(new Border
+        var border = new Border
         {
             Child = stack,
-            Padding = new Thickness(12),
-            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(Token<double>(TokenBubblePadding)),
+            CornerRadius = new CornerRadius(Token<double>(TokenBubbleCornerRadius)),
             HorizontalAlignment = mine ? HorizontalAlignment.Right : HorizontalAlignment.Left,
-            MaxWidth = 720,
-            Background = BubbleBrush(mine, outcome: "complete"),
-        });
+            MaxWidth = Token<double>(TokenBubbleMaxWidth),
+        };
+        ApplyBubbleChrome(border, mine, "complete");
+        Transcript.Children.Add(border);
         ScrollToEnd();
     }
 
@@ -629,15 +673,25 @@ public sealed partial class MainWindow : Window
     {
         // P1-CLIENT: the composer is usable only with a session, no live turn, and a live backend — P1-D01
         var canType = _sessionReady && !_streaming && !_unreachable && !_switchInFlight && !_historyPending;
+        var composerWasEnabled = Composer.IsEnabled;
         Composer.IsEnabled = canType;
+        // P3-SHELL: typed send returns focus to the composer when the turn ends — P3-D11
+        if (!composerWasEnabled && canType && _returnFocusToComposer && ConversationOverlay.Visibility == Visibility.Visible)
+        {
+            Composer.Focus(FocusState.Programmatic);
+            _returnFocusToComposer = false;
+        }
         SendButton.IsEnabled = canType && Composer.Text.Trim().Length > 0;
         CancelButton.IsEnabled = _streaming && !_unreachable;
+        // P3-SHELL: Cancel is in the dock only while a turn is live — P3-D11
+        CancelButton.Visibility = _streaming && !_unreachable ? Visibility.Visible : Visibility.Collapsed;
         // P1-SESSION: the list can open beside a live chat; create and resume wait until the turn is idle — P1-D04
         var backendUp = _backend.WebSocketPermitted && !_unreachable && !_switchInFlight;
         SessionsButton.IsEnabled = backendUp;
         NewSessionButton.IsEnabled = backendUp && !_streaming && !_historyPending;
         // P2-VOICE: composer enablement stays the Phase 1 rule; voice chrome is applied beside it — P2-D07
         ApplyVoiceChrome();
+        UpdateSessionHud();
     }
 
     private async void OnSessionsToggle(object sender, RoutedEventArgs e)
@@ -649,6 +703,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // P3-SHELL: one panel at a time; opening sessions collapses the overlay — P3-D11
+        _returnFocusToComposer = false;
+        CollapseConversationOverlay();
         _sessionsOpen = true;
         SessionPanel.Visibility = Visibility.Visible;
         BindSessions();
@@ -678,7 +735,8 @@ public sealed partial class MainWindow : Window
         // P1-SESSION: hiding the list leaves the transcript where it was and focuses the composer — P1-D04
         _sessionsOpen = false;
         SessionPanel.Visibility = Visibility.Collapsed;
-        Composer.Focus(FocusState.Programmatic);
+        // P3-SHELL: closing a panel returns focus to the root so Ctrl+Space still works — P3-D11
+        RootGrid.Focus(FocusState.Programmatic);
     }
 
     private async void OnNewSessionClick(object sender, RoutedEventArgs e)
@@ -856,35 +914,149 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() => action());
     }
 
-    private static Brush BubbleBrush(bool mine, string outcome)
+    // P3-SHELL: bubble fills and borders come from tokens, not system theme brushes — P3-D08
+    private static void ApplyBubbleChrome(Border border, bool mine, string outcome)
     {
-        // P1-CLIENT: error and interrupted turns use different fills from a clean complete — P1-D01
+        border.Background = mine ? Token<Brush>(TokenUserBubble) : Token<Brush>(TokenAssistantBubble);
         if (!mine && outcome == "error")
         {
-            return BrushOr("SystemFillColorCriticalBackgroundBrush", Color.FromArgb(255, 255, 214, 214));
+            border.BorderBrush = Token<Brush>(TokenError);
         }
-
-        if (!mine && outcome == "interrupted")
+        else if (!mine && outcome == "interrupted")
         {
-            return BrushOr("SystemFillColorCautionBackgroundBrush", Color.FromArgb(255, 255, 236, 204));
+            border.BorderBrush = Token<Brush>(TokenAmberMuted);
         }
-
-        if (mine)
+        else if (mine)
         {
-            return BrushOr("AccentFillColorDefaultBrush", Color.FromArgb(255, 214, 228, 255));
+            border.BorderBrush = Token<Brush>(TokenAmberMuted);
+        }
+        else
+        {
+            border.BorderBrush = Token<Brush>(TokenAmberDark);
         }
 
-        return BrushOr("CardBackgroundFillColorDefaultBrush", Color.FromArgb(255, 244, 244, 244));
+        border.BorderThickness = new Thickness(Token<double>(TokenBubbleBorderThickness));
     }
 
-    private static Brush BrushOr(string key, Color fallback)
+    private void ApplyWindowMetrics()
     {
-        if (Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush)
+        // P3-SHELL: 1280x800 start, 900x640 floor — P3-D11
+        AppWindow.Resize(new Windows.Graphics.SizeInt32((int)Token<double>(TokenWindowWidth), (int)Token<double>(TokenWindowHeight)));
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
-            return brush;
+            presenter.PreferredMinimumWidth = (int)Token<double>(TokenWindowMinWidth);
+            presenter.PreferredMinimumHeight = (int)Token<double>(TokenWindowMinHeight);
+        }
+    }
+
+    private void OnWindowSizeChanged(object sender, Microsoft.UI.Xaml.WindowSizeChangedEventArgs e)
+    {
+        SizeConversationOverlay();
+        NoticeHost.MaxWidth = e.Size.Width * Token<double>(TokenNoticeMaxFraction);
+    }
+
+    private void OnRootLoaded(object sender, RoutedEventArgs e)
+    {
+        SizeConversationOverlay();
+        NoticeHost.MaxWidth = AppWindow.Size.Width * Token<double>(TokenNoticeMaxFraction);
+    }
+
+    private void SizeConversationOverlay()
+    {
+        var maxWidth = Token<double>(TokenOverlayMaxWidth);
+        var fraction = Token<double>(TokenOverlayMaxFraction);
+        ConversationOverlay.Width = Math.Min(maxWidth, AppWindow.Size.Width * fraction);
+    }
+
+    private void OnConversationClick(object sender, RoutedEventArgs e)
+    {
+        // P3-SHELL: conversation and sessions are mutually exclusive — P3-D11
+        if (ConversationOverlay.Visibility == Visibility.Visible)
+        {
+            HideConversation();
+            return;
         }
 
-        return new SolidColorBrush(fallback);
+        HideSessions();
+        SizeConversationOverlay();
+        ConversationOverlay.Visibility = Visibility.Visible;
+        if (Composer.IsEnabled)
+        {
+            Composer.Focus(FocusState.Programmatic);
+        }
+
+        ScrollToEnd();
+    }
+
+    private void OnConversationCloseClick(object sender, RoutedEventArgs e)
+    {
+        HideConversation();
+    }
+
+    private void HideConversation()
+    {
+        _returnFocusToComposer = false;
+        CollapseConversationOverlay();
+        RootGrid.Focus(FocusState.Programmatic);
+    }
+
+    private void CollapseConversationOverlay()
+    {
+        ConversationOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnEscapeKey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (ConversationOverlay.Visibility == Visibility.Visible)
+        {
+            args.Handled = true;
+            HideConversation();
+            return;
+        }
+
+        if (_sessionsOpen)
+        {
+            args.Handled = true;
+            HideSessions();
+        }
+    }
+
+    // P3-SHELL: session line has one writer; it never infers identity from the link — P3-D06
+    private void UpdateSessionHud()
+    {
+        var id = _chat.SessionId;
+        SessionText.Text = string.IsNullOrEmpty(id)
+            ? SessionHudEmpty
+            : SessionHudPrefix + (id.Length <= SessionIdDisplayLength ? id : id[..SessionIdDisplayLength]);
+    }
+
+    private void StartClock()
+    {
+        var now = DateTime.Now;
+        var toNextMinute = TimeSpan.FromMinutes(1) - TimeSpan.FromSeconds(now.Second) - TimeSpan.FromMilliseconds(now.Millisecond);
+        _clockTimer.Interval = toNextMinute <= TimeSpan.Zero ? TimeSpan.FromMinutes(1) : toNextMinute;
+        _clockTimer.Start();
+    }
+
+    private void OnClockTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        UpdateClock();
+        _clockTimer.Interval = TimeSpan.FromMinutes(1);
+    }
+
+    private void UpdateClock()
+    {
+        TimeText.Text = DateTime.Now.ToString(TimeFormat);
+    }
+
+    private static T Token<T>(string key)
+    {
+        if (Application.Current.Resources.TryGetValue(key, out var value) && value is T typed)
+        {
+            return typed;
+        }
+
+        throw new InvalidOperationException(key);
     }
 
     private sealed class LiveResponse

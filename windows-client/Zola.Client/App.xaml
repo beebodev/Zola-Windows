@@ -8,6 +8,8 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!-- P3-SHELL: tokens after WinUI so HUD and dock do not read system theme brushes — P3-D08 -->
+                <ResourceDictionary Source="ms-appx:///Themes/ZolaTokens.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>
