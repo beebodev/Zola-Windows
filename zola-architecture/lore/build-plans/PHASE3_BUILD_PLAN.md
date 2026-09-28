@@ -510,6 +510,79 @@ of the existing writers change.
 - Exactly one method decides notice visibility. It is triggered by a text-changed callback on the
   two `TextBlock`s plus `UpdateChrome`, so none of the 25+ existing writers is touched.
 
+**P3-D19 — ACES Filmic tone mapping and exposure as a custom post-effect (v1.5, developer
+decision 2026-09-25).**
+
+Why:
+- The Android presence was rendered with ACES Filmic tone mapping at exposure −1.84 (Android
+  decisions P16-D05/D06, values supplied by the developer).
+- Tone mapping is what rolls bright areas off toward cream while shadows stay dark.
+- Helix 3.1.2 has no tone mapping, exposure or LUT pass.
+- P3-LOOK rounds 1–10 showed that lights, bloom and emissive cannot reproduce it.
+
+Design:
+- One full-screen post-effect after bloom: an ACES Filmic curve with an exposure input.
+- It follows the same element-plus-core pattern as `PostEffectBloom`.
+- It runs only on frames that already render. It never invalidates by itself.
+- `toneMapEnabled` and `exposure` are look values (named constants plus debug JSON).
+
+The shader:
+- HLSL source is committed as `Presence/Shaders/AcesTonemap.hlsl`.
+- It is compiled **once** with `fxc.exe` from the Windows SDK already installed on the machine.
+  No package and no new tool install. If `fxc` is absent, stop BLOCKED.
+- The compiled bytecode (`AcesTonemap.cso`) is committed and embedded as an `EmbeddedResource`.
+  The exact compile command and the `.cso` SHA-256 are recorded.
+- No compile step is added to the build.
+
+Fail closed:
+- If the technique or its resources fail to create, the pass is disabled, the failure is logged,
+  and she renders exactly as without it.
+- Its resources are released with the effects manager, including on device loss and reinitialize.
+
+Reference values supplied by the developer. Use the **colours and structure**; Filament's
+physical light units do not transfer to Helix:
+- ACES Filmic;
+- exposure −1.84 (re-derived for Helix);
+- ambient `#232222`;
+- key colour (0.8, 0.6, 0.3);
+- rim `#F5A623`.
+
+Glow levels for Track 5: base 0.12, active max 0.45, speech max 0.55, alert 1.0.
+
+**P3-D20 — Texture-driven presence look (v1.6, developer-approved 2026-09-25).**
+The approved look matches Android's actual pipeline, established by reading the Android
+presence source:
+- Android's scene is one uniform ambient light, a negligible key and no bloom;
+- its camera exposure is effectively a fixed multiplier, because `setExposure(-1.84)` is clamped;
+- so what shows is her **albedo texture** (with baked shading and highlights), decoded from sRGB
+  to linear, multiplied by a constant gain, passed through ACES, and encoded back to sRGB.
+
+Windows reproduces this:
+- Helix's unlit material (`unlitMode`);
+- the `P3-D19` tone-map pass with `srgbDecode`, `gain 4.4`, ACES and `srgbEncode`;
+- a clear-colour compensation, so the displayed background stays `#080808`;
+- an albedo sampler with trilinear filtering and `mipLodBias 0.75`, which softens the painted
+  dot grid at desktop sizes.
+
+Lights, bloom and rim are off in this mode. Morph targets are unaffected.
+
+Developer approval, verbatim: *"dark skin carrying gold from her own texture, white-gold eyes,
+glowing diamond and lit hair tips; dots softened; reads like Android."*
+
+Lessons recorded:
+- read the source implementation before tuning toward a reference;
+- judge only the live window from raw captures, never scaled composites;
+- every tuning candidate is a complete configuration applied from a reset.
+
+**P3-D21 — Backdrop and decoration deferred (v1.6, developer decision 2026-09-25).**
+- The Android source has no background glow and no floor rings; those exist only in the concept
+  art. Android does have four corner brackets and a 40-particle field.
+- The developer chose a clean `#080808` background for now: no glow, no rings, **no corner
+  brackets**.
+- The particle field (Android: 40 fixed anchors with slow drift and an alpha pulse) moves to
+  Track 5, because its drift is animation.
+- Glow and rings are filed as `S30`.
+
 **P3-D16 — No `hermes-agent` edits; no Python installs.** Carries forward `P2-D10`/`P2-D17`.
 Phase 3 is client-only. `git status` in `C:\Users\test\Dev\hermes-agent` must be clean at every
 closeout.
@@ -900,6 +973,16 @@ particles and corner brackets do not exist.
 **Dock and notice (v1.4):** implement `P3-D17` and `P3-D18` in `MainWindow.xaml(.cs)` and
 tokens.
 
+**Tone mapping (v1.5, `P3-D19`):**
+- **Before building,** confirm that `fxc.exe` is present, and find out whether Helix's scene
+  render target is HDR (float) or 8-bit, since an 8-bit target clips before the curve.
+- Build the pass behind `toneMapEnabled`.
+- Verify:
+  - turning it off is identical to before;
+  - static GPU stays ≤ 1%;
+  - pause, resume, reload and lock recovery still work.
+- Then retune using the `P3-D19` reference values.
+
 **Iteration aid (v1.4):** a `#if DEBUG` hook reloads the look values from
 `%LOCALAPPDATA%\ZolaClient\debug\presence-look.json` without a rebuild, so tuning rounds are
 fast. The approved values are then written into `PresenceLook.cs` as constants. The JSON file
@@ -924,28 +1007,37 @@ numbers whether explicit disposal of the old scene on reload is worth adding.
 Tag: `// P3-LOOK: … — P3-D13`.
 
 ### Exit criteria
-- [ ] Every lighting, bloom, emissive and background value is a named constant in
-      `PresenceLook.cs`.
+- [ ] Every look value (unlit mode, tone-map pipeline, gain, mip bias, and any retained lighting
+      value) is a named constant in `PresenceLook.cs`. *(v1.6)*
 - [ ] Developer judgement recorded verbatim: the still frame "reads as Zola" beside
       `android_hud_reference.png`. The progress doc records the final values plus the same
       cheek, hair and chest samples as Audit 03 for reference, without pass/fail numbers.
-- [ ] Background glow and floor rings are in-scene; the window background outside them stays
-      `#080808`.
-- [ ] Particles ≤ 40; brackets use tokens. The decoration layer sits between the presence and
-      the HUD (`ZolaLayerDecoration`, between 0 and 10) and is not hit-testable.
+- [ ] *(v1.6, `P3-D21`)* No backdrop geometry. The displayed background samples `#080808`.
+- [ ] *(v1.6, `P3-D21`)* No corner brackets and no particles in this track. The particle field
+      moves to Track 5.
 - [ ] *(v1.4)* The dock follows `P3-D17` and the notice line follows `P3-D18`. Each has exactly
       one deciding method (search). No existing `StatusText`/`DetailText` writer changed (diff).
 - [ ] *(v1.4)* The shell polish list is done: composer accent, overlay opacity, notice at 900 px,
       dock glyphs, mantra indent.
 - [ ] *(v1.4)* The debug look-reload reads its JSON only under `#if DEBUG`, and the JSON is not
       committed.
+- [ ] *(v1.5)* The ACES pass exists per `P3-D19`:
+  - off is identical to before;
+  - failure disables it and logs;
+  - `.hlsl` and `.cso` are committed, with the compile command and `.cso` SHA recorded;
+  - no build-step or package change;
+  - static GPU ≤ 1% with it on.
 - [ ] *(v1.4)* Reload memory re-measured with the chosen texture size; the explicit-disposal
       decision recorded with numbers.
 - [ ] Texture decision recorded with the final working set, the **peak** working set during
-      load, and the load time, for both 2048² and 1024². An in-memory downscale can raise
-      peak memory and load time even when final memory falls.
-- [ ] Static GPU with bloom on (nothing moving) is recorded. Lazy rendering must still hold at
-      ≤ 1%.
+      load, and the load time. *(v1.6)* The 1024² comparison is optional: `mipLodBias` solved
+      the softening, so 1024² is only tested if memory warrants it.
+- [ ] *(v1.6)* An inventory of disabled experiment paths (lit path, point rim, even lights,
+      saturation control, pitch and camera offsets, environment and metallic toggles), each with
+      the developer's keep-or-remove decision applied. No dead switches are left without a
+      recorded reason.
+- [ ] Static GPU with the approved look (nothing moving) is recorded. Lazy rendering must still
+      hold at ≤ 1%.
 - [ ] `hermes-agent` clean.
 - [ ] `dotnet build … -r win-x64` passes with 0 warnings.
 - [ ] Smoke test (HUMAN-RUN): the side-by-side above, plus the abbreviated Phase 2 smoke.
@@ -1027,7 +1119,14 @@ voice or window facts directly (`P3-D03`).
     - eyes 150–250 ms;
     - breathing 400–600 ms;
     - expression 700–1000 ms (§8).
-  - Particle drift, slow and within the cap.
+  - Particle field *(v1.6, moved from Track 4 per `P3-D21`)*: at most 40 particles over the
+    presence, from Android's spec. The developer provides the values; Cursor does not read the
+    Android project. Particles are fixed normalized anchors; even indices are `#C4A882` at alpha
+    0.55, odd indices `#E8DDD0` at alpha 0.22; radius 2.2 or 3.4; an outline ring at alpha
+    0.35. They drift slowly on a shared 12 s cycle, with amplitude about 3 px and an alpha pulse
+    of 0.7–1.0. Reduced motion freezes them.
+  - *(v1.6)* The mode glow maps to the `P3-D20` tone-map **gain** (Android varies ambient
+    intensity by mode), within the `P3-D09` budget.
 - **Rendering budget (`P3-D09`):**
   - one animation tick source;
   - 30 fps when idle; 60 fps only during transitions and `Speaking`;
@@ -1080,7 +1179,7 @@ rather than shipping over budget.
 After all five tracks are merged to `main`:
 
 ### DESIGN_DECISIONS.md
-- Add a "Phase 3 — Presence UI" section recording `P3-D01` through `P3-D18`, with the final
+- Add a "Phase 3 — Presence UI" section recording `P3-D01` through `P3-D21`, with the final
   tuned values:
   - Track 4: lighting, bloom and texture size;
   - Track 5: expression weights, breathing, mouth cycler and idle frame rate;
@@ -1107,6 +1206,9 @@ After all five tracks are merged to `main`:
 - **File `S28` — Session UI retirement (v1.3).** The developer expects his memory system to
   make sessions unnecessary. When it does, remove the SESSION HUD line and the Sessions dock
   button together.
+- **File `S30` — Presence backdrop (v1.6).** A warm background glow, floor rings and base light
+  pooling (from the concept art), plus corner brackets if wanted. Deferred by the developer
+  (`P3-D21`).
 - **File `S29` — Markdown rendering in chat bubbles (v1.3).** Bubbles are plain text, so fenced
   code, lists and links show as raw markdown. This predates Phase 3.
 - `S13`, `S16`, `S18`–`S23` unchanged.
@@ -1163,7 +1265,7 @@ After all five tracks are merged to `main`:
   9. Kill the serve process: Dormant plus "OFFLINE".
   10. Relaunch.
   11. 2 minutes idle: GPU ≤ 10%, nothing busy.
-- [ ] `DESIGN_DECISIONS.md` has `P3-D01`–`P3-D18`, and `P2-D08` is annotated.
+- [ ] `DESIGN_DECISIONS.md` has `P3-D01`–`P3-D21`, and `P2-D08` is annotated.
 - [ ] `OPEN_QUESTIONS.md` has `S24`–`S26` and `S28`–`S29` filed (plus `S27` if needed) and
       `S17` updated.
 - [ ] `ROADMAP.md` marks Phase 3 COMPLETE and has the Phase 4 stub.
@@ -1204,7 +1306,12 @@ After all five tracks are merged to `main`:
 
 ---
 
-*Phase 3 Build Plan version 1.4*
+*Phase 3 Build Plan version 1.6*
+*v1.6 (2026-09-25, during Track 4): `P3-D20` texture-driven look (unlit + sRGB/ACES/gain, mip
+bias) with the developer's verbatim approval; `P3-D21` backdrop and brackets deferred, particles
+to Track 5, `S30`; Track 4 exit criteria updated; experiment-path inventory.*
+*v1.5 (2026-09-25, during Track 4): `P3-D19` ACES Filmic + exposure post-effect, with the
+developer-supplied Android reference values; Track 4 tone-mapping item and exit criterion.*
 *v1.4 (2026-09-25, before Track 4): `P3-D17` dock hidden until needed; `P3-D18` notice line fades,
 problems stay; Track 4 adds dock/notice, a debug look-reload aid, and the reload-memory
 re-measure; Track 5 notes her-left blink convention. Track 3 merged at

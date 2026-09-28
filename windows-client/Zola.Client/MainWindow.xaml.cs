@@ -1,12 +1,15 @@
+using System.Runtime.InteropServices;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Foundation;
 using Windows.System;
 using Windows.UI.Core;
+using Windows.UI.ViewManagement;
 using Zola.Client.Presence;
 
 namespace Zola.Client;
@@ -33,9 +36,18 @@ public sealed partial class MainWindow : Window
     private bool _switchInFlight;
     private bool _modeSwitching;
     private bool _returnFocusToComposer;
+    private bool _lastTurnErrored;
+    private Point? _lastPointerInRoot;
+    private string _noticeSeenText = "";
     private readonly Dictionary<string, SessionRow> _sessionRows = new();
     private readonly HashSet<string> _serverSessionIds = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _clockTimer;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _dockHideTimer;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _noticeHoldTimer;
+    private readonly UISettings _uiSettings = new();
+    private Storyboard? _dockStoryboard;
+    private bool _dockRevealTarget;
+    private Storyboard? _noticeStoryboard;
     private PresenceView? _presence;
     private const int SessionIdDisplayLength = 8;
     private const string SessionHudPrefix = "SESSION ";
@@ -61,6 +73,13 @@ public sealed partial class MainWindow : Window
     private const string TokenError = "ZolaErrorBrush";
     private const string TokenBodyStyle = "ZolaBodyStyle";
     private const string TokenBubbleHeadingStyle = "ZolaBubbleHeadingStyle";
+    private const string TokenDockRevealMargin = "DockRevealMargin";
+    private const string TokenDockHideDelaySeconds = "DockHideDelaySeconds";
+    private const string TokenDockFadeMilliseconds = "DockFadeMilliseconds";
+    private const string TokenNoticeHoldSeconds = "NoticeHoldSeconds";
+    private const string TokenNoticeMargin = "ZolaNoticeMargin";
+    private const double DockShownOpacity = 1;
+    private const double DockHiddenOpacity = 0;
 
     public MainWindow(HermesProcessManager backend)
     {
@@ -73,6 +92,13 @@ public sealed partial class MainWindow : Window
         PresenceHost.Children.Add(_presence);
         AppWindow.Changed += OnAppWindowChanged;
         VisibilityChanged += OnWindowVisibilityChanged;
+        Activated += OnWindowActivated;
+        _dockHideTimer = DispatcherQueue.CreateTimer();
+        _dockHideTimer.IsRepeating = false;
+        _dockHideTimer.Tick += OnDockHideTimerTick;
+        _noticeHoldTimer = DispatcherQueue.CreateTimer();
+        _noticeHoldTimer.IsRepeating = false;
+        _noticeHoldTimer.Tick += OnNoticeHoldTimerTick;
 #if DEBUG
         AddPresenceDebugAccelerators();
 #endif
@@ -107,9 +133,14 @@ public sealed partial class MainWindow : Window
             // P3-SHELL: window close also stops the HUD clock — P3-D06
             _clockTimer.Stop();
             _clockTimer.Tick -= OnClockTick;
+            _dockHideTimer.Stop();
+            _dockHideTimer.Tick -= OnDockHideTimerTick;
+            _noticeHoldTimer.Stop();
+            _noticeHoldTimer.Tick -= OnNoticeHoldTimerTick;
             CompositionTarget.Rendering -= OnFirstShellRender;
             AppWindow.Changed -= OnAppWindowChanged;
             VisibilityChanged -= OnWindowVisibilityChanged;
+            Activated -= OnWindowActivated;
             _presence?.Dispose();
             _display.Dispose();
             _voice.Shutdown();
@@ -406,6 +437,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // P3-LOOK: an accepted turn clears the sticky error notice — P3-D18
+        _lastTurnErrored = false;
         _streaming = true;
         StatusText.Text = status switch
         {
@@ -559,6 +592,12 @@ public sealed partial class MainWindow : Window
         _turnFinalized = true;
         _streaming = false;
         var outcome = string.Equals(status, "error", StringComparison.Ordinal) ? "error" : "complete";
+        if (outcome == "error")
+        {
+            // P3-LOOK: last-turn error stays until the next turn is accepted — P3-D18
+            _lastTurnErrored = true;
+        }
+
         StyleLive(outcome, text, replaceText: text.Length > 0);
         // P2-VOICE: the styled bubble stays in the transcript; the next message.start opens a new one — P2-D12
         _live = null;
@@ -707,6 +746,8 @@ public sealed partial class MainWindow : Window
         // P2-VOICE: composer enablement stays the Phase 1 rule; voice chrome is applied beside it — P2-D07
         ApplyVoiceChrome();
         UpdateSessionHud();
+        UpdateDockVisibility();
+        UpdateNoticeVisibility();
     }
 
     private async void OnSessionsToggle(object sender, RoutedEventArgs e)
@@ -723,6 +764,7 @@ public sealed partial class MainWindow : Window
         CollapseConversationOverlay();
         _sessionsOpen = true;
         SessionPanel.Visibility = Visibility.Visible;
+        UpdateDockVisibility();
         BindSessions();
         try
         {
@@ -750,6 +792,8 @@ public sealed partial class MainWindow : Window
         // P1-SESSION: hiding the list leaves the transcript where it was and focuses the composer — P1-D04
         _sessionsOpen = false;
         SessionPanel.Visibility = Visibility.Collapsed;
+        UpdateDockVisibility();
+        UpdateNoticeVisibility();
         // P3-SHELL: closing a panel returns focus to the root so Ctrl+Space still works — P3-D11
         RootGrid.Focus(FocusState.Programmatic);
     }
@@ -915,6 +959,8 @@ public sealed partial class MainWindow : Window
         _streaming = false;
         _turnFinalized = true;
         _orphanInterruptedCompletes = 0;
+        // P3-LOOK: the error belonged to the old conversation — P3-D18
+        _lastTurnErrored = false;
     }
 
     private void ScrollToEnd()
@@ -968,12 +1014,18 @@ public sealed partial class MainWindow : Window
     {
         SizeConversationOverlay();
         NoticeHost.MaxWidth = e.Size.Width * Token<double>(TokenNoticeMaxFraction);
+        UpdateNoticeVisibility();
+        UpdateDockVisibility();
     }
 
     private void OnRootLoaded(object sender, RoutedEventArgs e)
     {
         SizeConversationOverlay();
         NoticeHost.MaxWidth = AppWindow.Size.Width * Token<double>(TokenNoticeMaxFraction);
+        StatusText.RegisterPropertyChangedCallback(TextBlock.TextProperty, OnNoticeTextChanged);
+        DetailText.RegisterPropertyChangedCallback(TextBlock.TextProperty, OnNoticeTextChanged);
+        UpdateDockVisibility();
+        UpdateNoticeVisibility();
         _presence?.NoteRootLoaded();
         CompositionTarget.Rendering += OnFirstShellRender;
     }
@@ -1004,6 +1056,7 @@ public sealed partial class MainWindow : Window
         else
         {
             _presence.ResumeRendering("minimized");
+            UpdateDockVisibility();
         }
     }
 
@@ -1030,6 +1083,8 @@ public sealed partial class MainWindow : Window
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F9, OnDebugBlinkHotkey));
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F10, OnDebugReloadHotkey));
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F11, OnDebugMorphHotkey));
+        // P3-LOOK: F12 reloads presence-look.json onto the live scene — P3-D13
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F12, OnDebugLookHotkey));
     }
 
     private static KeyboardAccelerator CreatePresenceAccelerator(VirtualKey key, TypedEventHandler<KeyboardAccelerator, KeyboardAcceleratorInvokedEventArgs> handler)
@@ -1060,6 +1115,12 @@ public sealed partial class MainWindow : Window
         args.Handled = true;
         _presence?.DebugMorphStep();
     }
+
+    private void OnDebugLookHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _presence?.DebugReloadLook();
+    }
 #endif
 
     private void SizeConversationOverlay()
@@ -1081,6 +1142,8 @@ public sealed partial class MainWindow : Window
         HideSessions();
         SizeConversationOverlay();
         ConversationOverlay.Visibility = Visibility.Visible;
+        UpdateDockVisibility();
+        UpdateNoticeVisibility();
         if (Composer.IsEnabled)
         {
             Composer.Focus(FocusState.Programmatic);
@@ -1104,6 +1167,8 @@ public sealed partial class MainWindow : Window
     private void CollapseConversationOverlay()
     {
         ConversationOverlay.Visibility = Visibility.Collapsed;
+        UpdateDockVisibility();
+        UpdateNoticeVisibility();
     }
 
     private void OnEscapeKey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -1158,6 +1223,314 @@ public sealed partial class MainWindow : Window
         }
 
         throw new InvalidOperationException(key);
+    }
+
+    // P3-LOOK: one method decides dock opacity, hit-testing, and the hide delay — P3-D17
+    private void UpdateDockVisibility()
+    {
+        var inReveal = PointerInDockReveal();
+        var wanted = inReveal
+            || FocusInsideDock()
+            || ConversationOverlay.Visibility == Visibility.Visible
+            || _sessionsOpen
+            || _streaming;
+        if (wanted)
+        {
+            _dockHideTimer.Stop();
+            SetDockRevealed(true);
+            return;
+        }
+
+        if (!_dockRevealTarget && DockHost.Opacity <= DockHiddenOpacity && !DockHost.IsHitTestVisible)
+        {
+            return;
+        }
+
+        if (_dockHideTimer.IsRunning)
+        {
+            return;
+        }
+
+        _dockHideTimer.Interval = TimeSpan.FromSeconds(Token<double>(TokenDockHideDelaySeconds));
+        _dockHideTimer.Start();
+    }
+
+    private void OnDockHideTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+        if (PointerInDockReveal() || FocusInsideDock() || ConversationOverlay.Visibility == Visibility.Visible || _sessionsOpen || _streaming)
+        {
+            return;
+        }
+
+        SetDockRevealed(false);
+    }
+
+    private void SetDockRevealed(bool show)
+    {
+        if (_dockRevealTarget == show)
+        {
+            return;
+        }
+
+        _dockRevealTarget = show;
+        WriteDockLog(show ? "P3-LOOK: dock shown" : "P3-LOOK: dock hidden");
+        if (show)
+        {
+            DockHost.IsHitTestVisible = true;
+        }
+
+        var target = show ? DockShownOpacity : DockHiddenOpacity;
+        _dockStoryboard?.Stop();
+        if (!_uiSettings.AnimationsEnabled)
+        {
+            DockHost.Opacity = target;
+            if (!show)
+            {
+                DockHost.IsHitTestVisible = false;
+            }
+
+            return;
+        }
+
+        var anim = new DoubleAnimation
+        {
+            To = target,
+            Duration = new Duration(TimeSpan.FromMilliseconds(Token<double>(TokenDockFadeMilliseconds))),
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(anim, DockHost);
+        Storyboard.SetTargetProperty(anim, "Opacity");
+        var board = new Storyboard();
+        board.Children.Add(anim);
+        if (!show)
+        {
+            board.Completed += (_, _) =>
+            {
+                if (DockHost.Opacity <= DockHiddenOpacity && !FocusInsideDock() && !PointerInDockReveal())
+                {
+                    DockHost.IsHitTestVisible = false;
+                }
+            };
+        }
+
+        _dockStoryboard = board;
+        board.Begin();
+    }
+
+    private bool PointerInDockReveal()
+    {
+        var point = QueryCursorInRoot() ?? _lastPointerInRoot;
+        if (point is null || DockHost.ActualWidth <= 0 || DockHost.ActualHeight <= 0)
+        {
+            return false;
+        }
+
+        var bounds = DockHost.TransformToVisual(RootGrid)
+            .TransformBounds(new Rect(0, 0, DockHost.ActualWidth, DockHost.ActualHeight));
+        var margin = Token<double>(TokenDockRevealMargin);
+        var reveal = new Rect(
+            bounds.X - margin,
+            bounds.Y - margin,
+            bounds.Width + (margin * 2),
+            bounds.Height + (margin * 2));
+        return reveal.Contains(point.Value);
+    }
+
+    private static void WriteDockLog(string line)
+    {
+        try
+        {
+            var root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                VoiceController.TimelineClientFolder,
+                VoiceController.TimelineLogFolder);
+            Directory.CreateDirectory(root);
+            File.AppendAllText(
+                Path.Combine(root, "display-state.log"),
+                DateTimeOffset.Now.ToString("o") + " " + line + Environment.NewLine);
+        }
+        catch
+        {
+        }
+    }
+
+    private bool FocusInsideDock()
+    {
+        if (RootGrid.XamlRoot is null)
+        {
+            return false;
+        }
+
+        var focused = FocusManager.GetFocusedElement(RootGrid.XamlRoot) as DependencyObject;
+        while (focused is not null)
+        {
+            if (ReferenceEquals(focused, DockHost))
+            {
+                return true;
+            }
+
+            focused = VisualTreeHelper.GetParent(focused);
+        }
+
+        return false;
+    }
+
+    private void OnRootPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        _lastPointerInRoot = e.GetCurrentPoint(RootGrid).Position;
+        UpdateDockVisibility();
+    }
+
+    private void OnRootPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        _lastPointerInRoot = null;
+        UpdateDockVisibility();
+    }
+
+    private void OnDockGettingFocus(UIElement sender, GettingFocusEventArgs args)
+    {
+        UpdateDockVisibility();
+    }
+
+    private void OnDockLosingFocus(UIElement sender, LosingFocusEventArgs args)
+    {
+        DispatcherQueue.TryEnqueue(UpdateDockVisibility);
+    }
+
+    private void OnWindowActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs e)
+    {
+        if (e.WindowActivationState == WindowActivationState.Deactivated)
+        {
+            return;
+        }
+
+        _lastPointerInRoot = QueryCursorInRoot();
+        UpdateDockVisibility();
+    }
+
+    private Point? QueryCursorInRoot()
+    {
+        if (!GetCursorPos(out var screen))
+        {
+            return null;
+        }
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var client = screen;
+        if (!ScreenToClient(hwnd, ref client) || RootGrid.XamlRoot is null)
+        {
+            return null;
+        }
+
+        var scale = RootGrid.XamlRoot.RasterizationScale;
+        return new Point(client.X / scale, client.Y / scale);
+    }
+
+    // P3-LOOK: one method decides notice opacity, DetailText, and overlay placement — P3-D18
+    private void UpdateNoticeVisibility()
+    {
+        var sticky = _unreachable || _switchInFlight || _historyPending || _lastTurnErrored;
+        var text = StatusText.Text ?? "";
+        var textChanged = text != _noticeSeenText;
+        _noticeSeenText = text;
+        DetailText.Visibility = sticky && !string.IsNullOrEmpty(DetailText.Text) ? Visibility.Visible : Visibility.Collapsed;
+        PlaceNotice();
+        if (sticky)
+        {
+            _noticeHoldTimer.Stop();
+            SetNoticeShown(true);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _noticeHoldTimer.Stop();
+            SetNoticeShown(false);
+            return;
+        }
+
+        if (textChanged)
+        {
+            SetNoticeShown(true);
+            _noticeHoldTimer.Interval = TimeSpan.FromSeconds(Token<double>(TokenNoticeHoldSeconds));
+            _noticeHoldTimer.Start();
+        }
+    }
+
+    private void OnNoticeTextChanged(DependencyObject sender, DependencyProperty dp)
+    {
+        UpdateNoticeVisibility();
+    }
+
+    private void OnNoticeHoldTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+        if (_unreachable || _switchInFlight || _historyPending || _lastTurnErrored)
+        {
+            return;
+        }
+
+        SetNoticeShown(false);
+    }
+
+    private void SetNoticeShown(bool show)
+    {
+        var target = show ? DockShownOpacity : DockHiddenOpacity;
+        _noticeStoryboard?.Stop();
+        if (!_uiSettings.AnimationsEnabled)
+        {
+            NoticeHost.Opacity = target;
+            return;
+        }
+
+        var anim = new DoubleAnimation
+        {
+            To = target,
+            Duration = new Duration(TimeSpan.FromMilliseconds(Token<double>(TokenDockFadeMilliseconds))),
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(anim, NoticeHost);
+        Storyboard.SetTargetProperty(anim, "Opacity");
+        var board = new Storyboard();
+        board.Children.Add(anim);
+        _noticeStoryboard = board;
+        board.Begin();
+    }
+
+    private void PlaceNotice()
+    {
+        var overlayOpen = ConversationOverlay.Visibility == Visibility.Visible;
+        var windowWidth = RootGrid.ActualWidth > 0 ? RootGrid.ActualWidth : AppWindow.Size.Width;
+        if (!overlayOpen)
+        {
+            NoticeHost.ClearValue(FrameworkElement.WidthProperty);
+            NoticeHost.HorizontalAlignment = HorizontalAlignment.Center;
+            NoticeHost.Margin = Token<Thickness>(TokenNoticeMargin);
+            NoticeHost.MaxWidth = windowWidth * Token<double>(TokenNoticeMaxFraction);
+            return;
+        }
+
+        var overlayWidth = ConversationOverlay.ActualWidth > 0 ? ConversationOverlay.ActualWidth : ConversationOverlay.Width;
+        var remaining = Math.Max(0, windowWidth - overlayWidth);
+        var margin = Token<Thickness>(TokenNoticeMargin);
+        NoticeHost.HorizontalAlignment = HorizontalAlignment.Left;
+        NoticeHost.Width = remaining;
+        NoticeHost.MaxWidth = remaining;
+        NoticeHost.Margin = new Thickness(0, margin.Top, 0, margin.Bottom);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out ScreenPoint point);
+
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(IntPtr hwnd, ref ScreenPoint point);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ScreenPoint
+    {
+        public int X;
+        public int Y;
     }
 
     private sealed class LiveResponse
