@@ -33,7 +33,7 @@ This phase does **not**:
 | 2 (`P3-SHELL`) | Obsidian shell | Visual tokens + Rajdhani fonts; fixed dark theme; full-presence layout (presence host placeholder, HUD overlay, dock, conversation overlay, sessions panel); every existing control re-homed | Medium-Large |
 | 3 (`P3-RENDER`) | 3D presence | Helix packages + GLB asset; `PresenceView` renders the bust (PBR material, camera, environment lighting); morph index map; render-on-demand; pause/resume; fail-closed fallback | Medium-Large |
 | 4 (`P3-LOOK`) | Fidelity | Lighting contrast, rim/specular, bloom, emissive; in-scene background glow and floor rings; XAML particles and corner brackets; texture-size test. Judged against the Android reference | Medium |
-| 5 (`P3-LIFE`) | Procedural life | `PresenceMode` → expression, blink, breathing, speaking mouth, lean, staggered transitions, dormant look, reduced motion; the ≤10% idle GPU budget | Medium-Large |
+| 5 (`P3-LIFE`) | Procedural life | `PresenceMode` → expression, blink, brightness per mode, speaking mouth, staggered transitions, dormant look, reduced motion, then particles (v1.7, `P3-D22`: no breathing, no head motion); the ≤10% idle GPU budget | Medium-Large |
 
 **Sequencing rule:** strictly **1 → 2 → 3 → 4 → 5**. Each track merges before the next one
 begins. Tracks 2–5 all modify `MainWindow.xaml(.cs)` and/or the presence files. Track 4 comes
@@ -257,6 +257,8 @@ unreachable. It is the only mode added. `DORMANT` is visually distinct from `IDL
 - lowered lids, and a steady, reduced glow;
 - **no** blinking, breathing, head motion or particle drift.
 
+*(v1.7)* Starting values: `Blink both` held at 0.30 and brightness ×0.50 (`P3-D22`).
+
 That also costs about 0% GPU while disconnected. Resolves P3PRE Q-H/Audit 04's `NO MODE` and
 `AMBIGUOUS` rows.
 
@@ -279,9 +281,11 @@ Built from the morph targets and the node transform:
 - **Blink:** index 2, with occasional 0/1 asymmetry.
 - **Expression:** indices 3, 4, 5, 6 and 13.
 - **Speaking mouth:** 8 plus visemes 9–13.
-- **Lean and head micro-turn:** whole-node rotation. This stands in for eye drift.
-- **Breathing:** a glow-level pulse through bloom intensity and `EmissiveColor`. It is not
-  chest-only, which cannot be isolated (`P3PRE-AUD-16`).
+- ~~**Lean and head micro-turn:** whole-node rotation.~~ *(v1.7)* Dropped by the developer
+  (`P3-D22`): *"The model wasn't made for it."*
+- ~~**Breathing:** a glow-level pulse.~~ *(v1.7)* Dropped by the developer (`P3-D22`): *"Not
+  necessary for AI to breathe."*
+- *(v1.7)* **Brightness per mode:** a multiplier on the `P3-D20` tone-map gain (`P3-D22`).
 
 Not built this phase:
 - micro-saccade, which needs separate eye geometry;
@@ -361,8 +365,8 @@ the space stays empty and the meter is filed as `S27`. Resolves P3PRE Q-L.
 Resolves P3PRE Q-M and Q-N.
 
 **P3-D09 — Idle performance budget: ≤ 10% GPU on the Latitude 7430.**
-- **What is measured:** in the `IDLE` mode with idle life running (blink, breathing, micro-turn,
-  bloom on), over 60 s, summed GPU-engine utilization for the client process must average
+- **What is measured:** in the `IDLE` mode with idle life running (*v1.7:* blinks, and
+  particles if kept, `P3-D22`), over 60 s, summed GPU-engine utilization for the client process must average
   **≤ 10%**. Measured the Audit 03 way, at the default window size.
 - **Principle (v1.1): render only as often as the current motion needs.** One scheduler, with
   an adaptive cadence:
@@ -370,12 +374,14 @@ Resolves P3PRE Q-M and Q-N.
   | Activity | Cadence |
   |---|---|
   | Nothing changing | no render |
-  | Slow glow breathing only | low rate (start at 10 fps, tune down if it still reads smooth) |
-  | Blink in progress (~250 ms) | up to 60 fps for its duration |
-  | Head micro-turn in progress | up to 30 fps for its duration |
-  | Mode transition | up to 60 fps for its duration |
-  | `SPEAKING` | up to 60 fps |
-  | `DORMANT`, minimized, occluded, locked | no render |
+  | Blink in progress (~300 ms) | up to 60 fps for its duration |
+  | Expression or brightness ease, mode transition | up to 60 fps for its duration |
+  | `SPEAKING` (mouth, brightness pulse) | up to 60 fps |
+  | Particle drift (if kept) | compositor-driven; no 3D render |
+  | `DORMANT` at rest, minimized, occluded, locked | no render |
+
+  *(v1.7)* The slow-breathing and head micro-turn rows were removed with those channels
+  (`P3-D22`).
 
   30 fps is a ceiling for idle motion, not a target.
 - **Available levers:**
@@ -582,6 +588,78 @@ Lessons recorded:
 - The particle field (Android: 40 fixed anchors with slow drift and an alpha pulse) moves to
   Track 5, because its drift is animation.
 - Glow and rings are filed as `S30`.
+
+**P3-D22 — Track 5 motion follows Android's actual 3D behaviour (v1.7, developer decisions
+2026-09-28).**
+The Android presence source was read before Track 5 was specified (the `P3-D20` lesson). It shows
+that Android animated the 3D model in only four ways:
+1. blink morphs;
+2. expression morphs per mode;
+3. an audio-driven jaw and visemes;
+4. a light-intensity level per mode, plus a speaking pulse.
+
+It did **not**:
+- scale or pulse the model for breathing (its breathing drove 2D rings only);
+- move the head or bust;
+- move the eyes (they are painted into the texture).
+
+Developer decisions, verbatim:
+- Breathing: *"None. Not necessary for AI to breathe."*
+- Head motion: *"None. The model wasn't made for it."*
+- Expression strength, mode brightness and the Dormant look: Android-derived starting values
+  (below).
+- Particles: *"A"*, meaning a separate last phase of Track 5, built only after the living face is
+  approved, and droppable at that point.
+
+The developer's standing instruction: *"We should take the Android settings with a grain of salt
+though. We can use them as a starting point, but there will definitely need to be some fine
+tuning."* Every value below is a **starting value**. It is a named constant, it is tuned live
+with the developer, and the final values are recorded.
+
+**Starting values (from the Android source, adapted where noted):**
+
+| Channel | Starting value | Android source |
+|---|---|---|
+| Blink interval | uniform 3000–8000 ms; `THINKING` 2000–4500 ms | `BlinkController` |
+| Blink shape | close 120 ms, open 180 ms, linear | `BlinkController` |
+| Blink depth | 1.0; `THINKING` 0.4 (a half-blink) | `BlinkController` |
+| Blink morphs | `Blink both` (2) only. Android wrote the same weight to 0, 1 and 2; Track 5 checks by crop whether index 2 alone fully closes. No left/right asymmetry (Android had none) | `Zola3DModelLayer` |
+| Blink in `DORMANT` | none | Windows (`P3-D04`) |
+| Expression `IDLE` | neutral (all 0) | `ExpressionMapper` |
+| Expression `LISTENING` | `Brow raise` (5) 0.4 | `ExpressionMapper` |
+| Expression `THINKING` | `Brow furrow` (6) 0.15 | `ExpressionMapper` |
+| Expression `SPEAKING` | neutral; the mouth is owned by the mouth channel | `ExpressionMapper` |
+| Expression `ALERT` (defined, never produced) | `Wide/alert` (4) 0.9, `Brow raise` (5) 0.6, `Nostril flare` (7) 0.4, `Wide EE` (13) 0.4 | `ExpressionMapper` |
+| Expression `DORMANT` | neutral, with lids lowered by `Blink both` (2) held at 0.30 | Windows; Android's `THINKING` half-blink is the precedent |
+| Expression easing | eased over 300 ms, ease-out. Android applied weights directly; a short ease prevents a visible snap on desktop | adapted |
+| Mode brightness (tone-map gain multiplier) | `IDLE` 1.00, `LISTENING` 1.10, `THINKING` 0.75, `SPEAKING` 1.00 ± 0.15 sine over 1.2 s, `ALERT` 1.60, `DORMANT` 0.50; eased over 600 ms | `Zola3DModelLayer` ambient per mode (1000 / 1000 / 700 / 850–1150 / 1400) plus `glowIntensity × 400` |
+| Mode-change stagger | eyes (blink behaviour, dormant lids) immediately; brightness after 450 ms; expression after 850 ms | `PresenceModeTransitionCoordinator` |
+| Mouth | `P3-D14` estimate (no audio on Windows), shaped like Android's mapping. See Track 5 for the synthetic level, the band blend and the springs | `Zola3DModelLayer`, `ExpressionMapper`, `PresenceStateAdapter` |
+| Particles | 40 fixed anchors, drift and alpha pulse, as specified in Track 5 | `PresenceParticleFieldLayer` |
+
+The brightness factor multiplies the approved `P3-D20` gain (4.4). It never replaces it. The
+factor is 1.00 in `IDLE`, so `IDLE` at rest is the approved frame exactly.
+
+**Not carried over:**
+- Android's attention confidence, cognitive load and RMS inputs (no Windows source);
+- the mode hold times (on Windows, `PresenceMode` comes from `ZolaDisplayState`, and the
+  animator must not second-guess it, `P3-D03`);
+- the camera pitch and all light values (`P3-D20`).
+
+**One Android defect not copied:** Android's particle clock restarts every 12 s. Its sine phases
+don't complete a whole cycle in 12 s, so every particle jumps slightly at each restart. On
+Windows the drift is continuous and seamless.
+
+**The full key surface (developer, 2026-09-28):** *"I want to make sure we are actually exposing
+all the keys and not limiting ourselves to what Android was using."* So:
+- Every one of the 15 morph targets is tunable per mode, not only the ones Android drove. Android's
+  values are the defaults, and every other key defaults to 0.
+- Every timing, probability, scale and spring in every channel is a key.
+
+The ownership rules still decide **which channel** writes a morph at a given moment.
+
+Supersedes the breathing, lean and micro-turn items in `P3-D05`, and the v1.1 Track 5 starting
+values.
 
 **P3-D16 — No `hermes-agent` edits; no Python installs.** Carries forward `P2-D10`/`P2-D17`.
 Phase 3 is client-only. `git status` in `C:\Users\test\Dev\hermes-agent` must be clean at every
@@ -1055,110 +1133,222 @@ The static-GPU criterion catches it here, where the fix is local.
 The presence is a still frame. The doc requires state-driven, restrained procedural life (§3,
 §5, §7, §8, §9) within a desktop-appropriate budget (`P3-D09`).
 
+*(v1.7)* The scope follows `P3-D22`: what Android actually did to the 3D model, with the
+developer's decisions. That means:
+- blink;
+- expression per mode;
+- a speaking mouth;
+- brightness per mode;
+- a staggered mode change;
+- the Dormant look;
+- reduced motion;
+- then particles, as a separate last phase.
+
+There is **no breathing and no head or bust motion.**
+
 ### Files to read
-- `Presence/PresenceView.cs`, `Presence/PresenceLook.cs`, `ZolaDisplayState.cs`,
-  `MainWindow.xaml(.cs)`.
+- `Presence/PresenceView.cs`, `Presence/PresenceLook.cs`, `Presence/PostEffectToneMap.cs`,
+  `Presence/MorphTarget.cs`, `ZolaDisplayState.cs`, `MainWindow.xaml(.cs)`,
+  `Themes/ZolaTokens.xaml`.
 - `Zola_Presence_UI_Architecture.md` §3–§9 and §23.
 - Audit 02 §3 (morph → behaviour map) and Audit 04 §1b (transition matrix).
 
 ### Changes
 
-**`Presence/PresenceAnimator.cs` (new):** the only writer of morph weights and node transforms.
-It reads `ZolaDisplayState.PresenceMode` through the model's `Changed` event, and never reads
-voice or window facts directly (`P3-D03`).
-- **Per-frame composition (v1.1).** Controllers never write weights. Each frame, in this fixed
-  order:
+**`Presence/PresenceAnimator.cs` (new):** the only writer of morph weights and of the tone-map
+gain multiplier. It reads `ZolaDisplayState.PresenceMode` through the model's `Changed` event,
+and never reads voice or window facts directly (`P3-D03`). Nothing writes the node transform.
+- **Per-frame composition.** Controllers never write weights. Each tick, in this fixed order:
   1. **Base expression:** `ExpressionController` gives the target weights for the current
      mode.
-  2. **Channels:** blink, mouth, breathing and head motion each compute their own
-     contribution.
+  2. **Channels:** blink, mouth and brightness each compute their own contribution.
   3. **Compose:** shared targets are resolved by an ownership table:
-     - `MouthController` exclusively owns indices 8–14 while `SPEAKING` (the base expression's
-       `Wide EE` is ignored meanwhile);
-     - `BlinkController` owns indices 0–2 and adds to the base;
-     - the base owns 3–7 except where a channel is declared owner;
-     - head motion owns the node transform;
-     - breathing owns glow and bloom only.
-  4. **Smooth:** transitions and springs per the coordinator.
-  5. **Commit:** set every changed weight and transform, then call `WeightUpdated()` once.
 
-  When `SPEAKING` ends, ownership of 8–14 returns to the base expression through smoothing, not
-  a snap.
-- **Controllers** (one class each, in `Presence/Controllers/`, named per §5, sharing no state):
-  - `BlinkController`:
-    - `Blink both` on a random 2500–7500 ms interval; about 150 ms close, 100 ms open;
-    - occasional left/right asymmetry;
-    - suppressed in `Listening` (longer intervals) and `Dormant`;
-    - blink suppression is a timer rule (`P3PRE-AUD-09`).
-  - `BreathingController`:
-    - an asymmetric sine, 40% inhale / 60% exhale, at the §5 mode rates;
-    - **none in `Dormant`** (a steady reduced glow; `P3-D04`);
-    - output drives bloom intensity and `EmissiveColor` within small bounds (`P3-D05`);
-    - never whole-body scale;
-    - a deeper breath every 30–40 s.
-  - `ExpressionController` — mode → weights. These are the starting values; the developer tunes
-    them in smoke and the final values are recorded:
+     | Owner | What it owns |
+     |---|---|
+     | `BlinkController` | indices 0–2: the per-mode lid rest level plus blinks |
+     | `ExpressionController` | indices 3–14 outside `SPEAKING`; indices 3–7 during `SPEAKING` |
+     | `MouthController` | indices 8–14 while `SPEAKING` and during its ease-out |
+     | `BrightnessController` | the gain multiplier |
 
-    | Mode | Weights |
-    |---|---|
-    | Idle | all 0, `Wide EE` 0.05 |
-    | Listening | `Wide/alert` 0.35, `Brow raise` 0.15 |
-    | Thinking | `Brow furrow` 0.35, `Squint` 0.15 |
-    | Speaking | Idle weights plus the mouth cycler |
-    | Alert | `Wide/alert` 0.8, `Brow furrow` 0.5 (defined, unused, `P3-D04`) |
-    | Dormant | `Squint` 0.25, steady glow at 40%; no blink, breathing or head motion |
+  4. **Smooth:** eases and springs per the coordinator.
+  5. **Commit:** set every changed weight, then call `WeightUpdated()` once, update the gain
+     multiplier if it changed, and request one render.
+- **One tick source, which runs only while something is changing:**
+  - a blink in progress;
+  - an ease or spring that hasn't settled;
+  - `SPEAKING`.
 
-  - `MouthController` per `P3-D14`.
-  - *(v1.4, Track 3 finding)* `BlinkLeft` / `BlinkRight` are **her** left and right, the
-    anatomical convention (`BlinkLeft` closes the eye on the viewer's right). Asymmetric blinks
-    use them as-is; do not swap them.
-  - `HeadMotionController`:
-    - Listening: a forward pitch of 2°, spring-smoothed (attention lean);
-    - an idle micro-turn of ±1.5° yaw every 8–15 s, standing in for saccade (`P3-D05`).
-  - `ModeTransitionCoordinator` staggers each change:
-    - eyes 150–250 ms;
-    - breathing 400–600 ms;
-    - expression 700–1000 ms (§8).
-  - Particle field *(v1.6, moved from Track 4 per `P3-D21`)*: at most 40 particles over the
-    presence, from Android's spec. The developer provides the values; Cursor does not read the
-    Android project. Particles are fixed normalized anchors; even indices are `#C4A882` at alpha
-    0.55, odd indices `#E8DDD0` at alpha 0.22; radius 2.2 or 3.4; an outline ring at alpha
-    0.35. They drift slowly on a shared 12 s cycle, with amplitude about 3 px and an alpha pulse
-    of 0.7–1.0. Reduced motion freezes them.
-  - *(v1.6)* The mode glow maps to the `P3-D20` tone-map **gain** (Android varies ambient
-    intensity by mode), within the `P3-D09` budget.
-- **Rendering budget (`P3-D09`):**
-  - one animation tick source;
-  - 30 fps when idle; 60 fps only during transitions and `Speaking`;
-  - invalidate only when a value changed;
-  - pause entirely when minimized, occluded or locked.
-- **Reduced motion:** honour `UISettings.AnimationsEnabled` and `AnimationsEnabledChanged` live:
-  - no particle drift, no micro-turn, no mouth cycling;
-  - breathing reduced to a slow glow, at the lowest cadence in `P3-D09` and still within the
-    idle budget;
-  - blinks stay;
-  - transitions become instant (§23).
+  Otherwise the tick stops and nothing renders. The next blink is a single scheduled due time on
+  the same source.
+- **Exact settle:** when a value is within its epsilon of its target, it is set **exactly** to
+  the target and stops changing. So `IDLE` at rest is pixel-identical to the approved `P3-D20`
+  frame.
+- **The gain multiplier:** `PostEffectToneMap` gains a runtime multiplier (default 1.0) that only
+  `PresenceAnimator` writes. The approved gain stays owned by `PresenceLook`. The debug look
+  reload therefore never fights the animator: effective gain = look gain × multiplier.
+- **Rapid mode changes:** each change restarts the stagger from the **current** values. There is
+  no queue and no hold time; `PresenceMode` is trusted as published (`P3-D03`).
+- *(v1.7 peer review)* **Animation contract:**
+  - **Time:** all timing uses a monotonic clock and real elapsed time. Nothing advances by an
+    assumed frame count; the tick cadence changes sampling only, never speed.
+  - **Randomness:** one random source per animator, shared by all controllers. In debug builds
+    it can take a fixed seed, so runs are reproducible; Release seeds it unpredictably.
+  - **Handing a morph between channels:** the incoming channel starts from the currently
+    composed weight. A handover never causes a jump (for example `Wide EE` (13) going
+    `ALERT` → `SPEAKING` → `ALERT`, or a mode change during the mouth's ease-out).
+  - **Resume after a pause:** read the current mode; discard expired blink and mouth
+    scheduling and any stale transition; set every channel to its current state; schedule only
+    future activity. Nothing that would have happened while paused is replayed. If she is still
+    `SPEAKING`, a fresh mouth sequence starts.
+
+**Controllers** (one class each, in `Presence/Controllers/`, sharing no state). Starting values
+come from `P3-D22`; every value is a named constant, tuned live, with final values recorded.
+- **`BlinkController`:**
+  - the interval, shape and depth from `P3-D22`, with the `THINKING` half-blink;
+  - keys:
+    - per mode: interval range, depth, blinks on or off, and a lid rest level (0 except
+      `DORMANT` 0.30);
+    - global: close and open times;
+    - a per-index mix for 0, 1 and 2 (default 0, 0, 1: `Blink both` only);
+    - an asymmetry chance and ratio (default 0: none);
+  - in `DORMANT`, no blinks: the lids ease to their rest level and hold.
+- **`ExpressionController`:** mode → weights per `P3-D22`, eased over 300 ms.
+  - Keys: a weight for **every** index it owns in each mode: 3–14 in every mode except
+    `SPEAKING`, and 3–7 in `SPEAKING`.
+  - Android's values are the defaults; every other weight defaults to 0.
+- **`BrightnessController`:** the per-mode multiplier per `P3-D22`, eased over 600 ms.
+  - Keys, per mode: the multiplier, plus a pulse amplitude and period.
+  - The pulse defaults to 0 everywhere except `SPEAKING` (±0.15 over 1.2 s).
+  - A non-zero pulse in `IDLE`, `LISTENING` or `THINKING` would be breathing, which `P3-D22`
+    excludes. Those keys exist, but using them is a developer decision to revisit `P3-D22`, not a
+    tuning change.
+- **`MouthController`** (`P3-D14`, shaped like Android):
+  - It starts `FirstSentenceLatencySeconds` after `SPEAKING` begins (read from
+    `VoiceController`, not duplicated), plus a tunable onset offset that defaults to 0.
+    - Track 5 first confirms from the code that this is the right anchor for audible speech.
+    - If it isn't, stop and flag it; don't knowingly ship a systematic lag.
+  - **Synthetic level `L`**, re-picked every 90–140 ms:
+    - with a 20% chance it is a closure step (`L` = 0);
+    - otherwise `L` is uniform in 0.25–1.0.
+  - **Jaw (8):** 0 on a closure step, otherwise 0.10 + 0.25 × `L`. That gives 0.10–0.35, which
+    matches Android's effective ceiling of about 0.32.
+  - **Visemes 9–11:** Android's band blend applied to `mid = L × 0.25`:
+    - band boundaries 0.2 and 0.6;
+    - `Mid-open` (10) scaled by 0.15;
+    - `Closed M/B/P` (11) is 1.0 at `mid` 0.
+  - **`Wide EE` (13):** `mid × 0.6`.
+  - **`Round OO` (12):** 0. Android's gate (amplitude > 0.6) effectively never fired.
+  - **`Teeth F/V` (14):** 0.25 on 15% of non-closure steps, otherwise 0. This is a Windows
+    starting guess: Android drove it from an FFT band whose scale isn't known.
+  - **Springs** (unit mass; Android's Compose values):
+
+    | Morphs | Stiffness | Damping ratio |
+    |---|---|---|
+    | Jaw (8) | 400 | 1.0 |
+    | 9–11 | 200 | 1.0 |
+    | 12–14 | 1500 | 0.5 |
+
+    Integrate with ≤ 4 ms sub-steps, or use the closed-form solution.
+  - Keys: every number above, plus:
+    - a spring for each of 8–14;
+    - a `Round OO` (12) chance and weight (default 0);
+    - a resting mouth-shape weight for each of 8–14 while speaking (default 0).
+  - When `SPEAKING` ends, every mouth target goes to 0 through the same springs, never a snap.
+  - In reduced motion, no mouth motion.
+  - A code comment says this follows the `P2-D15` estimate, not the sound (`S17`).
+- **`ModeTransitionCoordinator`:**
+  - the eyes change immediately (blink behaviour and Dormant lids);
+  - brightness follows after 450 ms;
+  - expression follows after 850 ms;
+  - in reduced motion, all three are instant.
+- *(v1.4, Track 3 finding)* `BlinkLeft` / `BlinkRight` are **her** left and right. Nothing in this
+  track uses them separately.
+
+**Particle field (the last phase, only after the developer approves the living face; droppable
+then, `P3-D22`):**
+- **Layer:**
+  - a new XAML layer between `PresenceHost` and the HUD;
+  - not hit-testable;
+  - spanning the presence area.
+- **Anchors:** 40 fixed normalized anchors (developer-supplied list), positioned as fractions of
+  the layer so they survive resizing. Android draws them over the face with no exclusion zone;
+  start that way, and the developer judges.
+- **Colour, size and ring:**
+  - particle `i`: even `#C4A882` at α 0.55, odd `#E8DDD0` at α 0.22;
+  - radius 3.4 if `i % 3 == 0`, otherwise 2.2 (DIP);
+  - an outline ring of radius r + 1.5, stroke 0.8, `#C4A882` at α 0.35.
+- **Drift:** `x = sin(0.18t + 0.43i) × 3.2s`, `y = cos(0.13t + 0.43i) × 2.8s`, where
+  `s = layer width / 1440`.
+- **Alpha pulse:** `0.7 + 0.3 × sin(0.22t + 0.43i)`.
+- **Time:** `t` is continuous seconds, never wrapped (`P3-D22`).
+- **Performance:** driven by the compositor, so drift never re-renders the 3D scene.
+- **When it stops:**
+  - frozen at `t` = 0 in reduced motion and in `DORMANT`;
+  - paused when minimized, occluded or locked.
+
+**Rendering budget (`P3-D09`):**
+- no render while nothing changes;
+- up to 60 fps only during a blink, an ease, a transition or `SPEAKING`;
+- pause entirely when minimized, occluded or locked.
+
+**Reduced motion** *(v1.7 peer review; one contract)*: honour `UISettings.AnimationsEnabled`
+and `AnimationsEnabledChanged` live. State is still communicated; transitional and continuous
+motion is removed.
+
+| Channel | Normal | Reduced motion |
+|---|---|---|
+| Blink | animated | animated (§23) |
+| Expression | eased | snaps to target |
+| Brightness | eased | snaps to target |
+| Brightness pulse | animated | off |
+| Dormant lids | eased | snap to rest level |
+| Stagger | 0 / 450 / 850 ms | bypassed |
+| Speaking mouth | animated | off (at rest) |
+| Particles | drift | frozen |
+
+**Debug hooks** (`#if DEBUG` only):
+- **Defaults file:** writes the complete default life configuration, with every key, to
+  `presence-life.defaults.json`, as the starting point for tuning.
+- **Life reload:** reloads life values from `%LOCALAPPDATA%\ZolaClient\debug\presence-life.json`.
+  The same contract as the look reload: start from the defaults, reject missing keys, all or
+  nothing, and log a fingerprint.
+- **Forced mode:** cycles a forced `PresenceMode` seen **only** by the animator, for tuning each
+  mode. The HUD and `ZolaDisplayState` are unaffected; it is off by default and logged.
+
 - Tag: `// P3-LIFE: … — P3-D0X`.
 
 ### Exit criteria
-- [ ] `PresenceAnimator` is the only code that calls `SetWeight` or changes node transforms
-      (search).
+- [ ] `PresenceAnimator` is the only code that calls `SetWeight` or writes the gain multiplier.
+      Nothing changes node transforms (search).
 - [ ] No controller reads `VoiceController` or window fields; only `ZolaDisplayState` (search).
+      The one exception is `FirstSentenceLatencySeconds`, read as a read-only constant.
+- [ ] `IDLE` at rest is pixel-identical to the approved frame (max delta 0, raw capture, taken
+      after every channel reports settled and the frame is presented).
+- [ ] The life file exposes every key: all 15 morph indices per mode (per the ownership table),
+      and every timing, probability, scale, spring and multiplier. The key reference is recorded.
+- [ ] Handover continuity: forced `ALERT` → `SPEAKING` → `ALERT` shows no jump on index 13
+      (logged weights).
+- [ ] Pause during `SPEAKING` (minimize or lock), then resume: nothing is replayed.
 - [ ] Mode changes follow Audit 04 §1b in the smoke log: every transition enters and exits, and
       nothing stays stuck after Cancel, a turn error, a stop phrase or reconnect.
-- [ ] **Idle GPU ≤ 10%** averaged over 60 s in `Idle` with idle life on (`P3-D09`). If not met
-      after the levers → BLOCKED with measurements. Speaking and transition readings are
-      recorded.
-- [ ] Minimized, occluded and locked: GPU about 0%.
+- [ ] **Idle GPU ≤ 10%** averaged over 60 s in `Idle` with idle life on (blinks, and particles if
+      kept) (`P3-D09`). If not met after the levers → BLOCKED with measurements. Speaking and
+      transition readings are recorded.
+- [ ] Minimized, occluded, locked and `DORMANT` at rest: GPU about 0%.
 - [ ] Reduced motion toggled live changes behaviour as specified.
-- [ ] Final expression weights, breathing amplitude and mouth cycler ranges recorded.
+- [ ] Final blink, expression, brightness and mouth values recorded, plus particle values or
+      "particles dropped", with the developer's approval verbatim.
 - [ ] `hermes-agent` clean.
 - [ ] `dotnet build … -r win-x64` passes with 0 warnings.
 - [ ] Smoke test (HUMAN-RUN):
-  1. Watch 2 minutes idle: blinks are irregular, breathing is visible but calm, and there is an
-     occasional small head turn. It must not look busy (§19).
-  2. "Hey Zola" plus a question: Listening lean, then Thinking furrow, then the Speaking mouth
-     moves while she talks and stops within about 1 s of the estimate ending.
+  1. Watch 2 minutes idle: blinks are irregular, and otherwise she is still. It must not look
+     busy (§19).
+  2. "Hey Zola" plus a question:
+     - Listening: brows lift, a touch brighter;
+     - Thinking: a slight furrow, dimmer, quicker half-blinks;
+     - Speaking: the mouth moves while she talks and settles within about 1 s of the estimate
+       ending.
   3. Barge-in, Cancel, Text mode: the presence settles to Idle each time.
   4. Kill the serve process: Dormant (dim, still, lids lowered).
   5. Reduced motion on (Windows Settings → Accessibility → Animation effects off): the reduced
@@ -1167,10 +1357,10 @@ voice or window facts directly (`P3-D03`).
   7. The developer judges the overall presence against the doc's §25 motion questions.
 
 **Complexity:** Medium-Large
-**Primary risk:** blowing the budget. Idle life at 60 fps costs about 34.5% GPU (`P3PRE-AUD-26`).
-If the tick source drives full-rate rendering, or bloom forces continuous rendering, idle cost
-exceeds `P3-D09`. The budget is measured before the track can close. The track stops BLOCKED
-rather than shipping over budget.
+**Primary risk:** a tick or render that never stops, which quietly costs GPU at idle. Idle life
+at 60 fps costs about 34.5% GPU (`P3PRE-AUD-26`). The exact-settle rule and the stop-when-idle
+tick source guard against it, and the budget is measured before the track can close. The track
+stops BLOCKED rather than shipping over budget.
 
 ---
 
@@ -1179,18 +1369,25 @@ rather than shipping over budget.
 After all five tracks are merged to `main`:
 
 ### DESIGN_DECISIONS.md
-- Add a "Phase 3 — Presence UI" section recording `P3-D01` through `P3-D21`, with the final
+- Add a "Phase 3 — Presence UI" section recording `P3-D01` through `P3-D22`, with the final
   tuned values:
   - Track 4: lighting, bloom and texture size;
-  - Track 5: expression weights, breathing, mouth cycler and idle frame rate;
+  - Track 5 (v1.7): blink, expression weights, brightness per mode, mouth values, particle
+    values (or "dropped") and the measured cadence;
   - the measured idle GPU and memory.
 - Annotate `P2-D08`: the voice-state indicator is now derived by `ZolaDisplayState` (`P3-D03`).
   The strings are unchanged.
+- *(v1.7)* Fold the Track 4 dock amendment (footprint-plus-margin reveal, pointer-position
+  visibility, hysteresis) into `P3-D17`'s entry.
+
+### Code tidy (v1.7, lore-closeout prompt only)
+- Fix the stale `VoiceController.cs` comments near lines 49 and 57 (left after `P3-D15`). This is
+  a comment-only change.
 
 ### OPEN_QUESTIONS.md
 - **File `S24` — GLB asset rework.** Separate eye geometry (saccade), a hair mesh (strand
-  shimmer), projection geometry, a chest emissive region (chest-only breathing), a frown/negative
-  mouth target, and an eye-softness target (`P3PRE-AUD-10`–`16`). Any rework must keep the 15
+  shimmer), projection geometry, head/neck articulation (head motion, `P3-D22`), a
+  frown/negative mouth target, and an eye-softness target (`P3PRE-AUD-10`–`16`). Any rework must keep the 15
   targets and their order, or update `MorphTarget.cs`.
 - **File `S25` — HUD data sources.** Attention level, conversational momentum, emotional tone,
   system health, environment, version, and the dock and Core Systems destinations (Memory,
@@ -1201,8 +1398,9 @@ After all five tracks are merged to `main`:
   more visible by Phase 3.
 - **Update `S17`:** an end-of-playback or speaker-meter signal would also give real mouth
   amplitude (`P3-D14`).
-- **File `S27` — Mic-input meter in the identity block (v1.3).** Only if Track 5 could not
-  fill the reserved space honestly (`P3-D07`).
+- **File `S27` — Mic-input meter in the identity block (v1.3).** *(v1.7)* Track 5 does not fill
+  the reserved space: the client has no mic level (`P2-D01`), so a meter needs a new source
+  (`P3-D07`).
 - **File `S28` — Session UI retirement (v1.3).** The developer expects his memory system to
   make sessions unnecessary. When it does, remove the SESSION HUD line and the Sessions dock
   button together.
@@ -1235,9 +1433,11 @@ After all five tracks are merged to `main`:
 - [ ] Track 3 (`P3-RENDER`) merged. The bust renders; fail-closed fallback; lock/unlock and
       sleep/wake verified.
 - [ ] Track 4 (`P3-LOOK`) merged. The developer's fidelity judgement recorded; static GPU ≤ 1%.
-- [ ] Track 5 (`P3-LIFE`) merged. Procedural life; idle GPU ≤ 10%; reduced motion honoured.
+- [ ] Track 5 (`P3-LIFE`) merged. Procedural life per `P3-D22`; idle GPU ≤ 10%; reduced motion
+      honoured.
 - [ ] One authority: the voice label, mic line and `PresenceMode` are derived only in
-      `ZolaDisplayState.cs`. Morph and transform writes happen only in `PresenceAnimator.cs`.
+      `ZolaDisplayState.cs`. Morph and gain-multiplier writes happen only in
+      `PresenceAnimator.cs`.
 - [ ] No UI design literals (colours, font families, font sizes, spacing) outside
       `ZolaTokens.xaml`. No lighting, bloom or emissive literals outside `PresenceLook.cs`.
       Texture dimensions, animation parameters, camera values, timing values, thresholds,
@@ -1265,9 +1465,8 @@ After all five tracks are merged to `main`:
   9. Kill the serve process: Dormant plus "OFFLINE".
   10. Relaunch.
   11. 2 minutes idle: GPU ≤ 10%, nothing busy.
-- [ ] `DESIGN_DECISIONS.md` has `P3-D01`–`P3-D21`, and `P2-D08` is annotated.
-- [ ] `OPEN_QUESTIONS.md` has `S24`–`S26` and `S28`–`S29` filed (plus `S27` if needed) and
-      `S17` updated.
+- [ ] `DESIGN_DECISIONS.md` has `P3-D01`–`P3-D22`, and `P2-D08` is annotated.
+- [ ] `OPEN_QUESTIONS.md` has `S24`–`S30` filed and `S17` updated.
 - [ ] `ROADMAP.md` marks Phase 3 COMPLETE and has the Phase 4 stub.
 - [ ] The presence UI doc has its Windows Track notes.
 
@@ -1277,14 +1476,15 @@ After all five tracks are merged to `main`:
 
 | Item | Reason | When |
 |---|---|---|
-| Micro-saccade, hair strand shimmer, pixel-projection and hologram layers, chest-only breathing, frown and eye-softness expressions | The asset lacks the geometry or targets (`P3-D05`) | `S24` |
+| Micro-saccade, hair strand shimmer, pixel-projection and hologram layers, head motion, frown and eye-softness expressions | The asset lacks the geometry or targets (`P3-D05`, `P3-D22`) | `S24` |
+| Breathing | Not wanted by the developer (`P3-D22`) | Not planned |
 | Attention, momentum, emotional tone, system health, environment, version and encrypted-link HUD readouts | No source supports them (`P3-D06`) | `S25` |
 | Memory, Environment, Awareness, Behavior, Security, Systems, Settings and Account panels (the dock and Core Systems list) | No client actions or backends exist | `S25` |
 | Location block | No source; privacy plan; would need a network lookup (`P3-D10`) | Revisit with `S25` |
 | Audio-driven lip-sync and precise speaking end | No amplitude signal; client plays no audio (`P3-D14`) | `S17` |
 | `ALERT` mode being produced | No urgency or security signal on Windows | With `S25` |
 | Orbitron wordmark | Rajdhani chosen (`P3-D08`) | Not planned |
-| Decorative waveform | It would look like a live audio reading; the space is reserved (`P3-D07` v1.3) | A real meter in Track 5, or `S27` |
+| Decorative waveform | It would look like a live audio reading; the space is reserved (`P3-D07` v1.3) | `S27` (v1.7) |
 | Markdown rendering in bubbles | Pre-existing plain-text bubbles | `S29` |
 | Title-bar customization | Not needed for v1 of the shell | Future client polish |
 | Persisted Voice/Text mode, window size and panel state | Still no client settings store | Future client-settings work |
@@ -1302,11 +1502,20 @@ After all five tracks are merged to `main`:
 | 2 — Obsidian shell (`P3-SHELL`) | Medium-Large | A code-behind reference breaks after the XAML restructure |
 | 3 — 3D presence (`P3-RENDER`) | Medium-Large | DirectX device loss on unlock or wake, unverified by P3PRE |
 | 4 — Fidelity (`P3-LOOK`) | Medium | Bloom or lights force continuous rendering, raising static GPU |
-| 5 — Procedural life (`P3-LIFE`) | Medium-Large | Idle animation exceeds the 10% GPU budget |
+| 5 — Procedural life (`P3-LIFE`) | Medium-Large | A tick or render that never stops, costing idle GPU |
 
 ---
 
-*Phase 3 Build Plan version 1.6*
+*Phase 3 Build Plan version 1.7*
+*v1.7 (2026-09-28, before Track 5): `P3-D22` Track 5 follows Android's actual 3D behaviour (read
+from source), with the developer's decisions: no breathing, no head motion, Android-derived
+starting values for blink, expression, brightness per mode, stagger, mouth and Dormant, and
+particles as a separate, droppable last phase. `P3-D04`/`P3-D05`/`P3-D09` annotated; Track 5
+rewritten; `S24`/`S27` wording; lore closeout gains the dock fold-in and the `VoiceController`
+comment tidy. Peer review and developer request: the full key surface (all 15 morphs per mode,
+every parameter), one reduced-motion table, the animation contract (elapsed time, one seeded
+random source, jump-free handover, no replay after a pause), and a check of the mouth onset anchor.
+Track 4 merged at `c8f66625`.*
 *v1.6 (2026-09-25, during Track 4): `P3-D20` texture-driven look (unlit + sRGB/ACES/gain, mip
 bias) with the developer's verbatim approval; `P3-D21` backdrop and brackets deferred, particles
 to Track 5, `S30`; Track 4 exit criteria updated; experiment-path inventory.*
