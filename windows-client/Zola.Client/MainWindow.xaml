@@ -6,13 +6,17 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Zola">
     <!-- P3-SHELL: one-cell obsidian shell; Ctrl+Space stays on the root grid — P3-D11 -->
+    <!-- P3-LOOK: hide the accelerator tooltip; the hotkey still works — P3-D17 -->
     <Grid
         x:Name="RootGrid"
         Background="{StaticResource ZolaBackgroundBrush}"
         IsTabStop="True"
         RequestedTheme="Dark"
         UseSystemFocusVisuals="False"
-        Loaded="OnRootLoaded">
+        KeyboardAcceleratorPlacementMode="Hidden"
+        Loaded="OnRootLoaded"
+        PointerMoved="OnRootPointerMoved"
+        PointerExited="OnRootPointerExited">
         <Grid.KeyboardAccelerators>
             <!-- P2-VOICE: Ctrl+Space starts or stops capture; Window has no accelerator collection, so the root grid owns it — P2-D04 -->
             <KeyboardAccelerator Key="Space" Modifiers="Control" Invoked="OnVoiceHotkey" />
@@ -97,11 +101,15 @@
                 TextWrapping="WrapWholeWords" />
         </StackPanel>
 
-        <!-- P3-SHELL: dock is always visible; Cancel is shown only while a turn runs — P3-D11 -->
+        <!-- P3-LOOK: dock stays in the tree at opacity 0 until the pointer is over its footprint, focus, a panel, or a turn needs it — P3-D17 -->
         <Border
             x:Name="DockHost"
             Canvas.ZIndex="{StaticResource ZolaLayerDock}"
-            Style="{StaticResource ZolaDockHostStyle}">
+            Style="{StaticResource ZolaDockHostStyle}"
+            Opacity="0"
+            IsHitTestVisible="False"
+            GettingFocus="OnDockGettingFocus"
+            LosingFocus="OnDockLosingFocus">
             <StackPanel Orientation="Horizontal" Spacing="{StaticResource ZolaSpace8}" VerticalAlignment="Center">
                 <Button
                     x:Name="ModeButton"
@@ -110,11 +118,12 @@
                     IsEnabled="False"
                     AutomationProperties.Name="Mode">
                     <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <!-- P3-LOOK: Voice/Text E8AB Switch, Sessions E81C History — P3-D11 -->
                         <FontIcon
                             FontFamily="{StaticResource ZolaIconFont}"
                             FontSize="{StaticResource ZolaDockIconSize}"
                             Foreground="{StaticResource ZolaAmberPrimaryBrush}"
-                            Glyph="&#xE8D4;"
+                            Glyph="{StaticResource ZolaGlyphVoiceText}"
                             HorizontalAlignment="Center" />
                         <TextBlock x:Name="ModeButtonLabel" Style="{StaticResource ZolaDockLabelStyle}" />
                     </StackPanel>
@@ -166,7 +175,7 @@
                             FontFamily="{StaticResource ZolaIconFont}"
                             FontSize="{StaticResource ZolaDockIconSize}"
                             Foreground="{StaticResource ZolaAmberPrimaryBrush}"
-                            Glyph="&#xE8A5;"
+                            Glyph="{StaticResource ZolaGlyphSessions}"
                             HorizontalAlignment="Center" />
                         <TextBlock Style="{StaticResource ZolaDockLabelStyle}" Text="SESSIONS" />
                     </StackPanel>
@@ -234,6 +243,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <!-- P3-LOOK: lightweight TextControl keys override the system accent on this box only — P3-D08 -->
                     <TextBox
                         x:Name="Composer"
                         Grid.Column="0"
@@ -241,7 +251,15 @@
                         AcceptsReturn="True"
                         IsEnabled="False"
                         PlaceholderText="Waiting for the session…"
-                        TextWrapping="Wrap" />
+                        TextWrapping="Wrap">
+                        <TextBox.Resources>
+                            <SolidColorBrush x:Key="TextControlBorderBrush" Color="{StaticResource ZolaAmberDark}" />
+                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{StaticResource ZolaAmberMuted}" />
+                            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{StaticResource ZolaAmberPrimary}" />
+                            <SolidColorBrush x:Key="TextControlElevationBorderFocusedBrush" Color="{StaticResource ZolaAmberPrimary}" />
+                            <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{StaticResource ZolaAmberMuted}" />
+                        </TextBox.Resources>
+                    </TextBox>
                     <Button
                         x:Name="SendButton"
                         Grid.Column="1"

@@ -35,4 +35,9 @@
     <!-- P3-RENDER: canonical GLB ships beside the unpackaged exe — P3-D12 -->
     <Content Include="Assets\Presence\zola.glb" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- P3-LOOK: ACES bytecode compiled once with fxc, no build step — P3-D19 -->
+    <EmbeddedResource Include="Presence\Shaders\AcesTonemap.cso" LogicalName="Zola.Client.Presence.Shaders.AcesTonemap.cso" />
+  </ItemGroup>
 </Project>

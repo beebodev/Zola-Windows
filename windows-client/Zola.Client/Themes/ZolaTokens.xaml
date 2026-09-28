@@ -9,7 +9,6 @@
     <Color x:Key="ZolaAmberMuted">#8A6A2A</Color>
     <Color x:Key="ZolaAmberDark">#5A4820</Color>
     <Color x:Key="ZolaAlertGlow">#FFE7A5</Color>
-    <Color x:Key="ZolaPresenceAmber">#FFD05A</Color>
     <Color x:Key="ZolaTextPrimary">#E8DDD0</Color>
     <Color x:Key="ZolaSurface">#141414</Color>
     <Color x:Key="ZolaError">#D9534F</Color>
@@ -19,12 +18,12 @@
     <SolidColorBrush x:Key="ZolaAmberMutedBrush" Color="{StaticResource ZolaAmberMuted}" />
     <SolidColorBrush x:Key="ZolaAmberDarkBrush" Color="{StaticResource ZolaAmberDark}" />
     <SolidColorBrush x:Key="ZolaAlertGlowBrush" Color="{StaticResource ZolaAlertGlow}" />
-    <SolidColorBrush x:Key="ZolaPresenceAmberBrush" Color="{StaticResource ZolaPresenceAmber}" />
     <SolidColorBrush x:Key="ZolaTextPrimaryBrush" Color="{StaticResource ZolaTextPrimary}" />
     <SolidColorBrush x:Key="ZolaSurfaceBrush" Color="{StaticResource ZolaSurface}" />
     <SolidColorBrush x:Key="ZolaErrorBrush" Color="{StaticResource ZolaError}" />
     <SolidColorBrush x:Key="ZolaDividerBrush" Color="{StaticResource ZolaAmberDark}" Opacity="0.5" />
-    <SolidColorBrush x:Key="ZolaOverlayBrush" Color="{StaticResource ZolaBackground}" Opacity="0.88" />
+    <!-- P3-LOOK: overlay opacity so the HUD does not ghost through — P3-D13 -->
+    <SolidColorBrush x:Key="ZolaOverlayBrush" Color="{StaticResource ZolaBackground}" Opacity="0.94" />
     <SolidColorBrush x:Key="ZolaUserBubbleBrush" Color="{StaticResource ZolaAmberPrimary}" Opacity="0.10" />
     <SolidColorBrush x:Key="ZolaAssistantBubbleBrush" Color="{StaticResource ZolaSurface}" />
 
@@ -39,7 +38,8 @@
     <x:Double x:Key="ConversationOverlayMaxFraction">0.45</x:Double>
     <x:Double x:Key="SessionsPanelWidth">320</x:Double>
     <x:Double x:Key="HudInset">24</x:Double>
-    <Thickness x:Key="ZolaMantraIndent">124,0,0,0</Thickness>
+    <!-- P3-LOOK: mantra indent matches the Android identity column (~100) — P3-D07 -->
+    <Thickness x:Key="ZolaMantraIndent">100,0,0,0</Thickness>
     <x:Double x:Key="ZolaRightHudMaxWidth">400</x:Double>
     <x:Double x:Key="ZolaSpace4">4</x:Double>
     <x:Double x:Key="ZolaSpace8">8</x:Double>
@@ -57,6 +57,12 @@
     <x:Double x:Key="ZolaWindowMinHeight">640</x:Double>
     <x:Int32 x:Key="ZolaLayerPresence">0</x:Int32>
     <x:Int32 x:Key="ZolaLayerHud">10</x:Int32>
+    <x:Double x:Key="DockRevealMargin">12</x:Double>
+    <x:Double x:Key="DockHideDelaySeconds">2</x:Double>
+    <x:Double x:Key="DockFadeMilliseconds">180</x:Double>
+    <x:Double x:Key="NoticeHoldSeconds">4</x:Double>
+    <x:String x:Key="ZolaGlyphVoiceText">&#xE8AB;</x:String>
+    <x:String x:Key="ZolaGlyphSessions">&#xE81C;</x:String>
     <x:Int32 x:Key="ZolaLayerNotice">20</x:Int32>
     <x:Int32 x:Key="ZolaLayerDock">30</x:Int32>
     <x:Int32 x:Key="ZolaLayerPanel">40</x:Int32>
@@ -171,7 +177,24 @@
                             HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                             VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                             Content="{TemplateBinding Content}" />
+                        <Border
+                            x:Name="FocusRing"
+                            BorderBrush="{StaticResource ZolaAmberPrimaryBrush}"
+                            BorderThickness="0"
+                            CornerRadius="4"
+                            IsHitTestVisible="False" />
                         <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="FocusStates">
+                                <VisualState x:Name="Focused">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="FocusRing" Storyboard.TargetProperty="BorderThickness">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="1" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Unfocused" />
+                                <VisualState x:Name="PointerFocused" />
+                            </VisualStateGroup>
                             <VisualStateGroup x:Name="CommonStates">
                                 <VisualState x:Name="Normal" />
                                 <VisualState x:Name="PointerOver">
@@ -217,6 +240,7 @@
         <Setter Property="Margin" Value="{StaticResource ZolaDockMargin}" />
     </Style>
 
+    <!-- P3-LOOK: composer caret is amber; focus underline keys are applied on the control — P3-D08 -->
     <Style x:Key="ZolaComposerStyle" TargetType="TextBox">
         <Setter Property="FontFamily" Value="{StaticResource ZolaFontRegular}" />
         <Setter Property="FontSize" Value="16" />

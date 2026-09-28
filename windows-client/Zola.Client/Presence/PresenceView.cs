@@ -1,16 +1,17 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime;
 using HelixToolkit.SharpDX;
 using HelixToolkit.SharpDX.Assimp;
 using HelixToolkit.SharpDX.Model;
 using HelixToolkit.SharpDX.Model.Scene;
 using HelixToolkit.SharpDX.Utilities;
 using HelixToolkit.WinUI.SharpDX;
+using SharpDX.Direct3D11;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Windows.UI;
 using Color4 = HelixToolkit.Maths.Color4;
 
 namespace Zola.Client.Presence;
@@ -25,13 +26,6 @@ internal enum PresenceLoadState
 
 internal sealed class PresenceView : UserControl, IDisposable
 {
-    private const float CameraX = 0f;
-    private const float CameraY = 0.05f;
-    private const float CameraZ = 3.15f;
-    private const float LookX = 0f;
-    private const float LookY = 0f;
-    private const float LookZ = -3.372f;
-    private const float CameraFovDegrees = 35f;
     private const float CameraUpX = 0f;
     private const float CameraUpY = 1f;
     private const float CameraUpZ = 0f;
@@ -66,60 +60,9 @@ internal sealed class PresenceView : UserControl, IDisposable
     private const bool ViewportZoomAroundMouseDownPoint = false;
     private const bool ViewportFixedRotationPointEnabled = false;
     private const byte OpaqueAlpha = 255;
-    private const byte AmbientRed = 90;
-    private const byte AmbientGreen = 70;
-    private const byte AmbientBlue = 40;
-    private const byte KeyRed = 255;
-    private const byte KeyGreen = 220;
-    private const byte KeyBlue = 170;
-    private const float KeyDirectionX = -0.3f;
-    private const float KeyDirectionY = -0.8f;
-    private const float KeyDirectionZ = -1f;
-    private const byte FillRed = 180;
-    private const byte FillGreen = 120;
-    private const byte FillBlue = 60;
-    private const float FillDirectionX = 0.6f;
-    private const float FillDirectionY = -0.2f;
-    private const float FillDirectionZ = -0.5f;
     private const float MaterialChannelMax = 1f;
     private const float WeightMin = 0f;
     private const float WeightMax = 1f;
-    private const int EnvCubeFaceSize = 16;
-    private const int EnvCubeFaceCount = 6;
-    private const int EnvCubeBytesPerPixel = 4;
-    private const int DdsHeaderBytes = 128;
-    private const uint DdsMagic = 0x20534444;
-    private const int DdsStructSize = 124;
-    private const int DdsFlags = 0x1007;
-    private const int DdsPixelFormatSize = 32;
-    private const int DdsPixelFormatFlags = 0x41;
-    private const int DdsRgbBitCount = 32;
-    private const uint DdsRedMask = 0x00ff0000;
-    private const uint DdsGreenMask = 0x0000ff00;
-    private const uint DdsBlueMask = 0x000000ff;
-    private const uint DdsAlphaMask = 0xff000000;
-    private const int DdsCaps = 0x1008;
-    private const int DdsCaps2 = 0xFE00;
-    private const int DdsSizeOffset = 4;
-    private const int DdsFlagsOffset = 8;
-    private const int DdsHeightOffset = 12;
-    private const int DdsWidthOffset = 16;
-    private const int DdsPitchOffset = 20;
-    private const int DdsPixelFormatSizeOffset = 76;
-    private const int DdsPixelFormatFlagsOffset = 80;
-    private const int DdsRgbBitCountOffset = 88;
-    private const int DdsRedMaskOffset = 92;
-    private const int DdsGreenMaskOffset = 96;
-    private const int DdsBlueMaskOffset = 100;
-    private const int DdsAlphaMaskOffset = 104;
-    private const int DdsCapsOffset = 108;
-    private const int DdsCaps2Offset = 112;
-    private const byte EnvRedBase = 80;
-    private const byte EnvRedSpan = 140;
-    private const byte EnvGreenBase = 40;
-    private const byte EnvGreenSpan = 70;
-    private const byte EnvBlueBase = 10;
-    private const byte EnvBlueFaceStep = 4;
     private const string PresenceLogFile = "presence.log";
     private const string AssetsFolder = "Assets";
     private const string PresenceFolder = "Presence";
@@ -135,6 +78,9 @@ internal sealed class PresenceView : UserControl, IDisposable
     private const int RevalidateTimeoutMs = 5000;
     private const int RevalidatePollMs = 100;
     private const int DebugBlinkResetMs = 1000;
+#if DEBUG
+    private const int LookWatchDebounceMs = 250;
+#endif
     private const int WorkingSetBytesPerMegabyte = 1_048_576;
 
     private readonly Viewport3DX _view;
@@ -143,11 +89,20 @@ internal sealed class PresenceView : UserControl, IDisposable
     private readonly SessionLockWatcher _lockWatcher;
     private readonly HashSet<string> _pauseReasons = new();
     private readonly DispatcherQueue _dispatcher;
+    private PresenceLook _look = PresenceLook.CreateDefault();
+    private PostEffectToneMap? _toneMap;
+    private bool _toneMapAvailable;
+    private bool _toneMapUnavailableLogged;
+    private Windows.UI.Color _tokenBackground = Windows.UI.Color.FromArgb(
+        OpaqueAlpha,
+        PresenceLook.DisplayBlackByte,
+        PresenceLook.DisplayBlackByte,
+        PresenceLook.DisplayBlackByte);
     private PresenceLoadState _state = PresenceLoadState.NotLoaded;
     private Task? _loadTask;
     private int _generation;
     private bool _disposed;
-    private bool _lightsAdded;
+    private bool _toneMapAdded;
     private bool _firstFrameLogged;
     private bool _morphCountOk;
     private bool _morphApiWarned;
@@ -157,10 +112,16 @@ internal sealed class PresenceView : UserControl, IDisposable
     private bool _resumeException;
     private int _revalidateEpoch;
     private BoneSkinMeshNode? _morph;
-    private TextureModel? _envTexture;
+    private SceneNode? _modelRoot;
+    private DiffuseMaterialCore? _unlitMaterial;
 #if DEBUG
     private int _debugMorphCursor = -1;
     private DispatcherQueueTimer? _blinkTimer;
+    private FileSystemWatcher? _lookWatcher;
+    private DispatcherQueueTimer? _lookWatchDebounce;
+    private readonly List<WeakReference> _retiredTextureRefs = new();
+    private readonly List<WeakReference> _retiredRootRefs = new();
+    private int _reloadGcGeneration;
 #endif
 
     internal PresenceView(IntPtr windowHandle)
@@ -177,9 +138,9 @@ internal sealed class PresenceView : UserControl, IDisposable
             EffectsManager = new DefaultEffectsManager(),
             Camera = new PerspectiveCamera
             {
-                FieldOfView = CameraFovDegrees,
-                Position = new Vector3(CameraX, CameraY, CameraZ),
-                LookDirection = new Vector3(LookX, LookY, LookZ),
+                FieldOfView = _look.CameraFovDegrees,
+                Position = new Vector3(_look.CameraX, _look.CameraY, _look.CameraZ),
+                LookDirection = new Vector3(_look.LookX, _look.LookY, _look.LookZ),
                 UpDirection = new Vector3(CameraUpX, CameraUpY, CameraUpZ),
             },
             ShowViewCube = ViewportShowViewCube,
@@ -215,6 +176,7 @@ internal sealed class PresenceView : UserControl, IDisposable
         _view.InputBindings.Clear();
         if (Application.Current.Resources.TryGetValue(TokenBackgroundColor, out var background) && background is Windows.UI.Color color)
         {
+            _tokenBackground = color;
             _view.BackgroundColor = color;
         }
 
@@ -252,6 +214,9 @@ internal sealed class PresenceView : UserControl, IDisposable
         _lockWatcher.Unlocked += () => OnUnlockOrPowerResume(PauseLocked);
         _lockWatcher.Suspending += () => PauseRendering(PauseSuspended);
         _lockWatcher.Resumed += () => OnUnlockOrPowerResume(PauseSuspended);
+#if DEBUG
+        StartLookFileWatcher();
+#endif
     }
 
     internal Task LoadAsync()
@@ -274,13 +239,25 @@ internal sealed class PresenceView : UserControl, IDisposable
 
     internal void InvalidateScene()
     {
+#if DEBUG
+        TrackRetiringScene();
+#endif
+        var oldRoot = _modelRoot;
         _generation++;
         _state = PresenceLoadState.NotLoaded;
         _loadTask = null;
         _morph = null;
+        _modelRoot = null;
+        _unlitMaterial = null;
         _morphCountOk = false;
         _firstFrameLogged = false;
         _host.Clear(true);
+        // P3-LOOK: KC11 — dispose the detached scene root on reload — P3-D13
+        if (oldRoot is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+
         ShowScene();
     }
 
@@ -326,6 +303,8 @@ internal sealed class PresenceView : UserControl, IDisposable
         _view.RenderExceptionOccurred -= OnRenderException;
 #if DEBUG
         _blinkTimer?.Stop();
+        _lookWatchDebounce?.Stop();
+        _lookWatcher?.Dispose();
 #endif
         _host.Clear(true);
         (_view.EffectsManager as IDisposable)?.Dispose();
@@ -380,6 +359,88 @@ internal sealed class PresenceView : UserControl, IDisposable
         _ = LoadAsync();
     }
 
+    // P3-LOOK: DEBUG file watch applies the same F12 JSON without needing window focus — P3-D13
+    private void StartLookFileWatcher()
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            VoiceController.TimelineClientFolder,
+            PresenceLook.DebugSubfolder);
+        Directory.CreateDirectory(dir);
+        _lookWatchDebounce = _dispatcher.CreateTimer();
+        _lookWatchDebounce.IsRepeating = false;
+        _lookWatchDebounce.Interval = TimeSpan.FromMilliseconds(LookWatchDebounceMs);
+        _lookWatchDebounce.Tick += OnLookWatchDebounce;
+        _lookWatcher = new FileSystemWatcher(dir, PresenceLook.DebugFileName)
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+        };
+        _lookWatcher.Changed += OnLookFileChanged;
+        _lookWatcher.Created += OnLookFileChanged;
+        _lookWatcher.EnableRaisingEvents = true;
+    }
+
+    private void OnLookFileChanged(object sender, FileSystemEventArgs e)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _ = _dispatcher.TryEnqueue(() =>
+        {
+            if (_lookWatchDebounce is null)
+            {
+                return;
+            }
+
+            _lookWatchDebounce.Stop();
+            _lookWatchDebounce.Start();
+        });
+    }
+
+    private void OnLookWatchDebounce(DispatcherQueueTimer sender, object args)
+    {
+        DebugReloadLook();
+    }
+
+    // P3-LOOK: F12 replaces from defaults; the JSON must list every look value — P3-D19
+    internal void DebugReloadLook()
+    {
+        var path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            VoiceController.TimelineClientFolder,
+            PresenceLook.DebugSubfolder,
+            PresenceLook.DebugFileName);
+        if (!File.Exists(path))
+        {
+            WriteLog("P3-LOOK: look reload rejected — " + PresenceLook.DebugFileName + " is missing");
+            return;
+        }
+
+        string json;
+        try
+        {
+            json = File.ReadAllText(path);
+        }
+        catch (Exception ex)
+        {
+            WriteLog("P3-LOOK: look reload rejected — " + ex.Message);
+            return;
+        }
+
+        if (!PresenceLook.TryReplaceJson(json, out var next, out var reason))
+        {
+            WriteLog("P3-LOOK: look reload rejected — " + reason);
+            return;
+        }
+
+        _look = next;
+        ApplyLook();
+        WriteEffectiveLook();
+        WriteLog("P3-LOOK: look applied fingerprint=" + _look.Fingerprint());
+    }
+
     internal void DebugMorphStep()
     {
         _debugMorphCursor++;
@@ -412,6 +473,25 @@ internal sealed class PresenceView : UserControl, IDisposable
         foreach (MorphTarget target in Enum.GetValues<MorphTarget>())
         {
             SetWeight(target, WeightMin);
+        }
+    }
+
+    // P3-LOOK: dump the full applied look after a complete replace — P3-D19
+    private void WriteEffectiveLook()
+    {
+        var path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            VoiceController.TimelineClientFolder,
+            PresenceLook.DebugSubfolder,
+            PresenceLook.EffectiveFileName);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, _look.ToCanonicalJson());
+        }
+        catch (Exception ex)
+        {
+            WriteLog("P3-LOOK: effective dump failed — " + ex.Message);
         }
     }
 #endif
@@ -475,14 +555,7 @@ internal sealed class PresenceView : UserControl, IDisposable
             throw new InvalidOperationException("GLB import produced no root");
         }
 
-        var located = GlbTextureLocator.LocateMetallicRoughness(path);
-        if (!located.Ok || located.Bytes is null)
-        {
-            throw new InvalidOperationException(located.FailureReason ?? "metallic-roughness lookup failed");
-        }
-
-        var roughness = new TextureModel(new MemoryStream(located.Bytes), false);
-        return new ImportBundle(scene, roughness);
+        return new ImportBundle(scene);
     }
 
     private void AttachOnUi(ImportBundle bundle, long durationMs, long workingSetBefore)
@@ -502,78 +575,60 @@ internal sealed class PresenceView : UserControl, IDisposable
             return;
         }
 
-        morph.Material = new PBRMaterialCore
+        // P3-LOOK: one path — DiffuseMaterial EnableUnLit is albedo × white — P3-D20
+        _unlitMaterial = new DiffuseMaterialCore
         {
-            AlbedoMap = phong.DiffuseMap,
-            NormalMap = phong.NormalMap,
-            EmissiveMap = phong.EmissiveMap,
-            RoughnessMetallicMap = bundle.RoughnessMetallic,
-            AlbedoColor = new Color4(MaterialChannelMax, MaterialChannelMax, MaterialChannelMax, MaterialChannelMax),
-            EmissiveColor = new Color4(MaterialChannelMax, MaterialChannelMax, MaterialChannelMax, MaterialChannelMax),
-            MetallicFactor = MaterialChannelMax,
-            RoughnessFactor = MaterialChannelMax,
-            AmbientOcclusionFactor = MaterialChannelMax,
-            RenderAlbedoMap = true,
-            RenderNormalMap = phong.NormalMap is not null,
-            RenderEmissiveMap = true,
-            RenderRoughnessMetallicMap = true,
-            RenderAmbientOcclusionMap = false,
-            RenderEnvironmentMap = true,
+            DiffuseMap = phong.DiffuseMap,
+            DiffuseColor = new Color4(MaterialChannelMax, MaterialChannelMax, MaterialChannelMax, MaterialChannelMax),
+            RenderDiffuseMap = true,
+            EnableUnLit = true,
         };
+        morph.Material = _unlitMaterial;
 
-        EnsureLightsAndEnvironment();
+        EnsureToneMap();
         _host.Clear(true);
         var root = bundle.Scene.Root;
         // P3-RENDER: Grounding frames the bust at the origin, not the glTF translation — P3-D02
         root.ModelMatrix = Matrix4x4.Identity;
         _host.AddNode(root);
+        _modelRoot = root;
         _morph = morph;
         _morphCountOk = true;
         _state = PresenceLoadState.Ready;
+        ApplyLook();
         ShowScene();
         ApplyRenderGate();
+        LogTextureSampling();
         WriteLog("P3-RENDER: scene attached (UI thread)");
         WriteLog(
             "P3-RENDER: load duration=" + durationMs + "ms workingSetBefore=" + workingSetBefore
             + " workingSetAfter=" + ReadWorkingSet()
             + " workingSetBeforeMB=" + (workingSetBefore / WorkingSetBytesPerMegabyte)
             + " workingSetAfterMB=" + (ReadWorkingSet() / WorkingSetBytesPerMegabyte));
+#if DEBUG
+        LogReloadGc();
+#endif
     }
 
-    private void EnsureLightsAndEnvironment()
+    private void EnsureToneMap()
     {
-        if (_lightsAdded)
+        if (_toneMapAdded)
         {
             return;
         }
 
-        _envTexture = new TextureModel(new MemoryStream(CreateWarmCubeDds()), false);
-        _view.Items.Add(new AmbientLight3D
-        {
-            Color = Windows.UI.Color.FromArgb(OpaqueAlpha, AmbientRed, AmbientGreen, AmbientBlue),
-        });
-        _view.Items.Add(new DirectionalLight3D
-        {
-            Color = Windows.UI.Color.FromArgb(OpaqueAlpha, KeyRed, KeyGreen, KeyBlue),
-            Direction = new Vector3(KeyDirectionX, KeyDirectionY, KeyDirectionZ),
-        });
-        _view.Items.Add(new DirectionalLight3D
-        {
-            Color = Windows.UI.Color.FromArgb(OpaqueAlpha, FillRed, FillGreen, FillBlue),
-            Direction = new Vector3(FillDirectionX, FillDirectionY, FillDirectionZ),
-        });
-        _view.Items.Add(new EnvironmentMap3D
-        {
-            Texture = _envTexture,
-            SkipRendering = true,
-        });
-        _lightsAdded = true;
+        // P3-LOOK: ACES pass; fail closed if the technique cannot load — P3-D19
+        TryAddToneMap(PostEffectToneMap.EmbeddedResourceName);
+        ApplyLook();
+        _toneMapAdded = true;
     }
 
     private void BecomeUnavailable(string reason)
     {
         _state = PresenceLoadState.Unavailable;
         _morph = null;
+        _modelRoot = null;
+        _unlitMaterial = null;
         _morphCountOk = false;
         _host.Clear(true);
         _view.Visibility = Visibility.Collapsed;
@@ -674,6 +729,215 @@ internal sealed class PresenceView : UserControl, IDisposable
         _resumeException = true;
     }
 
+    private void ApplyLook()
+    {
+        if (_view.Camera is PerspectiveCamera camera)
+        {
+            camera.FieldOfView = _look.CameraFovDegrees;
+            camera.Position = new Vector3(_look.CameraX, _look.CameraY, _look.CameraZ);
+            camera.LookDirection = new Vector3(_look.LookX, _look.LookY, _look.LookZ);
+        }
+
+        ApplyAlbedoSampler();
+        ApplyToneMapLook();
+
+        if (_view.RenderHost is not null)
+        {
+            _view.RenderHost.InvalidateRender();
+        }
+    }
+
+    // P3-LOOK: albedo sampler uses linear mips and a look LOD bias — P3-D13
+    private void ApplyAlbedoSampler()
+    {
+        if (_unlitMaterial is not null && _unlitMaterial.DiffuseMapSampler is { } unlitSampler)
+        {
+            unlitSampler.Filter = Filter.MinMagMipLinear;
+            unlitSampler.MipLodBias = _look.MipLodBias;
+            _unlitMaterial.DiffuseMapSampler = unlitSampler;
+        }
+    }
+
+    private void TryAddToneMap(string resourceName)
+    {
+        if (_view.EffectsManager is null)
+        {
+            NoteToneMapUnavailable("effects manager missing");
+            return;
+        }
+
+        if (!PostEffectToneMap.TryRegister(_view.EffectsManager, resourceName, out var reason))
+        {
+            NoteToneMapUnavailable(reason);
+            RemoveToneMapElement();
+            return;
+        }
+
+        try
+        {
+            if (_toneMap is null)
+            {
+                _toneMap = new PostEffectToneMap();
+                _view.Items.Add(_toneMap);
+            }
+
+            _toneMapAvailable = true;
+            _toneMapUnavailableLogged = false;
+        }
+        catch (Exception ex)
+        {
+            NoteToneMapUnavailable("render-target creation failed: " + ex.Message);
+            RemoveToneMapElement();
+        }
+    }
+
+    private void ApplyToneMapLook()
+    {
+#if DEBUG
+        if (_look.ToneMapForceFail)
+        {
+            _ = PostEffectToneMap.LoadBytecode(PostEffectToneMap.MissingResourceName);
+            NoteToneMapUnavailable("shader bytecode missing");
+            if (_toneMap is not null)
+            {
+                _toneMap.EffectEnabled = false;
+            }
+
+            _view.BackgroundColor = _tokenBackground;
+            return;
+        }
+
+        if (_toneMap is null)
+        {
+            TryAddToneMap(PostEffectToneMap.EmbeddedResourceName);
+        }
+#endif
+        if (_toneMap is null)
+        {
+            _view.BackgroundColor = _tokenBackground;
+            return;
+        }
+
+        _toneMapAvailable = true;
+        _toneMapUnavailableLogged = false;
+        _toneMap.Gain = _look.ToneMapGain;
+        _toneMap.EffectEnabled = ShouldRunToneMapPass();
+        ApplyToneMappedClear();
+    }
+
+    // P3-LOOK: invert sRGB×gain→ACES→sRGB so displayed black stays #080808 — P3-D20
+    private void ApplyToneMappedClear()
+    {
+        if (!ShouldRunToneMapPass())
+        {
+            _view.BackgroundColor = _tokenBackground;
+            return;
+        }
+
+        var target = _tokenBackground.R / (float)PresenceLook.ByteMax;
+        var tone = PickDisplayedBlackClear(target);
+        _view.BackgroundColor = Windows.UI.Color.FromArgb(OpaqueAlpha, tone, tone, tone);
+    }
+
+    private byte PickDisplayedBlackClear(float target)
+    {
+        var best = PresenceLook.DisplayBlackByte;
+        var bestErr = float.MaxValue;
+        var gain = _look.ToneMapGain;
+        for (var b = (int)PresenceLook.ByteMin; b <= PresenceLook.ByteMax; b++)
+        {
+            var unit = b / (float)PresenceLook.ByteMax;
+            var linear = SrgbToLinear(unit) * gain;
+            var mapped = AcesFilmic(linear);
+            var displayed = LinearToSrgb(mapped);
+            var err = MathF.Abs(displayed - target);
+            if (err < bestErr)
+            {
+                bestErr = err;
+                best = (byte)b;
+            }
+        }
+
+        return best;
+    }
+
+    private static float SrgbToLinear(float c)
+    {
+        return c <= 0.04045f ? c / 12.92f : MathF.Pow(MathF.Abs((c + 0.055f) / 1.055f), 2.4f);
+    }
+
+    private static float LinearToSrgb(float c)
+    {
+        return c <= 0.0031308f ? 12.92f * c : 1.055f * MathF.Pow(MathF.Max(c, 0f), 1f / 2.4f) - 0.055f;
+    }
+
+    private static float AcesFilmic(float x)
+    {
+        var a = PresenceLook.AcesA;
+        var b = PresenceLook.AcesB;
+        var c = PresenceLook.AcesC;
+        var d = PresenceLook.AcesD;
+        var e = PresenceLook.AcesE;
+        var num = x * ((a * x) + b);
+        var den = (x * ((c * x) + d)) + e;
+        if (den <= 0f)
+        {
+            return 0f;
+        }
+
+        var y = num / den;
+        if (y < 0f)
+        {
+            return 0f;
+        }
+
+        if (y > 1f)
+        {
+            return 1f;
+        }
+
+        return y;
+    }
+
+    private void RemoveToneMapElement()
+    {
+        if (_toneMap is not null)
+        {
+            _view.Items.Remove(_toneMap);
+            _toneMap = null;
+        }
+
+        _toneMapAvailable = false;
+    }
+
+    private void NoteToneMapUnavailable(string reason)
+    {
+        _toneMapAvailable = false;
+        if (_toneMapUnavailableLogged)
+        {
+            return;
+        }
+
+        _toneMapUnavailableLogged = true;
+        WriteLog("P3-LOOK: tone map unavailable — " + reason);
+    }
+
+    private bool ShouldRunToneMapPass()
+    {
+        if (!_toneMapAvailable)
+        {
+            return false;
+        }
+
+#if DEBUG
+        if (_look.ToneMapForceFail)
+        {
+            return false;
+        }
+#endif
+        return true;
+    }
+
     private void ApplyRenderGate()
     {
         if (_view.RenderHost is null)
@@ -756,14 +1020,51 @@ internal sealed class PresenceView : UserControl, IDisposable
         return null;
     }
 
-    private static void DiscardBundle(ImportBundle? bundle)
+    private void LogTextureSampling()
     {
-        if (bundle is null)
+        var sampler = _unlitMaterial?.DiffuseMapSampler;
+        if (sampler.HasValue)
         {
+            var s = sampler.Value;
+            WriteLog(
+                "P3-LOOK: sampler Filter=" + s.Filter
+                + " mipLodBias=" + s.MipLodBias.ToString("0.###")
+                + " anisotropy=" + s.MaximumAnisotropy
+                + " minLOD=" + s.MinimumLod
+                + " maxLOD=" + s.MaximumLod
+                + " (GLB sampler minFilter=9987 LINEAR_MIPMAP_LINEAR magFilter=9729 LINEAR)");
+        }
+
+        LogOneTexture("albedo", _unlitMaterial?.DiffuseMap);
+    }
+
+    private void LogOneTexture(string name, TextureModel? texture)
+    {
+        if (texture is null || _view.EffectsManager?.MaterialTextureManager is null)
+        {
+            WriteLog("P3-LOOK: texture " + name + " missing");
             return;
         }
 
-        _ = bundle.RoughnessMetallic;
+        var srv = _view.EffectsManager.MaterialTextureManager.Register(texture);
+        if (srv?.Resource is Texture2D gpu)
+        {
+            var d = gpu.Description;
+            WriteLog(
+                "P3-LOOK: texture " + name
+                + " " + d.Width + "x" + d.Height
+                + " mips=" + d.MipLevels
+                + " format=" + d.Format
+                + " option=" + d.OptionFlags);
+            return;
+        }
+
+        WriteLog("P3-LOOK: texture " + name + " GPU resource not Texture2D");
+    }
+
+    private static void DiscardBundle(ImportBundle? bundle)
+    {
+        _ = bundle;
     }
 
     private static long ReadWorkingSet()
@@ -773,47 +1074,66 @@ internal sealed class PresenceView : UserControl, IDisposable
         return process.WorkingSet64;
     }
 
-    private static byte[] CreateWarmCubeDds()
+#if DEBUG
+    // P3-LOOK: debug-only reload GC / WeakRef diagnostic — P3-D13
+    private void TrackRetiringScene()
     {
-        var faceBytes = EnvCubeFaceSize * EnvCubeFaceSize * EnvCubeBytesPerPixel;
-        var data = new byte[DdsHeaderBytes + (faceBytes * EnvCubeFaceCount)];
-        BitConverter.GetBytes(DdsMagic).CopyTo(data, 0);
-        BitConverter.GetBytes(DdsStructSize).CopyTo(data, DdsSizeOffset);
-        BitConverter.GetBytes(DdsFlags).CopyTo(data, DdsFlagsOffset);
-        BitConverter.GetBytes(EnvCubeFaceSize).CopyTo(data, DdsHeightOffset);
-        BitConverter.GetBytes(EnvCubeFaceSize).CopyTo(data, DdsWidthOffset);
-        BitConverter.GetBytes(EnvCubeFaceSize * EnvCubeBytesPerPixel).CopyTo(data, DdsPitchOffset);
-        BitConverter.GetBytes(DdsPixelFormatSize).CopyTo(data, DdsPixelFormatSizeOffset);
-        BitConverter.GetBytes(DdsPixelFormatFlags).CopyTo(data, DdsPixelFormatFlagsOffset);
-        BitConverter.GetBytes(DdsRgbBitCount).CopyTo(data, DdsRgbBitCountOffset);
-        BitConverter.GetBytes(DdsRedMask).CopyTo(data, DdsRedMaskOffset);
-        BitConverter.GetBytes(DdsGreenMask).CopyTo(data, DdsGreenMaskOffset);
-        BitConverter.GetBytes(DdsBlueMask).CopyTo(data, DdsBlueMaskOffset);
-        BitConverter.GetBytes(DdsAlphaMask).CopyTo(data, DdsAlphaMaskOffset);
-        BitConverter.GetBytes(DdsCaps).CopyTo(data, DdsCapsOffset);
-        BitConverter.GetBytes(DdsCaps2).CopyTo(data, DdsCaps2Offset);
-        var last = EnvCubeFaceSize - 1;
-        for (var face = 0; face < EnvCubeFaceCount; face++)
+        if (_modelRoot is not null)
         {
-            for (var y = 0; y < EnvCubeFaceSize; y++)
+            _retiredRootRefs.Add(new WeakReference(_modelRoot));
+        }
+
+        TrackRetiredTexture(_unlitMaterial?.DiffuseMap);
+    }
+
+    private void TrackRetiredTexture(TextureModel? texture)
+    {
+        if (texture is not null)
+        {
+            _retiredTextureRefs.Add(new WeakReference(texture));
+        }
+    }
+
+    private void LogReloadGc()
+    {
+        _reloadGcGeneration++;
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        var managed = GC.GetTotalMemory(true);
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        var aliveTextures = 0;
+        foreach (var reference in _retiredTextureRefs)
+        {
+            if (reference.IsAlive)
             {
-                var t = last == 0 ? WeightMin : y / (float)last;
-                var red = (byte)(EnvRedBase + (EnvRedSpan * t));
-                var green = (byte)(EnvGreenBase + (EnvGreenSpan * t));
-                var blue = (byte)(EnvBlueBase + (face * EnvBlueFaceStep));
-                for (var x = 0; x < EnvCubeFaceSize; x++)
-                {
-                    var o = DdsHeaderBytes + (face * faceBytes) + (((y * EnvCubeFaceSize) + x) * EnvCubeBytesPerPixel);
-                    data[o] = blue;
-                    data[o + 1] = green;
-                    data[o + 2] = red;
-                    data[o + 3] = OpaqueAlpha;
-                }
+                aliveTextures++;
             }
         }
 
-        return data;
+        var aliveRoots = 0;
+        foreach (var reference in _retiredRootRefs)
+        {
+            if (reference.IsAlive)
+            {
+                aliveRoots++;
+            }
+        }
+
+        WriteLog(
+            "P3-LOOK: reload-gc n=" + _reloadGcGeneration
+            + " retiredTextures=" + _retiredTextureRefs.Count
+            + " aliveTextures=" + aliveTextures
+            + " retiredRoots=" + _retiredRootRefs.Count
+            + " aliveRoots=" + aliveRoots
+            + " workingSet=" + process.WorkingSet64
+            + " privateBytes=" + process.PrivateMemorySize64
+            + " gcTotal=" + managed);
     }
+#endif
 
     private static void WriteLog(string line)
     {
@@ -833,5 +1153,5 @@ internal sealed class PresenceView : UserControl, IDisposable
         }
     }
 
-    private sealed record ImportBundle(HelixToolkitScene Scene, TextureModel RoughnessMetallic);
+    private sealed record ImportBundle(HelixToolkitScene Scene);
 }
