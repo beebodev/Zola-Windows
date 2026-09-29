@@ -958,6 +958,6 @@ Already on `main` (Phase 1): plan v1.7 at `819c51b0fab8b5dafb8256fa02a558236191d
 ### SHAs
 
 - Plan v1.7 commit on `main`: `819c51b0fab8b5dafb8256fa02a558236191db7a`
-- Implementation commit: *(filled after commit)*
+- Implementation commit: `8e4045f377fda3e995b354802562ffe53f6f62e7`
 - Merge SHA on `main`: *(filled after merge)*
 
