@@ -959,5 +959,5 @@ Already on `main` (Phase 1): plan v1.7 at `819c51b0fab8b5dafb8256fa02a558236191d
 
 - Plan v1.7 commit on `main`: `819c51b0fab8b5dafb8256fa02a558236191db7a`
 - Implementation commit: `8e4045f377fda3e995b354802562ffe53f6f62e7`
-- Merge SHA on `main`: *(filled after merge)*
+- Merge SHA on `main`: `8a00f6e87c68d28231d9ba1fc9ec1f4d29de1f40`
 
