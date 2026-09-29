@@ -49,6 +49,8 @@ public sealed partial class MainWindow : Window
     private bool _dockRevealTarget;
     private Storyboard? _noticeStoryboard;
     private PresenceView? _presence;
+    // P4-LOCK: one app-level lock/sleep watcher — P4-D01
+    private SessionLockWatcher? _lockWatcher;
     private const int SessionIdDisplayLength = 8;
     private const string SessionHudPrefix = "SESSION ";
     private const string SessionHudEmpty = "SESSION —";
@@ -88,7 +90,9 @@ public sealed partial class MainWindow : Window
         ApplyWindowMetrics();
         SizeChanged += OnWindowSizeChanged;
         // P3-RENDER: host the viewport in PresenceHost and pause when the window cannot be seen — P3-D02
-        var presence = new PresenceView(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        // P4-LOCK: hwnd feeds the single SessionLockWatcher owned here, not PresenceView — P4-D01
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var presence = new PresenceView();
         _presence = presence;
         PresenceHost.Children.Add(presence);
         AppWindow.Changed += OnAppWindowChanged;
@@ -110,6 +114,12 @@ public sealed partial class MainWindow : Window
         _chat = new ChatSocket(backend);
         // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
         _voice = new VoiceController(_chat);
+        // P4-LOCK: one lock/sleep watcher, app-level — P4-D01
+        _lockWatcher = new SessionLockWatcher(hwnd);
+        _lockWatcher.Locked += OnSystemLocked;
+        _lockWatcher.Unlocked += OnSystemUnlocked;
+        _lockWatcher.Suspending += OnSystemSuspending;
+        _lockWatcher.Resumed += OnSystemResumed;
         // P3-STATE: the window renders the display record and does not derive it — P3-D03
         _display = new ZolaDisplayStateModel(_voice, DispatcherQueue);
         // P3-LIFE: animator follows display mode and the window's reduced-motion flag — P3-D22
@@ -121,7 +131,17 @@ public sealed partial class MainWindow : Window
             _uiSettings.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
         }
         _voice.StateChanged += () => Dispatch(ApplyVoiceChrome);
-        _voice.TranscriptReady += text => Dispatch(() => _ = SubmitTurnAsync(text));
+        // P4-LOCK: belt-and-braces refuse of voice submit while gated — P4-D02
+        _voice.TranscriptReady += text => Dispatch(() =>
+        {
+            if (_voice.VoiceGated)
+            {
+                _voice.NoteGateRefusal(VoiceController.GateRefuseVoiceSubmitReason);
+                return;
+            }
+
+            _ = SubmitTurnAsync(text);
+        });
         _voice.VoiceChatEnded += () => Dispatch(OnVoiceChatEnded);
         _voice.StatusMessage += message => Dispatch(() => OnVoiceStatusMessage(message));
         _chat.SessionReady += (sessionId, storedId) => Dispatch(() => OnSessionReady(sessionId, storedId));
@@ -154,6 +174,9 @@ public sealed partial class MainWindow : Window
             {
                 _uiSettings.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
             }
+            // P4-LOCK: dispose the app-level lock watcher before presence — P4-D01
+            _lockWatcher?.Dispose();
+            _lockWatcher = null;
             _presence?.Dispose();
             _display.Dispose();
             _voice.Shutdown();
@@ -1076,6 +1099,31 @@ public sealed partial class MainWindow : Window
             _presence.ResumeRendering("minimized");
             UpdateDockVisibility();
         }
+    }
+
+    // P4-LOCK: forward lock/sleep to presence pause and the voice gate fact — P4-D01
+    private void OnSystemLocked()
+    {
+        _presence?.PauseRendering(PresenceView.PauseLocked);
+        _voice.SetLocked(true);
+    }
+
+    private void OnSystemUnlocked()
+    {
+        _presence?.OnUnlockOrPowerResume(PresenceView.PauseLocked);
+        _voice.SetLocked(false);
+    }
+
+    private void OnSystemSuspending()
+    {
+        _presence?.PauseRendering(PresenceView.PauseSuspended);
+        _voice.SetSuspended(true);
+    }
+
+    private void OnSystemResumed()
+    {
+        _presence?.OnUnlockOrPowerResume(PresenceView.PauseSuspended);
+        _voice.SetSuspended(false);
     }
 
     private void OnWindowVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args)

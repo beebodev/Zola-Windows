@@ -75,8 +75,9 @@ internal sealed class PresenceView : UserControl, IDisposable
     private const string FallbackText = "PRESENCE UNAVAILABLE";
     private const string PauseMinimized = "minimized";
     private const string PauseHidden = "hidden";
-    private const string PauseLocked = "locked";
-    private const string PauseSuspended = "suspended";
+    // P4-LOCK: MainWindow passes these pause reasons; presence no longer owns the watcher — P4-D01
+    internal const string PauseLocked = "locked";
+    internal const string PauseSuspended = "suspended";
     private const int RevalidateTimeoutMs = 5000;
     private const int RevalidatePollMs = 100;
     internal const int DebugBlinkResetMilliseconds = 1000;
@@ -88,7 +89,6 @@ internal sealed class PresenceView : UserControl, IDisposable
     private readonly Viewport3DX _view;
     private readonly SceneNodeGroupModel3D _host;
     private readonly Grid _fallbackHost;
-    private readonly SessionLockWatcher _lockWatcher;
     private readonly HashSet<string> _pauseReasons = new();
     private readonly DispatcherQueue _dispatcher;
     private readonly PresenceAnimator _animator;
@@ -123,7 +123,8 @@ internal sealed class PresenceView : UserControl, IDisposable
     private int _reloadGcGeneration;
 #endif
 
-    internal PresenceView(IntPtr windowHandle)
+    // P4-LOCK: MainWindow owns SessionLockWatcher; presence only pauses/resumes — P4-D01
+    internal PresenceView()
     {
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -208,11 +209,6 @@ internal sealed class PresenceView : UserControl, IDisposable
         root.Children.Add(_fallbackHost);
         Content = root;
 
-        _lockWatcher = new SessionLockWatcher(windowHandle);
-        _lockWatcher.Locked += () => PauseRendering(PauseLocked);
-        _lockWatcher.Unlocked += () => OnUnlockOrPowerResume(PauseLocked);
-        _lockWatcher.Suspending += () => PauseRendering(PauseSuspended);
-        _lockWatcher.Resumed += () => OnUnlockOrPowerResume(PauseSuspended);
         // P3-LIFE: animator is the only morph-weight and gain-multiplier writer — P3-D22
         _animator = new PresenceAnimator(this, _dispatcher);
 #if DEBUG
@@ -344,7 +340,6 @@ internal sealed class PresenceView : UserControl, IDisposable
         _disposed = true;
         _generation++;
         _animator.Dispose();
-        _lockWatcher.Dispose();
         _view.OnRendered -= OnViewRendered;
         _view.RenderExceptionOccurred -= OnRenderException;
 #if DEBUG
@@ -652,7 +647,8 @@ internal sealed class PresenceView : UserControl, IDisposable
         _view.Visibility = Visibility.Visible;
     }
 
-    private void OnUnlockOrPowerResume(string reason)
+    // P4-LOCK: MainWindow drives unlock/resume with the same pause reasons as before — P4-D01
+    internal void OnUnlockOrPowerResume(string reason)
     {
         ResumeRendering(reason);
         _ = RevalidateAfterResumeAsync();
