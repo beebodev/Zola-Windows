@@ -65,6 +65,12 @@ Zola's interface should emphasize:
 
 Zola's primary visual identity is defined by the approved obsidian holographic entity concept.
 
+> **Windows Track:** On Windows the canonical presence is `zola.glb` rendered
+> in-process with Helix Toolkit (`P3-D01`). The approved look is texture-driven
+> unlit albedo with sRGB/ACES/gain (`P3-D20`); the field background is the
+> `ZolaBackground` token composited in the tone-map pass (`P3-D24`). The SVG
+> remains the Android/Compose reference, not the Windows render target.
+
 The canonical reference asset is:
 `zola-architecture/assets/zola_presence_ui_reference.svg`
 
@@ -358,6 +364,10 @@ enum class PresenceMode {
 }
 ```
 
+> **Windows Track:** Windows adds `DORMANT` when the backend is unreachable
+> (`P3-D04`). `ALERT` is defined in life values but has no Windows producer
+> yet (`S25`).
+
 ### Layer Render States
 
 Each layer receives only its own scoped render state — not the full
@@ -381,6 +391,12 @@ each layer's scoped render state before passing it down.
 
 Each controller owns one animation concern. Controllers are composable functions
 or remembered state holders. They do not know about each other.
+
+> **Windows Track:** Motion channels are blink, expression, brightness
+> (tone-map gain multiplier), and the speaking mouth (`P3-D22` / `P3-D23`).
+> There is no breathing and no head motion, by developer decision. Mouth
+> timing follows observed Hermes TTS playback presence; shapes remain
+> procedural. Particles and backdrop decoration are deferred (`S30`).
 
 ### BlinkController
 
@@ -838,6 +854,11 @@ Right panel:
 HUD content should be contextual, not decorative.
 
 If a HUD element does not communicate useful state, it should be hidden or minimized.
+
+> **Windows Track:** The HUD shows only true state (`P3-D06`). Identity text
+> (wordmark, tagline, mantra) is an explicit exception (`P3-D07`). Attention,
+> momentum, emotion, health, environment, version, encrypted link, and
+> location are not shown until real sources exist (`S25`).
 
 ---
 
