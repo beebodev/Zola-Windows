@@ -11,7 +11,7 @@
 
 | Repo | Path | Branch | HEAD SHA | Notes |
 |------|------|--------|----------|-------|
-| zola-windows (audited) | `C:\Users\test\Dev\zola-windows` | `audit/p4pre-conversation` | `504ae768b3097c6c16b5d9a387bdbe5a2391bdad` | Handoff expected `159646b312b558430cca77560169347354c891e0` (P3 lore merge). Actual approved base is tip `504ae76…` — one closeout SHA-record commit ahead (`docs: record P3-LORE merge SHA`, touches only `P3-LORE_Progress.md`). Parent confirmed `159646b…`. Developer-approved 2026-09-29. |
+| zola-windows (audited) | `C:\Users\test\Dev\zola-windows` | `audit/p4pre-conversation` → `main` | `9a1f825cede8eae310a337d57b22393dabe26e25` | Approved audit base `504ae768…` (parent `159646b…`). Audit docs commit `9a1f825…` (8c). |
 | hermes-agent (read-only) | `C:\Users\test\Dev\hermes-agent` | detached `v2026.9.14` | `345cd2b057a452236de401d3534b8502a7465e8d` | `git status --porcelain` empty at Phase 1 start. Never edited. |
 
 **Output directory:** `zola-architecture/audit/p4pre-conversation/`  
@@ -212,3 +212,5 @@ Decisions needed (Synthesis §5): **16**.
 - hermes-agent: clean @ `345cd2b057a452236de401d3534b8502a7465e8d`.
 - Live profile `config.yaml` mtime unchanged: `2026-09-23T15:32:27.1953228-07:00`.
 - Spike folder not staged.
+
+**8c audit commit SHA:** `9a1f825cede8eae310a337d57b22393dabe26e25`
