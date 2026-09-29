@@ -46,7 +46,6 @@ sealed class VoiceController
     private const double FollowUpMaxDelaySeconds = 90;
     private const double MaxEstimatedSpeechSeconds = 300;
     // P3-STATE: unused bag-of-words echo constants are removed; the live rule is P2-D14 — P3-D15
-    // P2-SPEAK: follow-up echo uses a tail bag-of-words check plus a short phrase run; 80% missed an STT split of unless — P2-D14
     private const int EchoLookbackWords = 20;
     private const int EchoReopenLimit = 3;
     private const double EchoReopenDelaySeconds = 0.5;
@@ -54,9 +53,9 @@ sealed class VoiceController
     private const int EchoMinContiguousWords = 3;
     private const double EchoAnchoredRatio = 0.60;
     private const int EchoEndSlackWords = 3;
-    // P2-WAKE: slack grows with a long transcript so a late STT tail still anchors — P2-D12
+    // P2-WAKE: slack grows with a long transcript so a late STT tail still anchors — P2-D14
     private const double EchoEndSlackRatio = 0.25;
-    // P2-WAKE: one unmatched word (hers or STT) may sit inside the run; two breaks it — P2-D12
+    // P2-WAKE: one unmatched word (hers or STT) may sit inside the run; two breaks it — P2-D14
     private const int EchoMaxGapWords = 1;
     // P2-WAKE: SpokenDigitWeight is max(SpokenDigitWeightFloor, digitCount) on the clock only — P2-D12
     private const int SpokenDigitWeightFloor = 1;

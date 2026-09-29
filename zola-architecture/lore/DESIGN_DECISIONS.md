@@ -246,6 +246,10 @@ corrections and final tuned values.
   detection run in the Zola `hermes serve` child. The client never
   opens an audio device and never uses `/api/audio/*`. Clarifies `C3`
   as annotated above. See the plan.
+  Phase 3 amendment (`P3-D23`): for display only, the client may observe the
+  presence of audio sessions belonging to Hermes's own player processes (TTS
+  playback gating for the mouth). No audio data, no level, and no capture.
+  Device ownership is unchanged.
 - **P2-D02 — Speech-to-text is local faster-whisper, pinned
   explicitly.** `stt.provider: local`, `stt.local.model: base` (CPU on
   the Latitude 7430). Turns off Hermes's cloud STT fallback. Corrects
@@ -279,6 +283,9 @@ corrections and final tuned values.
   honest mic indicator: listening for "Hey Zola" / recording /
   listening for interruptions / off. Never call the pipeline offline:
   STT is on-device; Edge TTS and the conversational model are cloud.
+  Phase 3 (`P3-D03`): the voice-state label and mic line are now derived only
+  by `ZolaDisplayState`. The strings and priority order are unchanged from
+  Phase 2.
 - **P2-D09 — Configuration lives in the live profile, with a
   canonical copy in the repo.** Live:
   `%LOCALAPPDATA%\hermes\profiles\zola\config.yaml`. Canonical:
@@ -351,3 +358,229 @@ clock as `P2-D15`; `EchoReopenLimit` 3; wake `sensitivity` 0.6
 (0 false wakes in 10 min of video audio, seated in front of the
 laptop, 2026-09-24). Canonical table:
 `zola-architecture/identity/VOICE_CONFIG.md`.
+## Phase 3 — Presence UI
+Recorded from `PHASE3_BUILD_PLAN.md` v1.7 (`P3-D01`–`P3-D22`) and from the five
+track progress docs. Amendments approved during the tracks are folded in
+(`P3-D17` dock, `P3-D14`/`P3-D22` life and mouth, plus new `P3-D23` and
+`P3-D24`). Full wording for the original decisions lives in the plan; this
+section is the lore pointer plus final values and execution corrections.
+
+
+- **P3-D01 — The GLB replaces the SVG as Zola's canonical visual on Windows.**
+  `zola.glb` (SHA-256 `1edf2bf5898528fd405cd3131fcf75548c6d5d1e893501467c65845b5d7a054b`,
+  33,972,240 bytes) is the presence. The SVG
+  reference is not a Windows target. Supersedes SVG coordinate rules, the
+  "no realistic 3D model" non-goals, and Compose/Canvas mechanics for
+  Windows. Presence-first design, state-down pipeline, restraint, reduced
+  motion, and performance discipline still bind.
+
+- **P3-D02 — Engine: Helix Toolkit 3.1.2 (Set A), native in-process.**
+  Packages: `HelixToolkit.WinUI.SharpDX` 3.1.2 and
+  `HelixToolkit.SharpDX.Assimp` 3.1.2. `Viewport3DX` is constructed in code,
+  never XAML. Track 4 then replaced the lit PBR path with the approved unlit
+  look (`P3-D20`). WebView2 + three.js and Unity were ruled out.
+
+- **P3-D03 — One display-state authority: `ZolaDisplayState`.**
+  `ZolaDisplayStateModel` is the only place that turns runtime facts into the
+  voice-state label, mic-indicator line, Voice/Text mode word, mic-button
+  enablement and content, and `PresenceMode`. It reads `VoiceController`
+  public properties; the window pushes facts through one
+  `UpdateWindowFacts(...)`. `ApplyVoiceChrome` is assign-only.
+  `VoiceController` keeps listeners, `voice.*` / `wake.*`, and
+  transcript-to-submit (`P2-D12`). Label and mic-line strings and order match
+  Audit 01 §3.
+
+- **P3-D04 — `PresenceMode` values and mapping (Windows addition: `DORMANT`).**
+  Modes: `IDLE`, `LISTENING`, `THINKING`, `SPEAKING`, `ALERT`, plus `DORMANT`.
+  Priority (first match): unreachable → `DORMANT`; switch/history → `IDLE`;
+  `Speaking` → `SPEAKING`; streaming → `THINKING`; transcribing / capture /
+  listening → `LISTENING`; Text mode or unavailable → `IDLE`; else `IDLE`.
+  `Speaking` outranks streaming for presence; the HUD voice label keeps its
+  Phase 2 order (streaming before Speaking). `ALERT` is defined but never
+  produced this phase (`S25`). Final Dormant look: `Blink both` held at 0.30,
+  brightness ×0.50, no blinks at rest.
+
+- **P3-D05 — Model gaps: approximate what the asset supports, defer the rest.**
+  Built: blink, expression morphs, speaking mouth, brightness per mode.
+  Dropped by developer (`P3-D22`): breathing and head motion. Deferred to
+  `S24`: micro-saccade, hair strand shimmer, projection/hologram layers,
+  frown and eye-softness targets.
+
+- **P3-D06 — The HUD shows only true state; everything else is hidden.**
+  Shown: VOICE block (label + mic line), TIME, SESSION, LINK, notices.
+  Hidden for lack of source (`S25`): attention, momentum, emotional tone,
+  system health, environment, version, encrypted link, location, Core
+  Systems destinations.
+
+- **P3-D07 — Identity text is kept, as an explicit exception to §14.**
+  ZOLA wordmark, three-line tagline (`PERSISTENT` / `CONVERSATIONAL` /
+  `INTELLIGENCE`), mantra, OBSIDIAN INTERFACE. Waveform space reserved and
+  left empty (`S27`). Mantra indent final token `100,0,0,0`.
+
+- **P3-D08 — Visual tokens, fonts and scale.**
+  Colours, type, and spacing live in `ZolaTokens.xaml`. Rajdhani (Regular +
+  SemiBold) with OFL; Orbitron wordmark not used. Conversation overlay max
+  width 440 / fraction 0.45. Overlay opacity 0.94.
+
+- **P3-D09 — Idle performance budget: ≤ 10% GPU on the Latitude 7430.**
+  Idle life (blinks; particles if kept) averaged over 60 s, sum of GPU-engine
+  utilization for the client process. Final idle with blinks, particles
+  dropped: avg **2.2725%** / max 12.7560. Static approved look (LOOK): avg **0.0013%** / max 0.0771. Dormant at rest: avg **0.0005%** / max 0.0315. Speaking is recorded, not scored against the idle
+  budget (e.g. ~33.6% at speaking tick 33 ms).
+
+- **P3-D10 — Location is not shown.** No Windows source; privacy. Revisit
+  with `S25`.
+
+- **P3-D11 — Layout: full presence, conversation on demand.**
+  Full-window presence; HUD; dock (hidden until needed, `P3-D17`);
+  conversation and sessions overlays. Default 1280×800; minimum 900×640.
+
+
+- **P3-D12 — Asset storage.**
+  `zola.glb` in plain git at `Assets/Presence/`; `.gitattributes` binary; no
+  LFS.
+
+- **P3-D13 — Fidelity is judged by the developer against the Android
+  reference.** Texture size tested; **2048²** kept (cold rest 809 MB <
+  900 MB gate; 1024² not run).
+
+- **P3-D14 — Speaking mouth is procedural; shapes are synthetic.**
+  Viseme-band blend with springs; jaw and mouth morphs only while speaking.
+  Timing is no longer the `P2-D15` estimate alone — onset and release follow
+  observed TTS playback (`P3-D23`). Final mouth values (Round 4 baseline,
+  baked): step 150–250 ms; `jawBase` 0.02 / `jawRange` 0.10; `levelMin`
+  0.1 / `levelMax` 0.85; OpenAH / MidOpen gains 0.5; ClosedMBP 0.6; TeethFV
+  0.3; `wideEeScale` 0; Round OO chance 0.3 / weight 0.35;
+  `releaseStiffnessScale` 2.5; `engine.speakingTickIntervalMs` 33. Real amplitude and in-sentence pauses remain
+  `S17`.
+
+- **P3-D15 — Carry-over: remove dead echo constants.**
+  Removed unused `EchoContainmentRatio`, `EchoMinWords`, and
+  `EchoPhraseWords`. Live echo rule remains `P2-D14`. `VOICE_CONFIG.md`
+  rows marked `Removed (P3-STATE)`. Comment tidy completed in this lore
+  closeout.
+
+- **P3-D16 — No `hermes-agent` edits; no Python installs.**
+  Carries forward `P2-D10` / `P2-D17`. hermes-agent stayed clean at
+  `345cd2b057a452236de401d3534b8502a7465e8d` through every track closeout.
+
+
+- **P3-D17 — The dock is hidden until needed (v1.4; Track 4 amendment).**
+  Fades in when the pointer is inside the dock footprint plus
+  `DockRevealMargin` **12**, or keyboard focus is in the dock, or the
+  conversation/sessions overlay is open, or a turn is streaming. Fades out
+  after `DockHideDelaySeconds` **2**; fade `DockFadeMilliseconds` **180**
+  (instant with reduced motion). Hidden is opacity 0 (not `Collapsed`).
+  Visibility is decided by pointer position against the inflated footprint
+  (hysteresis via the hide delay). One decider: `UpdateDockVisibility`.
+  Supersedes the plan’s full-width `DockRevealZoneHeight` strip.
+
+- **P3-D18 — The notice line fades; problems stay.**
+  New messages show, then fade after `NoticeHoldSeconds` **4**. Sticky while
+  unreachable, switch in flight, history pending, or last turn errored.
+  `DetailText` only while sticky. One decider: `UpdateNoticeVisibility`.
+
+
+- **P3-D19 — ACES Filmic tone mapping as a custom post-effect.**
+  Narkowicz 2015 ACES in `AcesTonemap.hlsl` / `.cso`, compiled once with
+  `fxc`, embedded resource, fail-closed. Final LOOK-era CSO SHA-256
+  `a9484343031bdde5dd2d1b09137e91791b6cc30000b5bc82a5882af72014e9e3`
+  (1948 bytes). Background compositing later moved
+  into this pass (`P3-D24`).
+
+- **P3-D20 — Texture-driven presence look (developer-approved 2026-09-25).**
+  Pipeline: Helix unlit albedo; sRGB decode × gain **4.4** → ACES → sRGB
+  encode; mip LOD bias **0.75**; texture **2048²**. Lights, bloom, and rim
+  off. Look-defaults fingerprint (DEBUG):
+  `4392a2e0d851dc1e962c4ac5bfedf837e51c1645ed18d8bb044388fe346e83d8`.
+  Developer approval, verbatim: "dark skin carrying
+  gold from her own texture, white-gold eyes, glowing diamond and lit hair
+  tips; dots softened; reads like Android." Process lessons (kept): read the source implementation
+  before tuning toward a reference; judge only raw live captures, never
+  scaled composites; every tuning candidate is a complete configuration
+  applied from a reset.
+  Background field after Track 4 still sampled `7,7,7`; exact token
+  `#080808` is `P3-D24`.
+
+- **P3-D21 — Backdrop and decoration deferred.**
+  No warm glow, floor rings, or corner brackets. Clean field from the
+  background token. Particles moved to Track 5 and were later dropped
+  (`P3-D22`). Filed as `S30`.
+
+- **P3-D22 — Track 5 motion follows Android's actual 3D behaviour.**
+  Channels on Windows: blink, expression, brightness (tone-map gain
+  multiplier), speaking mouth. Developer decisions, verbatim: Breathing:
+  "None. Not necessary for AI to breathe." Head motion: "None. The model
+  wasn't made for it." Full key surface (developer,
+  verbatim): "I want to make sure we are actually exposing all the keys and
+  not limiting ourselves to what Android was using."
+  Android values were starting points; finals below. Particles: built as a
+  droppable last phase; float/Composition Forever amendment superseded when
+  the developer dropped them, verbatim: "I'm almost thinking that we don't
+  need the particles. Zola's image speaks for itself." Life approved, verbatim: "blinks and expressions feel natural
+  in every mode, the mouth follows her voice with restrained, natural
+  movement, and she stays composed. Alert reads as attentive, not
+  startled."
+  Final tuned values (named constants in `PresenceLife.cs`):
+  - Blink: close 120 / open 180 ms; interval 3000–8000; Thinking
+    2000–4500 half-blink depth 0.4; mix Both=1; Dormant lid rest 0.3.
+  - Expression: Listening BrowRaise 0.4; Thinking BrowFurrow 0.15; Alert
+    WideEyes 0.35 / BrowRaise 0.3 / NostrilFlare 0.1 / WideEE 0; ease
+    300 ms. ALERT is placeholder-safe until a Windows trigger exists
+    (`S25`).
+  - Brightness: Idle 1.0 / Listening 1.1 / Thinking 0.75 / Speaking 1.0 /
+    Alert 1.25 / Dormant 0.5; Speaking pulse amp 0.05 period 1200 ms;
+    ease 600 ms; stagger eyes 0 / brightness 450 / expression 850 ms.
+  - Mouth: see `P3-D14` / `P3-D23`.
+  - Engine: tick 16 ms idle / 33 ms speaking.
+  - Particles: dropped.
+  - Life-defaults fingerprint:
+    `ef3c2c6eb9894a4fb83d473ba69bfba6e88e44f4ab4da69d88c3585510189777`.
+  - Key count: **186 DEBUG / 185 Release**.
+
+
+- **P3-D23 — Mouth timing from observed TTS playback (`TtsPlaybackMonitor`).**
+  (New; Track 5 amendment.) The `P2-D15` first-sentence guess (3.3 s) was
+  not a reliable audible-onset anchor: estimate-based onset was both late
+  and early in tuning. Measured Armed hold until
+  first owned playback segment: **2.3–3.2 s** on multi-sentence turns
+  (n=3: 2361–3176 ms); longer tool-style holds are allowed with no timeout.
+  S17 analysis pass (5 multi-sentence replies, 20 Hz session enumeration):
+  first owned playback after SPEAKING 2.4–4.6 s typical (median 2.6 s),
+  63.8 s on a tool-heavy turn; inter-sentence gaps median 110 ms, max
+  138 ms, plus one real 6.5 s mid-reply pause. The earlier S17 report
+  measured 6.1–8.6 s against the 3.3 s estimate. These set the no-timeout
+  Armed hold and the 450 ms bout bridge.
+  Monitor: ownership by the Hermes serve process tree; poll at 20 Hz; stop
+  when the owned session goes Inactive; bout bridge
+  `releaseDebounceMs` 450. Mouth state machine: Armed
+  (`SpeakingPlaybackArmed`) holds the THINKING look until first playback;
+  then Active; `speakingPauseShowsThinking` defaults to false. Forced
+  release on cancel / interrupt / SPEAKING clear / pause / scene loss.
+  Fail-closed: if the monitor is unavailable, fall back to the estimate
+  onset; SPEAKING clear always releases. Peak meter: interface obtained,
+  level always 0 — dropped. Cross-reference: `P2-D01` display-only
+  amendment.
+
+- **P3-D24 — The background is composited by the tone-map pass.**
+  (New; Track 5 amendment.) Brightness multipliers made the old
+  clear-colour invert compensation unworkable in 8 bits. The approved
+  look’s field had been displaying `#070707` (invert of the token); it is
+  now exactly `#080808` from `ZolaBackground`. Scene alpha is binary for
+  this asset; the shader lerps `lerp(ZolaBackground, toneMapped(rgb),
+  sceneAlpha)` with output A=1. Fail-closed stays an opaque token clear.
+  CSO SHA-256 old
+  `a9484343031bdde5dd2d1b09137e91791b6cc30000b5bc82a5882af72014e9e3`
+  (1948 bytes) → new
+  `89aa36150afc317544377d8b4b7235ea7b70f19da540cebe3ca5acefc3c298c8`
+  (2024 bytes). Invert helpers and constants removed. Look fingerprint
+  unchanged (`4392a2e0…`). Amends `P3-D19`/`P3-D20` for the background
+  only; bust look unchanged.
+
+### Machine notes (Latitude 7430)
+- Idle GPU (blinks, particles dropped, 60 s): avg **2.2725%**.
+- Static GPU (approved look, 60 s): avg **0.0013%**.
+- Speaking GPU (tick 33 ms, 60 s proxy): avg ~**33.6%**.
+- Dormant GPU (60 s): avg **0.0005%**.
+- Cold resting memory (LOOK, 2048²): WS **809 MB** / private 742 MB; peak
+  during load **1004 MB**; import 906 ms / wall 2388 ms.

@@ -47,17 +47,19 @@ synthesis document.
   Workspace surface is being designed. OAuth consent has not been
   started: no Google Cloud project, OAuth client, consent screen, test
   user, or token exists for this profile.
-- **S17 — Precise follow-up window (end-of-playback signal).**
-  Recommended as the **top Phase 3 candidate**. The post-reply
-  follow-up capture starts after an estimated speaking time (`P2-D15`)
-  and ends on Hermes's fixed 15 s no-speech timeout (`P2-D06`). A real
-  "finished speaking" event from Hermes would let the listener open
-  exactly when Zola stops, and would retire most of `P2-D14`'s echo
-  heuristics and `P2-D15`'s estimate. Evidence: Track 2's six-run
-  measurement table (`P2-SPEAK_Progress.md`); the echo-rule history
-  (`P2-D14`); long replies opening on the tail. Options: a small
-  maintained Hermes patch (end-of-playback event plus a configurable
-  no-speech timeout), or client-side Windows audio metering.
+- **S17 — Audio-driven lip sync and precise speaking end.**
+  Partially resolved by `P3-D23`: mouth onset and release now follow real
+  Hermes TTS playback presence (`TtsPlaybackMonitor`). Still open: the mouth
+  cannot see pauses inside a sentence, and motion continues about 1 s after
+  audible speech ends (suspected trailing silence in the sentence MP3; seen
+  in two developer screen recordings; not yet measured). Shapes
+  remain synthetic. The post-reply follow-up capture still uses the
+  `P2-D15` estimate and Hermes's 15 s no-speech timeout (`P2-D06`). Future
+  paths: a client-side scan of the MP3 ffplay is playing (envelope and
+  silences); Hermes playback lifecycle events (optionally with a
+  precomputed envelope). The peak meter returns 0 on this machine. Evidence: `P3-LIFE_Progress.md` Phase 5b and Phase 6;
+  `P2-D14` / `P2-D15`.
+
 - **S18 — Global push-to-talk hotkey.** `Ctrl+Space` works only while
   the window is focused. A system-wide hotkey is deferred.
 - **S19 — Directed-speech detection (Master Plan §12).** Wake word is
@@ -83,4 +85,51 @@ synthesis document.
 - **S23 — First-utterance speech-to-text delay.** About 7 s for the
   first transcription after launch (model load), then about 1.7 s
   (P2-VOICE). A warm-up could hide it.
-*S13 and S16 remain open. S17–S23 were added at Phase 2 closeout. S17 is the recommended top Phase 3 candidate. Resolved items stay in DESIGN_DECISIONS.md.*
+- **S24 — GLB asset rework.** Separate eye geometry (saccade), a hair mesh
+  (strand shimmer), projection geometry, head/neck articulation (head
+  motion, `P3-D22`), a frown/negative mouth target, and an eye-softness
+  target (`P3PRE-AUD-10`–`16`). Any rework must keep the 15 morph targets
+  and their order, or update `MorphTarget.cs`.
+- **S25 — HUD data sources.** Attention level, conversational momentum,
+  emotional tone, system health, environment, version, and the dock and
+  Core Systems destinations (Memory, Environment, Awareness, Behavior,
+  Security, Systems, Settings, Account). Each needs a real source first
+  (`P3-D06`). `ALERT` has no Windows trigger; its Track 5 values are
+  placeholder-safe until one exists.
+- **S26 — A missing `message.complete` leaves the turn "Thinking".**
+  `_streaming` never clears (Audit 04 §1b), and the presence stays in
+  `THINKING`. Phase 1 behaviour made more visible by Phase 3.
+- **S27 — Mic-input meter in the identity block.** Track 5 did not fill
+  the reserved waveform space: the client has no mic level (`P2-D01`), so
+  a meter needs a new source (`P3-D07`).
+- **S28 — Session UI retirement.** The developer expects his memory system
+  to make sessions unnecessary. When it does, remove the SESSION HUD line
+  and the Sessions dock button together.
+- **S29 — Markdown rendering in chat bubbles.** Bubbles are plain text, so
+  fenced code, lists and links show as raw markdown. Predates Phase 3.
+
+- **S30 — Presence backdrop and decoration.** Warm background glow, floor
+  rings, base light pooling (concept art), corner brackets if wanted, and
+  particles — all deferred by the developer (`P3-D21`; particles dropped in
+  Track 5). On this WinUI + Helix SharpDX surface, Composition `Forever`
+  keyframe animations do not advance. Tried: (1) `AnimationController.Progress`
+  setter — access-violates, kills the process; (2) negative `DelayTime` —
+  `ArgumentException`; (3) `CompositionPropertySet.StartAnimation("t",
+  Forever)` — starts, `t` never advances; (4) Forever on ElementVisual /
+  ShapeVisual Offset/Opacity — Start succeeds, Progress stays 0. Any future
+  animated decoration must solve that first.
+- **S31 — Helix reload memory.** Each F10 debug reload adds about **150 MB**
+  of native memory inside Helix's texture registration; managed memory stays
+  flat (~160 MB after the first real reload). Ordinary lock, sleep and
+  minimize reuse the scene. No product fix in Phase 3; F10 stays debug-only.
+
+- **S32 — Voice active while Windows is locked (security/privacy).**
+  Observed by the developer during the P3-LIFE smoke test (lock/unlock):
+  Zola responds to voice while Windows is at the lock screen. Pre-existing
+  P2 behaviour — the voice pipeline runs in Hermes; not caused by Track 5.
+  Options: pause the wake word on lock; restrict replies while locked; keep
+  deliberately. **Priority: high.** The mantra says "I protect", and a
+  locked PC should not answer.
+*S13 and S16 remain open. S17 updated at Phase 3 closeout; S18–S23 unchanged.
+S24–S32 were added at Phase 3 closeout. Resolved items stay in
+DESIGN_DECISIONS.md.*
