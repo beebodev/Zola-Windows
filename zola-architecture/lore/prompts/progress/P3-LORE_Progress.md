@@ -799,20 +799,20 @@ Applied the Phase 2 draft (source tags stripped) to lore/docs; VoiceController c
 
 ---
 
-## Phase 4 — Closeout
+## Phase 4 ? Closeout
 
 ### Pre-closeout lore corrections (developer)
-1. `P3-D23`: replaced prompt \"not recorded\" note with **developer-supplied (S17 analysis report)** figures (2026-09-28; `%TEMP%\p3life-s17\`): first owned playback 2.4–4.6 s typical (median 2.6 s), 63.8 s tool-heavy; gaps median 110 / max 138 ms; 6.5 s mid-reply pause; earlier 6.1–8.6 s vs 3.3 s estimate; sets no-timeout Armed hold and 450 ms bout bridge.
+1. `P3-D23`: replaced prompt \"not recorded\" note with **developer-supplied (S17 analysis report)** figures (2026-09-28; `%TEMP%\p3life-s17\`): first owned playback 2.4?4.6 s typical (median 2.6 s), 63.8 s tool-heavy; gaps median 110 / max 138 ms; 6.5 s mid-reply pause; earlier 6.1?8.6 s vs 3.3 s estimate; sets no-timeout Armed hold and 450 ms bout bridge.
 2. `S17`: trailing silence wording ? suspected; two screen recordings; not yet measured (removed 19722 ms example).
 3. `P3-D08` stray lone `.` removed; `P3-D20` fingerprint sentence ends with `.` before Developer approval.
 
 Cross-ref after corrections: missing IDs **none**.
 
 ### 4a
-- `dotnet build … -r win-x64`: 0 warnings, 0 errors.
+- `dotnet build ? -r win-x64`: 0 warnings, 0 errors.
 - `hermes-agent` clean at `345cd2b057a452236de401d3534b8502a7465e8d`.
 - Diff scope: G-SCOPE files only (DESIGN_DECISIONS, OPEN_QUESTIONS, ROADMAP, presence architecture, VoiceController comments, this progress).
 
 ### SHAs
-- Lore commit: *(filled after commit)*
+- Lore commit: `e400abd062f786eb9ff52689f92fddf2331e7fa8`
 - Merge SHA on `main`: *(filled after merge)*
