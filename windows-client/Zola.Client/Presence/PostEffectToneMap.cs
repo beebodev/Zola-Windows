@@ -23,6 +23,8 @@ internal sealed class PostEffectToneMap : Element3D
 
     private bool _effectEnabled;
     private float _gain = PresenceLook.DefaultToneMapGain;
+    private float _multiplier = PresenceLife.DefaultIdleMultiplier;
+    private Color4 _background = new(0f, 0f, 0f, 1f);
 
     internal bool EffectEnabled
     {
@@ -46,6 +48,36 @@ internal sealed class PostEffectToneMap : Element3D
             if (SceneNode is NodePostEffectToneMap node)
             {
                 node.Gain = value;
+            }
+        }
+    }
+
+    // P3-LIFE: runtime multiplier; shader Color.a is look gain × this — P3-D22
+    internal float Multiplier
+    {
+        get => _multiplier;
+        set
+        {
+            _multiplier = value;
+            if (SceneNode is NodePostEffectToneMap node)
+            {
+                node.Multiplier = value;
+            }
+        }
+    }
+
+    internal float EffectiveGain => _gain * _multiplier;
+
+    // P3-LIFE: Color.rgb is the ZolaBackground token; Color.a stays gain × multiplier — P3-D22
+    internal Color4 TokenBackground
+    {
+        get => _background;
+        set
+        {
+            _background = value;
+            if (SceneNode is NodePostEffectToneMap node)
+            {
+                node.TokenBackground = value;
             }
         }
     }
@@ -133,6 +165,8 @@ internal sealed class PostEffectToneMap : Element3D
         {
             tone.EffectEnabled = _effectEnabled;
             tone.Gain = _gain;
+            tone.Multiplier = _multiplier;
+            tone.TokenBackground = _background;
         }
     }
 }
@@ -159,6 +193,30 @@ internal sealed class NodePostEffectToneMap : SceneNode
             if (RenderCore is PostEffectToneMapCore core)
             {
                 core.Gain = value;
+            }
+        }
+    }
+
+    internal float Multiplier
+    {
+        get => RenderCore is PostEffectToneMapCore core ? core.Multiplier : PresenceLife.DefaultIdleMultiplier;
+        set
+        {
+            if (RenderCore is PostEffectToneMapCore core)
+            {
+                core.Multiplier = value;
+            }
+        }
+    }
+
+    internal Color4 TokenBackground
+    {
+        get => RenderCore is PostEffectToneMapCore core ? core.TokenBackground : new Color4(0f, 0f, 0f, 1f);
+        set
+        {
+            if (RenderCore is PostEffectToneMapCore core)
+            {
+                core.TokenBackground = value;
             }
         }
     }
@@ -194,6 +252,8 @@ internal sealed class PostEffectToneMapCore : RenderCore
     private int _samplerSlot;
     private bool _effectEnabled;
     private float _gain = PresenceLook.DefaultToneMapGain;
+    private float _multiplier = PresenceLife.DefaultIdleMultiplier;
+    private Color4 _background = new(0f, 0f, 0f, 1f);
 
     internal PostEffectToneMapCore()
         : base(RenderType.GlobalEffect)
@@ -212,6 +272,18 @@ internal sealed class PostEffectToneMapCore : RenderCore
     {
         get => _gain;
         set => _gain = value;
+    }
+
+    internal float Multiplier
+    {
+        get => _multiplier;
+        set => _multiplier = value;
+    }
+
+    internal Color4 TokenBackground
+    {
+        get => _background;
+        set => _background = value;
     }
 
     protected override bool OnAttach(IRenderTechnique? technique)
@@ -253,7 +325,8 @@ internal sealed class PostEffectToneMapCore : RenderCore
         }
 
         // P3-LOOK: Color.a is gain; sRGB decode/encode are baked into the shader — P3-D20
-        _model.Color = new Color4(0f, 0f, 0f, _gain);
+        // P3-LIFE: Color.rgb is the token field; Color.a is look gain × life multiplier — P3-D22
+        _model.Color = new Color4(_background.Red, _background.Green, _background.Blue, _gain * _multiplier);
         _modelCb.Upload(deviceContext, ref _model);
         deviceContext.SetRenderTarget(buffer.NextRTV);
         var viewport = context.Viewport;

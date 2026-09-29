@@ -40,7 +40,7 @@ sealed class VoiceController
 
     // P2-SPEAK: clock is a fixed startup cost plus a small per-sentence cost so long replies stay within ~3 s — P2-D06
     private const double EstimatedWordsPerSecond = 2.5;
-    private const double FirstSentenceLatencySeconds = 3.3;
+    internal const double FirstSentenceLatencySeconds = 3.3;
     private const double PerSentenceOverheadSeconds = 0.5;
     private const double FollowUpMarginSeconds = 3.0;
     private const double FollowUpMaxDelaySeconds = 90;

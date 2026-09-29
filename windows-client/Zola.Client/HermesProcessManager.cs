@@ -41,6 +41,9 @@ public sealed partial class HermesProcessManager : IDisposable
 
     public bool OwnsProcess { get; private set; }
 
+    // P3-LIFE: launched/attached serve identity for TTS playback ownership — P3-D14 / S17
+    public int? ServeProcessId { get; private set; }
+
     public int? Port { get; private set; }
 
     public string? SessionToken { get; private set; }
@@ -105,6 +108,7 @@ public sealed partial class HermesProcessManager : IDisposable
             child = _child;
             owns = OwnsProcess;
             _child = null;
+            ServeProcessId = null;
         }
 
         if (!owns || child is null)
@@ -150,6 +154,7 @@ public sealed partial class HermesProcessManager : IDisposable
             $"pid {existing.Pid}  {existing.CommandLine}");
         Port = existing.Port;
         OwnsProcess = false;
+        ServeProcessId = existing.Pid;
         var baseUrl = BaseUrl(existing.Port);
         var health = await WaitForHealthAsync(baseUrl).ConfigureAwait(false);
         if (!health.Ok)
@@ -267,6 +272,7 @@ public sealed partial class HermesProcessManager : IDisposable
 
             _child = child;
             OwnsProcess = true;
+            ServeProcessId = child.Id;
         }
 
         child.BeginOutputReadLine();
@@ -456,6 +462,7 @@ public sealed partial class HermesProcessManager : IDisposable
         // P1-CLIENT: a failed start leaves the WebSocket gate closed — P1-D01
         HealthPassed = false;
         SessionToken = null;
+        ServeProcessId = null;
         Publish("Backend unreachable. " + message, ProfileDirectory);
     }
 

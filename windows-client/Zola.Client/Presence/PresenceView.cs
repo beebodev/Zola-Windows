@@ -60,9 +60,11 @@ internal sealed class PresenceView : UserControl, IDisposable
     private const bool ViewportZoomAroundMouseDownPoint = false;
     private const bool ViewportFixedRotationPointEnabled = false;
     private const byte OpaqueAlpha = 255;
+    private const byte ClearAlpha = 0;
+    private const byte TokenChannelMax = 255;
+    // P3-LIFE: last-resort fallback mirrors the ZolaBackground token #080808 — P3-D22
+    private const byte TokenBackgroundFallbackChannel = 8;
     private const float MaterialChannelMax = 1f;
-    private const float WeightMin = 0f;
-    private const float WeightMax = 1f;
     private const string PresenceLogFile = "presence.log";
     private const string AssetsFolder = "Assets";
     private const string PresenceFolder = "Presence";
@@ -77,7 +79,7 @@ internal sealed class PresenceView : UserControl, IDisposable
     private const string PauseSuspended = "suspended";
     private const int RevalidateTimeoutMs = 5000;
     private const int RevalidatePollMs = 100;
-    private const int DebugBlinkResetMs = 1000;
+    internal const int DebugBlinkResetMilliseconds = 1000;
 #if DEBUG
     private const int LookWatchDebounceMs = 250;
 #endif
@@ -89,15 +91,16 @@ internal sealed class PresenceView : UserControl, IDisposable
     private readonly SessionLockWatcher _lockWatcher;
     private readonly HashSet<string> _pauseReasons = new();
     private readonly DispatcherQueue _dispatcher;
+    private readonly PresenceAnimator _animator;
     private PresenceLook _look = PresenceLook.CreateDefault();
     private PostEffectToneMap? _toneMap;
     private bool _toneMapAvailable;
     private bool _toneMapUnavailableLogged;
     private Windows.UI.Color _tokenBackground = Windows.UI.Color.FromArgb(
         OpaqueAlpha,
-        PresenceLook.DisplayBlackByte,
-        PresenceLook.DisplayBlackByte,
-        PresenceLook.DisplayBlackByte);
+        TokenBackgroundFallbackChannel,
+        TokenBackgroundFallbackChannel,
+        TokenBackgroundFallbackChannel);
     private PresenceLoadState _state = PresenceLoadState.NotLoaded;
     private Task? _loadTask;
     private int _generation;
@@ -105,9 +108,7 @@ internal sealed class PresenceView : UserControl, IDisposable
     private bool _toneMapAdded;
     private bool _firstFrameLogged;
     private bool _morphCountOk;
-    private bool _morphApiWarned;
     private bool _unavailableLogged;
-    private bool _weightsDirty;
     private bool _resumeFrameSeen;
     private bool _resumeException;
     private int _revalidateEpoch;
@@ -115,8 +116,6 @@ internal sealed class PresenceView : UserControl, IDisposable
     private SceneNode? _modelRoot;
     private DiffuseMaterialCore? _unlitMaterial;
 #if DEBUG
-    private int _debugMorphCursor = -1;
-    private DispatcherQueueTimer? _blinkTimer;
     private FileSystemWatcher? _lookWatcher;
     private DispatcherQueueTimer? _lookWatchDebounce;
     private readonly List<WeakReference> _retiredTextureRefs = new();
@@ -214,9 +213,46 @@ internal sealed class PresenceView : UserControl, IDisposable
         _lockWatcher.Unlocked += () => OnUnlockOrPowerResume(PauseLocked);
         _lockWatcher.Suspending += () => PauseRendering(PauseSuspended);
         _lockWatcher.Resumed += () => OnUnlockOrPowerResume(PauseSuspended);
+        // P3-LIFE: animator is the only morph-weight and gain-multiplier writer — P3-D22
+        _animator = new PresenceAnimator(this, _dispatcher);
 #if DEBUG
         StartLookFileWatcher();
 #endif
+    }
+
+    internal void AttachDisplay(ZolaDisplayStateModel model)
+    {
+        _animator.AttachDisplay(model);
+    }
+
+    // P3-LIFE: Hermes serve identity for TTS playback ownership — P3-D14 / S17
+    internal void AttachPlaybackMonitor(Func<int?> serveProcessId)
+    {
+        _animator.AttachPlaybackMonitor(serveProcessId);
+    }
+
+    internal void SetReducedMotion(bool reduced)
+    {
+        _animator.SetReducedMotion(reduced);
+    }
+
+    internal void RequestRender()
+    {
+        if (_view.RenderHost is not null)
+        {
+            _view.RenderHost.InvalidateRender();
+        }
+    }
+
+    // P3-LIFE: animator writes the multiplier; the shader composites the token field — P3-D22
+    internal void ApplyGainMultiplier(float multiplier)
+    {
+        if (_toneMap is null || !_toneMapAvailable)
+        {
+            return;
+        }
+
+        _toneMap.Multiplier = multiplier;
     }
 
     internal Task LoadAsync()
@@ -246,6 +282,7 @@ internal sealed class PresenceView : UserControl, IDisposable
         _generation++;
         _state = PresenceLoadState.NotLoaded;
         _loadTask = null;
+        _animator.Bind(null);
         _morph = null;
         _modelRoot = null;
         _unlitMaterial = null;
@@ -267,6 +304,10 @@ internal sealed class PresenceView : UserControl, IDisposable
         {
             WriteLog("P3-RENDER: paused (" + reason + ")");
             ApplyRenderGate();
+            if (_pauseReasons.Count == 1)
+            {
+                _animator.OnPaused();
+            }
         }
     }
 
@@ -276,6 +317,10 @@ internal sealed class PresenceView : UserControl, IDisposable
         {
             WriteLog("P3-RENDER: resumed (" + reason + ")");
             ApplyRenderGate();
+            if (_pauseReasons.Count == 0)
+            {
+                _animator.OnResumed();
+            }
         }
     }
 
@@ -298,11 +343,11 @@ internal sealed class PresenceView : UserControl, IDisposable
 
         _disposed = true;
         _generation++;
+        _animator.Dispose();
         _lockWatcher.Dispose();
         _view.OnRendered -= OnViewRendered;
         _view.RenderExceptionOccurred -= OnRenderException;
 #if DEBUG
-        _blinkTimer?.Stop();
         _lookWatchDebounce?.Stop();
         _lookWatcher?.Dispose();
 #endif
@@ -310,46 +355,35 @@ internal sealed class PresenceView : UserControl, IDisposable
         (_view.EffectsManager as IDisposable)?.Dispose();
     }
 
-    internal void SetWeight(MorphTarget target, float weight)
-    {
-        if (!CanUseMorphs())
-        {
-            return;
-        }
-
-        if (_morph is null)
-        {
-            return;
-        }
-
-        var clamped = Math.Clamp(weight, WeightMin, WeightMax);
-        _morph.SetWeight((int)target, clamped);
-        _weightsDirty = true;
-    }
-
-    internal void ApplyWeights()
-    {
-        if (!CanUseMorphs() || !_weightsDirty || _morph is null)
-        {
-            return;
-        }
-
-        _morph.WeightUpdated();
-        _weightsDirty = false;
-    }
-
 #if DEBUG
     internal void DebugBlink()
     {
-        SetWeight(MorphTarget.BlinkBoth, WeightMax);
-        ApplyWeights();
-        WriteLog("P3-RENDER: debug blink on");
-        _blinkTimer ??= _dispatcher.CreateTimer();
-        _blinkTimer.IsRepeating = false;
-        _blinkTimer.Interval = TimeSpan.FromMilliseconds(DebugBlinkResetMs);
-        _blinkTimer.Tick -= OnDebugBlinkReset;
-        _blinkTimer.Tick += OnDebugBlinkReset;
-        _blinkTimer.Start();
+        _animator.DebugBlink();
+    }
+
+    internal void DebugWriteLifeDefaults()
+    {
+        _animator.DebugWriteDefaults();
+    }
+
+    internal void DebugReloadLife()
+    {
+        _animator.DebugReloadLife();
+    }
+
+    internal void DebugCycleForcedMode()
+    {
+        _animator.DebugCycleForcedMode();
+    }
+
+    internal void DebugForceMonitorUnavailable(bool force)
+    {
+        _animator.DebugForceMonitorUnavailable(force);
+    }
+
+    internal void DebugSetSegmentOverride(bool? active)
+    {
+        _animator.DebugSetSegmentOverride(active);
     }
 
     internal void DebugReload()
@@ -443,37 +477,7 @@ internal sealed class PresenceView : UserControl, IDisposable
 
     internal void DebugMorphStep()
     {
-        _debugMorphCursor++;
-        if (_debugMorphCursor >= MorphTargets.MorphTargetCount)
-        {
-            _debugMorphCursor = -1;
-            ResetAllWeights();
-            ApplyWeights();
-            WriteLog("P3-RENDER: debug morph " + MorphTargets.MorphTargetCount + " Neutral");
-            return;
-        }
-
-        ResetAllWeights();
-        var target = (MorphTarget)_debugMorphCursor;
-        SetWeight(target, WeightMax);
-        ApplyWeights();
-        WriteLog("P3-RENDER: debug morph " + _debugMorphCursor + " " + target);
-    }
-
-    private void OnDebugBlinkReset(DispatcherQueueTimer sender, object args)
-    {
-        sender.Stop();
-        SetWeight(MorphTarget.BlinkBoth, WeightMin);
-        ApplyWeights();
-        WriteLog("P3-RENDER: debug blink off");
-    }
-
-    private void ResetAllWeights()
-    {
-        foreach (MorphTarget target in Enum.GetValues<MorphTarget>())
-        {
-            SetWeight(target, WeightMin);
-        }
+        _animator.DebugMorphStep();
     }
 
     // P3-LOOK: dump the full applied look after a complete replace — P3-D19
@@ -598,6 +602,7 @@ internal sealed class PresenceView : UserControl, IDisposable
         ApplyLook();
         ShowScene();
         ApplyRenderGate();
+        _animator.Bind(_morphCountOk ? _morph : null);
         LogTextureSampling();
         WriteLog("P3-RENDER: scene attached (UI thread)");
         WriteLog(
@@ -626,6 +631,7 @@ internal sealed class PresenceView : UserControl, IDisposable
     private void BecomeUnavailable(string reason)
     {
         _state = PresenceLoadState.Unavailable;
+        _animator.Bind(null);
         _morph = null;
         _modelRoot = null;
         _unlitMaterial = null;
@@ -722,6 +728,7 @@ internal sealed class PresenceView : UserControl, IDisposable
         }
 
         _resumeFrameSeen = true;
+        _animator.NotePresented();
     }
 
     private void OnRenderException(object? sender, RelayExceptionEventArgs e)
@@ -821,12 +828,13 @@ internal sealed class PresenceView : UserControl, IDisposable
         _toneMapAvailable = true;
         _toneMapUnavailableLogged = false;
         _toneMap.Gain = _look.ToneMapGain;
+        _toneMap.Multiplier = _animator.Multiplier;
         _toneMap.EffectEnabled = ShouldRunToneMapPass();
-        ApplyToneMappedClear();
+        ApplySceneClear();
     }
 
-    // P3-LOOK: invert sRGB×gain→ACES→sRGB so displayed black stays #080808 — P3-D20
-    private void ApplyToneMappedClear()
+    // P3-LIFE: pass on clears A=0; fail-closed keeps opaque token #080808 — P3-D22
+    private void ApplySceneClear()
     {
         if (!ShouldRunToneMapPass())
         {
@@ -834,69 +842,27 @@ internal sealed class PresenceView : UserControl, IDisposable
             return;
         }
 
-        var target = _tokenBackground.R / (float)PresenceLook.ByteMax;
-        var tone = PickDisplayedBlackClear(target);
-        _view.BackgroundColor = Windows.UI.Color.FromArgb(OpaqueAlpha, tone, tone, tone);
+        _view.BackgroundColor = Windows.UI.Color.FromArgb(
+            ClearAlpha,
+            _tokenBackground.R,
+            _tokenBackground.G,
+            _tokenBackground.B);
+        PushTokenBackgroundToToneMap();
     }
 
-    private byte PickDisplayedBlackClear(float target)
+    private void PushTokenBackgroundToToneMap()
     {
-        var best = PresenceLook.DisplayBlackByte;
-        var bestErr = float.MaxValue;
-        var gain = _look.ToneMapGain;
-        for (var b = (int)PresenceLook.ByteMin; b <= PresenceLook.ByteMax; b++)
+        if (_toneMap is null)
         {
-            var unit = b / (float)PresenceLook.ByteMax;
-            var linear = SrgbToLinear(unit) * gain;
-            var mapped = AcesFilmic(linear);
-            var displayed = LinearToSrgb(mapped);
-            var err = MathF.Abs(displayed - target);
-            if (err < bestErr)
-            {
-                bestErr = err;
-                best = (byte)b;
-            }
+            return;
         }
 
-        return best;
-    }
-
-    private static float SrgbToLinear(float c)
-    {
-        return c <= 0.04045f ? c / 12.92f : MathF.Pow(MathF.Abs((c + 0.055f) / 1.055f), 2.4f);
-    }
-
-    private static float LinearToSrgb(float c)
-    {
-        return c <= 0.0031308f ? 12.92f * c : 1.055f * MathF.Pow(MathF.Max(c, 0f), 1f / 2.4f) - 0.055f;
-    }
-
-    private static float AcesFilmic(float x)
-    {
-        var a = PresenceLook.AcesA;
-        var b = PresenceLook.AcesB;
-        var c = PresenceLook.AcesC;
-        var d = PresenceLook.AcesD;
-        var e = PresenceLook.AcesE;
-        var num = x * ((a * x) + b);
-        var den = (x * ((c * x) + d)) + e;
-        if (den <= 0f)
-        {
-            return 0f;
-        }
-
-        var y = num / den;
-        if (y < 0f)
-        {
-            return 0f;
-        }
-
-        if (y > 1f)
-        {
-            return 1f;
-        }
-
-        return y;
+        var scale = 1f / TokenChannelMax;
+        _toneMap.TokenBackground = new Color4(
+            _tokenBackground.R * scale,
+            _tokenBackground.G * scale,
+            _tokenBackground.B * scale,
+            1f);
     }
 
     private void RemoveToneMapElement()
@@ -956,22 +922,6 @@ internal sealed class PresenceView : UserControl, IDisposable
     private bool IsWindowPresentable()
     {
         return !_pauseReasons.Contains(PauseMinimized) && !_pauseReasons.Contains(PauseHidden);
-    }
-
-    private bool CanUseMorphs()
-    {
-        if (_state == PresenceLoadState.Ready && _morphCountOk && _morph is not null)
-        {
-            return true;
-        }
-
-        if (!_morphApiWarned)
-        {
-            _morphApiWarned = true;
-            WriteLog("P3-RENDER: morph API ignored (not ready)");
-        }
-
-        return false;
     }
 
     private bool IsCurrent(int generation)
@@ -1135,7 +1085,7 @@ internal sealed class PresenceView : UserControl, IDisposable
     }
 #endif
 
-    private static void WriteLog(string line)
+    internal static void WriteLog(string line)
     {
         try
         {

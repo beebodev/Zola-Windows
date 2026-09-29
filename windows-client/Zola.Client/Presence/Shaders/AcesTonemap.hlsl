@@ -49,9 +49,11 @@ float3 LinearToSrgb(float3 c)
     return float3(LinearToSrgb1(c.r), LinearToSrgb1(c.g), LinearToSrgb1(c.b));
 }
 
+// P3-LIFE: lerp token RGB over the field (source.a) so the background is never tone-mapped — P3-D22
 float4 main(MeshOutlinePS_INPUT pin) : SV_Target
 {
-    float3 source = texDiffuseMap.Sample(samplerSurface, pin.Tex).rgb;
-    float3 mapped = LinearToSrgb(AcesFilmic(SrgbToLinear(source) * Color.a));
-    return float4(saturate(mapped), 1.0f);
+    float4 source = texDiffuseMap.Sample(samplerSurface, pin.Tex);
+    float3 mapped = LinearToSrgb(AcesFilmic(SrgbToLinear(source.rgb) * Color.a));
+    float3 outRgb = lerp(Color.rgb, saturate(mapped), source.a);
+    return float4(outRgb, 1.0f);
 }
