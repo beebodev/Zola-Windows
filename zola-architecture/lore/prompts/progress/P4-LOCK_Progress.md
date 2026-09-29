@@ -18,13 +18,13 @@
 | 4 | Build: The Voice Gate (`P4-D02`, `P4-D03`) | COMPLETE |
 | 5 | Build: Honest HUD Line (`P4-D05`) | COMPLETE |
 | 6 | Smoke Test | COMPLETE — S4 ⚠️ PARTIAL (developer-acknowledged; not passed) |
-| 7 | Closeout | IN PROGRESS |
+| 7 | Closeout | COMPLETE |
 
 ## Closeout SHAs
 
 - Implementation commit: `c01fe3b6725a3814a368d48c0d06a2da1d16305f` (`feat(P4-LOCK): voice gate on Windows lock and sleep — P4-D01..D05`)
-- Merge SHA on main: *(pending 7g)*
-- Final main tip: *(pending 7i)*
+- Merge SHA on main: `245d171ebd106f5af52190b63c7d18f866c5a923` (`Merge branch 'p4-lock-gate'`)
+- Final main tip: recorded in closeout final message (this docs commit on main)
 
 ## Guardrails summary
 
