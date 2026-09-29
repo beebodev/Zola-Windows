@@ -88,8 +88,9 @@ public sealed partial class MainWindow : Window
         ApplyWindowMetrics();
         SizeChanged += OnWindowSizeChanged;
         // P3-RENDER: host the viewport in PresenceHost and pause when the window cannot be seen — P3-D02
-        _presence = new PresenceView(WinRT.Interop.WindowNative.GetWindowHandle(this));
-        PresenceHost.Children.Add(_presence);
+        var presence = new PresenceView(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        _presence = presence;
+        PresenceHost.Children.Add(presence);
         AppWindow.Changed += OnAppWindowChanged;
         VisibilityChanged += OnWindowVisibilityChanged;
         Activated += OnWindowActivated;
@@ -111,6 +112,14 @@ public sealed partial class MainWindow : Window
         _voice = new VoiceController(_chat);
         // P3-STATE: the window renders the display record and does not derive it — P3-D03
         _display = new ZolaDisplayStateModel(_voice, DispatcherQueue);
+        // P3-LIFE: animator follows display mode and the window's reduced-motion flag — P3-D22
+        _presence!.AttachDisplay(_display);
+        _presence.AttachPlaybackMonitor(() => _backend.ServeProcessId);
+        _presence.SetReducedMotion(!_uiSettings.AnimationsEnabled);
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
+        {
+            _uiSettings.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        }
         _voice.StateChanged += () => Dispatch(ApplyVoiceChrome);
         _voice.TranscriptReady += text => Dispatch(() => _ = SubmitTurnAsync(text));
         _voice.VoiceChatEnded += () => Dispatch(OnVoiceChatEnded);
@@ -141,6 +150,10 @@ public sealed partial class MainWindow : Window
             AppWindow.Changed -= OnAppWindowChanged;
             VisibilityChanged -= OnWindowVisibilityChanged;
             Activated -= OnWindowActivated;
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
+            {
+                _uiSettings.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+            }
             _presence?.Dispose();
             _display.Dispose();
             _voice.Shutdown();
@@ -975,6 +988,11 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() => action());
     }
 
+    private void OnAnimationsEnabledChanged(UISettings sender, object args)
+    {
+        Dispatch(() => _presence?.SetReducedMotion(!sender.AnimationsEnabled));
+    }
+
     // P3-SHELL: bubble fills and borders come from tokens, not system theme brushes — P3-D08
     private static void ApplyBubbleChrome(Border border, bool mine, string outcome)
     {
@@ -1080,11 +1098,18 @@ public sealed partial class MainWindow : Window
 #if DEBUG
     private void AddPresenceDebugAccelerators()
     {
+        // P3-LIFE: F6 writes defaults, F7 reloads life, F8 cycles forced mode — P3-D22
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F6, OnDebugLifeDefaultsHotkey));
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F7, OnDebugLifeReloadHotkey));
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F8, OnDebugForcedModeHotkey));
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F9, OnDebugBlinkHotkey));
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F10, OnDebugReloadHotkey));
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F11, OnDebugMorphHotkey));
         // P3-LOOK: F12 reloads presence-look.json onto the live scene — P3-D13
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F12, OnDebugLookHotkey));
+        // P3-LIFE: F3 force monitor fallback; F4 cycle segment override (pause sim) — P3-D14 / S17
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F3, OnDebugPlaybackUnavailableHotkey));
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F4, OnDebugPlaybackSegmentHotkey));
     }
 
     private static KeyboardAccelerator CreatePresenceAccelerator(VirtualKey key, TypedEventHandler<KeyboardAccelerator, KeyboardAcceleratorInvokedEventArgs> handler)
@@ -1096,6 +1121,24 @@ public sealed partial class MainWindow : Window
         };
         accelerator.Invoked += handler;
         return accelerator;
+    }
+
+    private void OnDebugLifeDefaultsHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _presence?.DebugWriteLifeDefaults();
+    }
+
+    private void OnDebugLifeReloadHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _presence?.DebugReloadLife();
+    }
+
+    private void OnDebugForcedModeHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _presence?.DebugCycleForcedMode();
     }
 
     private void OnDebugBlinkHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -1120,6 +1163,30 @@ public sealed partial class MainWindow : Window
     {
         args.Handled = true;
         _presence?.DebugReloadLook();
+    }
+
+    private bool _debugForceMonitorUnavailable;
+
+    private void OnDebugPlaybackUnavailableHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _debugForceMonitorUnavailable = !_debugForceMonitorUnavailable;
+        _presence?.DebugForceMonitorUnavailable(_debugForceMonitorUnavailable);
+    }
+
+    private int _debugSegmentOverrideCycle;
+
+    private void OnDebugPlaybackSegmentHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _debugSegmentOverrideCycle = (_debugSegmentOverrideCycle + 1) % 3;
+        bool? value = _debugSegmentOverrideCycle switch
+        {
+            1 => false,
+            2 => true,
+            _ => null,
+        };
+        _presence?.DebugSetSegmentOverride(value);
     }
 #endif
 

@@ -23,8 +23,6 @@ internal sealed class PresenceLook
     internal const float DefaultToneMapGain = 4.4f;
     internal const float DefaultMipLodBias = 0.75f;
 
-    internal const byte ByteMin = 0;
-    internal const byte ByteMax = 255;
     internal const float CameraXMin = -1.5f;
     internal const float CameraXMax = 1.5f;
     internal const float CameraYMin = -1.5f;
@@ -43,12 +41,6 @@ internal sealed class PresenceLook
     internal const float ToneMapGainMax = 16f;
     internal const float MipLodBiasMin = 0f;
     internal const float MipLodBiasMax = 2f;
-    internal const byte DisplayBlackByte = 8;
-    internal const float AcesA = 2.51f;
-    internal const float AcesB = 0.03f;
-    internal const float AcesC = 2.43f;
-    internal const float AcesD = 0.59f;
-    internal const float AcesE = 0.14f;
 
     internal float CameraX { get; private set; } = DefaultCameraX;
     internal float CameraY { get; private set; } = DefaultCameraY;
