@@ -815,4 +815,4 @@ Cross-ref after corrections: missing IDs **none**.
 
 ### SHAs
 - Lore commit: `e400abd062f786eb9ff52689f92fddf2331e7fa8`
-- Merge SHA on `main`: *(filled after merge)*
+- Merge SHA on `main`: `159646b312b558430cca77560169347354c891e0`
