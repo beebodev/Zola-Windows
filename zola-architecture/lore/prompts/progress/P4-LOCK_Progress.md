@@ -22,7 +22,7 @@
 
 ## Closeout SHAs
 
-- Implementation commit: *(pending 7d)*
+- Implementation commit: `c01fe3b6725a3814a368d48c0d06a2da1d16305f` (`feat(P4-LOCK): voice gate on Windows lock and sleep — P4-D01..D05`)
 - Merge SHA on main: *(pending 7g)*
 - Final main tip: *(pending 7i)*
 
