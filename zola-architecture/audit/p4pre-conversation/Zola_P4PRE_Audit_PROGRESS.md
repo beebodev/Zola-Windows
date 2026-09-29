@@ -11,7 +11,7 @@
 
 | Repo | Path | Branch | HEAD SHA | Notes |
 |------|------|--------|----------|-------|
-| zola-windows (audited) | `C:\Users\test\Dev\zola-windows` | `audit/p4pre-conversation` → `main` | `9a1f825cede8eae310a337d57b22393dabe26e25` | Approved audit base `504ae768…` (parent `159646b…`). Audit docs commit `9a1f825…` (8c). |
+| zola-windows (audited) | `C:\Users\test\Dev\zola-windows` | `main` | `4181f0402eaaaabf137bace3650615be00dca6af` | Audit base `504ae768…`. Audit docs `9a1f825…` (8c). Merge to `main` `4181f04…` (8f). |
 | hermes-agent (read-only) | `C:\Users\test\Dev\hermes-agent` | detached `v2026.9.14` | `345cd2b057a452236de401d3534b8502a7465e8d` | `git status --porcelain` empty at Phase 1 start. Never edited. |
 
 **Output directory:** `zola-architecture/audit/p4pre-conversation/`  
@@ -30,7 +30,7 @@
 | 5 | Developer Live Checks | COMPLETE → `Zola_P4PRE_Audit_05_LiveChecks.md` |
 | 6 | Voice Sample Set and Edge Measurements | COMPLETE → `Zola_P4PRE_Audit_06_VoiceSamples.md` |
 | 7 | Synthesis | COMPLETE → `Zola_P4PRE_Audit_SYNTHESIS.md` |
-| 8 | Closeout | IN PROGRESS |
+| 8 | Closeout | COMPLETE |
 
 ---
 
@@ -213,4 +213,5 @@ Decisions needed (Synthesis §5): **16**.
 - Live profile `config.yaml` mtime unchanged: `2026-09-23T15:32:27.1953228-07:00`.
 - Spike folder not staged.
 
-**8c audit commit SHA:** `9a1f825cede8eae310a337d57b22393dabe26e25`
+**8c audit commit SHA:** `9a1f825cede8eae310a337d57b22393dabe26e25`  
+**8f merge commit SHA on `main`:** `4181f0402eaaaabf137bace3650615be00dca6af`
