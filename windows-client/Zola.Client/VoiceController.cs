@@ -72,6 +72,49 @@ sealed class VoiceController
     internal const string TimelineClientFolder = "ZolaClient";
     internal const string TimelineLogFolder = "logs";
     private const string TimelineLogFile = "voice-timeline.log";
+    // P4-LOCK: gate facts update synchronously; close/open work is queued after — P4-D01 / P4-D02
+    private const string GateFactLineFormat = "gate fact: locked={0} suspended={1}";
+    private const string GateFactTrue = "true";
+    private const string GateFactFalse = "false";
+    private const string GateClosedStarting = "gate closed: starting";
+    private const string GateClosedDone = "gate closed: done";
+    private const string GateClosedFailed = "gate closed: failed — holding closed";
+    private const string GateOpenedStarting = "gate opened: starting";
+    private const string GateOpenedDone = "gate opened: done";
+    private const string GateOpenedErrorPrefix = "gate opened: error ";
+    private const string GateOpenedSkippedText = "gate opened: skipped — snapshot text mode";
+    private const string GateSnapshotFormat = "gate snapshot: mode={0} speech={1} wakeArmed={2}";
+    private const string GateStepCancelFollowUp = "gate step: cancel follow-up/echo";
+    private const string GateStepRecordStopFormat = "gate step: voice.record stop ok={0} status={1} error={2}";
+    private const string GateStepRecordStopSkipped = "gate step: voice.record stop skipped — no capture";
+    private const string GateStepToggleOffFormat = "gate step: voice.toggle off ok={0} enabled={1} tts={2} error={3}";
+    private const string GateStepWakeStop = "gate step: wake.stop via DisarmWakeAsync";
+    private const string GateStepWakeStopRetry = "gate step: wake.stop retry — listening still true";
+    private const string GateStepWakeStatusFormat = "gate step: wake.status listening={0} owned_by_caller={1}";
+    private const string GateStepToggleOnFormat = "gate step: voice.toggle on ok={0} enabled={1} error={2}";
+    private const string GateStepToggleStatusFormat = "gate step: voice.toggle status ok={0} enabled={1} tts={2} error={3}";
+    private const string GateStepToggleTtsFormat = "gate step: voice.toggle tts ok={0} tts={1} error={2}";
+    private const string GateStepToggleTtsSkipped = "gate step: voice.toggle tts skipped — snapshot speech off or already on";
+    private const string GateStepWakeStart = "gate step: wake re-arm via ArmWakeAsync";
+    private const string GateOpenAborted = "gate open aborted: re-gated";
+    private const string GateSnapshotRetained = "gate snapshot: retained (same episode)";
+    private const string GateSnapshotCleared = "gate snapshot: cleared";
+    private const string GateRefusePrefix = "gate refuse: ";
+    private const string GateRefuseWakeDetected = "wake.detected";
+    private const string GateRefuseCaptureStart = "capture-start";
+    private const string GateRefuseFollowUp = "follow-up";
+    private const string GateRefuseEchoReopen = "echo-reopen";
+    private const string GateRefuseWakeResume = "wake.resume";
+    private const string GateRefuseWakeReconcileResume = "wake-reconcile-resume";
+    private const string GateRefuseSyncVoiceWake = "sync-voice-wake";
+    private const string GateRefuseArmWake = "wake.start";
+    private const string GateRefuseTranscript = "transcript";
+    private const string GateRefuseVoiceSubmit = "voice-submit";
+    internal const string GateRefuseVoiceSubmitReason = GateRefuseVoiceSubmit;
+    private const string GateRefuseResyncStop = "resync-after-stop";
+    private const string GateCancelReason = "system-gate";
+    private const string GateBoolTrue = "true";
+    private const string GateBoolFalse = "false";
 
     // P2-WAKE: wake RPC names, params, reasons, and timings are named constants — P2-D04
     private const string MethodWakeStart = "wake.start";
@@ -128,6 +171,15 @@ sealed class VoiceController
     private string _cancelReason = "";
     // P2-WAKE: a wake-started capture that never reaches listening must resume the detector — P2-D12
     private bool _wakeCapturePending;
+    // P4-LOCK: applied hold stays true from first gated fact until open completes — P4-D02
+    private bool _gateHolding;
+    private bool _gateCloseCompleted;
+    private bool _gateSnapshotTaken;
+    private int _gateEpoch;
+    private readonly SemaphoreSlim _gateSequenceLock = new(1, 1);
+    private string _gateSnapshotMode = ModeVoice;
+    private bool _gateSnapshotSpeechEnabled;
+    private bool _gateSnapshotWakeArmed;
 
     public VoiceController(ChatSocket chat)
     {
@@ -175,6 +227,14 @@ sealed class VoiceController
 
     public string WakeHint { get; private set; } = "";
 
+    // P4-LOCK: queryable lock/sleep gate facts for voice and HUD — P4-D01
+    public bool SystemLocked { get; private set; }
+
+    public bool SystemSuspended { get; private set; }
+
+    // P4-LOCK: facts or an in-flight hold after unlock until open finishes — P4-D02
+    public bool VoiceGated => SystemLocked || SystemSuspended || _gateHolding;
+
     public bool Resting
     {
         get
@@ -197,7 +257,8 @@ sealed class VoiceController
         get
         {
             // P2-SPEAK: the mic stays off while a turn runs or the speaking estimate is still open — P2-D12
-            return Mode == ModeVoice && IsAvailable && SessionReady && BackendReachable && !TurnRunning && !Speaking;
+            // P4-LOCK: lock/sleep hold refuses capture at the shared mic gate — P4-D02
+            return Mode == ModeVoice && IsAvailable && SessionReady && BackendReachable && !TurnRunning && !Speaking && !VoiceGated;
         }
     }
 
@@ -208,6 +269,25 @@ sealed class VoiceController
     public event Action? VoiceChatEnded;
 
     public event Action<string>? StatusMessage;
+
+    // P4-LOCK: facts update on the caller thread before any close/open work is queued — P4-D01 / P4-D02
+    public void SetLocked(bool locked)
+    {
+        SystemLocked = locked;
+        ApplyGateFactAndEnqueue();
+    }
+
+    public void SetSuspended(bool suspended)
+    {
+        SystemSuspended = suspended;
+        ApplyGateFactAndEnqueue();
+    }
+
+    public void NoteGateRefusal(string reason)
+    {
+        // P4-LOCK: MainWindow belt-and-braces submit refusal shares the timeline — P4-D02
+        WriteTimeline(GateRefusePrefix + reason);
+    }
 
     public void SetCaptureGate(bool sessionReady, bool backendReachable, bool turnRunning)
     {
@@ -225,10 +305,326 @@ sealed class VoiceController
         _ = ReconcileWakeRestingAsync(turnRunning ? "turn-start" : "turn-end");
     }
 
+    private void ApplyGateFactAndEnqueue()
+    {
+        // P4-LOCK: hold begins with the first gated fact so guards never see an open window — P4-D02
+        var factsGated = SystemLocked || SystemSuspended;
+        if (factsGated)
+        {
+            _gateHolding = true;
+        }
+
+        WriteTimeline(string.Format(
+            GateFactLineFormat,
+            SystemLocked ? GateFactTrue : GateFactFalse,
+            SystemSuspended ? GateFactTrue : GateFactFalse));
+        StateChanged?.Invoke();
+        Interlocked.Increment(ref _gateEpoch);
+        _ = RunGateSequenceAsync();
+    }
+
+    private async Task RunGateSequenceAsync()
+    {
+        // P4-LOCK: one worker; re-reads facts each loop so latest desired state wins — P4-D02 / P4-D03
+        await _gateSequenceLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            while (true)
+            {
+                var epoch = Volatile.Read(ref _gateEpoch);
+                var factsGated = SystemLocked || SystemSuspended;
+                if (factsGated)
+                {
+                    _gateHolding = true;
+                    if (!_gateCloseCompleted)
+                    {
+                        var closed = await CloseGateAsync().ConfigureAwait(false);
+                        _gateCloseCompleted = true;
+                        if (!closed)
+                        {
+                            WriteTimeline(GateClosedFailed);
+                        }
+                    }
+                }
+                else if (_gateHolding)
+                {
+                    await OpenGateAsync().ConfigureAwait(false);
+                    if (!(SystemLocked || SystemSuspended))
+                    {
+                        _gateHolding = false;
+                        _gateCloseCompleted = false;
+                        ClearGateSnapshot();
+                        StateChanged?.Invoke();
+                    }
+                }
+
+                if (epoch == Volatile.Read(ref _gateEpoch))
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _gateSequenceLock.Release();
+        }
+    }
+
+    private async Task<bool> CloseGateAsync()
+    {
+        // P4-LOCK: fail-closed close sequence; never session.interrupt; never voice.toggle tts — P4-D02
+        // P4-LOCK: wake.stop (not pause) so Hermes resume retries after record-stop cannot reopen the mic — P4-D02
+        WriteTimeline(GateClosedStarting);
+        if (!_gateSnapshotTaken)
+        {
+            _gateSnapshotMode = Mode;
+            _gateSnapshotSpeechEnabled = _ttsOn == true;
+            _gateSnapshotWakeArmed = WakeArmed;
+            _gateSnapshotTaken = true;
+            WriteTimeline(string.Format(
+                GateSnapshotFormat,
+                _gateSnapshotMode,
+                _gateSnapshotSpeechEnabled ? GateBoolTrue : GateBoolFalse,
+                _gateSnapshotWakeArmed ? GateBoolTrue : GateBoolFalse));
+        }
+        else
+        {
+            WriteTimeline(GateSnapshotRetained);
+        }
+
+        WriteTimeline(GateStepCancelFollowUp);
+        CancelFollowUp(GateCancelReason);
+
+        var ok = true;
+        if (CaptureActive)
+        {
+            try
+            {
+                var stop = await RecordAsync(ActionStop, allowResync: false, requiredGeneration: null).ConfigureAwait(false);
+                WriteTimeline(string.Format(
+                    GateStepRecordStopFormat,
+                    stop.Ok ? GateBoolTrue : GateBoolFalse,
+                    stop.Status ?? "",
+                    stop.Error ?? ""));
+                if (!stop.Ok)
+                {
+                    ok = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteTimeline(string.Format(GateStepRecordStopFormat, GateBoolFalse, "", ex.Message));
+                ok = false;
+            }
+        }
+        else
+        {
+            WriteTimeline(GateStepRecordStopSkipped);
+        }
+
+        try
+        {
+            // P4-LOCK: voice.toggle off stops TTS without S21 latch and kills the full-duplex barge mic — P4-D02
+            // Mode is not assigned here; only EnterTextModeAsync / EnterVoiceModeAsync / MarkUnavailable set Mode.
+            var off = await ToggleAsync(ActionOff).ConfigureAwait(false);
+            WriteTimeline(string.Format(
+                GateStepToggleOffFormat,
+                off.Ok ? GateBoolTrue : GateBoolFalse,
+                off.Enabled?.ToString() ?? "",
+                off.Tts?.ToString() ?? "",
+                off.Error ?? ""));
+            if (!off.Ok)
+            {
+                ok = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(string.Format(GateStepToggleOffFormat, GateBoolFalse, "", "", ex.Message));
+            ok = false;
+        }
+
+        try
+        {
+            WriteTimeline(GateStepWakeStop);
+            await DisarmWakeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(GateStepWakeStop + " error=" + ex.Message);
+            ok = false;
+        }
+
+        try
+        {
+            var status = await _chat.InvokeAsync(
+                MethodWakeStatus,
+                new Dictionary<string, string?> { [ParamSurface] = SurfaceGui }).ConfigureAwait(false);
+            var listening = status.Listening == true;
+            WriteTimeline(string.Format(
+                GateStepWakeStatusFormat,
+                status.Listening?.ToString() ?? "",
+                status.OwnedByCaller?.ToString() ?? ""));
+            if (listening)
+            {
+                WriteTimeline(GateStepWakeStopRetry);
+                await DisarmWakeAsync().ConfigureAwait(false);
+                ok = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(string.Format(GateStepWakeStatusFormat, "", "") + " error=" + ex.Message);
+            ok = false;
+        }
+
+        WriteTimeline(GateClosedDone);
+        return ok;
+    }
+
+    private async Task OpenGateAsync()
+    {
+        // P4-LOCK: reset close-completed so a mid-open relock re-runs CloseGateAsync — P4-D03
+        _gateCloseCompleted = false;
+        WriteTimeline(GateOpenedStarting);
+        if (AbortOpenIfReGated())
+        {
+            return;
+        }
+
+        if (!string.Equals(_gateSnapshotMode, ModeVoice, StringComparison.Ordinal) || Mode != ModeVoice)
+        {
+            WriteTimeline(GateOpenedSkippedText);
+            WriteTimeline(GateOpenedDone);
+            return;
+        }
+
+        try
+        {
+            if (AbortOpenIfReGated())
+            {
+                return;
+            }
+
+            var on = await ToggleAsync(ActionOn).ConfigureAwait(false);
+            WriteTimeline(string.Format(
+                GateStepToggleOnFormat,
+                on.Ok ? GateBoolTrue : GateBoolFalse,
+                on.Enabled?.ToString() ?? "",
+                on.Error ?? ""));
+            if (!on.Ok || on.Enabled == false)
+            {
+                WriteTimeline(GateOpenedDone);
+                return;
+            }
+
+            if (AbortOpenIfReGated())
+            {
+                return;
+            }
+
+            var status = await ToggleAsync(ActionStatus).ConfigureAwait(false);
+            WriteTimeline(string.Format(
+                GateStepToggleStatusFormat,
+                status.Ok ? GateBoolTrue : GateBoolFalse,
+                status.Enabled?.ToString() ?? "",
+                status.Tts?.ToString() ?? "",
+                status.Error ?? ""));
+            if (!status.Ok)
+            {
+                WriteTimeline(GateOpenedDone);
+                return;
+            }
+
+            IsAvailable = status.Available == true && status.AudioAvailable == true && status.SttAvailable == true;
+            UnavailableDetails = status.Details ?? "";
+            if (!IsAvailable)
+            {
+                WriteTimeline(GateOpenedDone);
+                StateChanged?.Invoke();
+                return;
+            }
+
+            if (AbortOpenIfReGated())
+            {
+                return;
+            }
+
+            // P4-LOCK: on does not enable TTS; status-first flip only when snapshot had speech — P4-D03 / P2-D03
+            if (_gateSnapshotSpeechEnabled && status.Tts == false)
+            {
+                var spoken = await ToggleAsync(ActionTts).ConfigureAwait(false);
+                WriteTimeline(string.Format(
+                    GateStepToggleTtsFormat,
+                    spoken.Ok ? GateBoolTrue : GateBoolFalse,
+                    spoken.Tts?.ToString() ?? "",
+                    spoken.Error ?? ""));
+            }
+            else
+            {
+                WriteTimeline(GateStepToggleTtsSkipped);
+            }
+
+            if (AbortOpenIfReGated())
+            {
+                return;
+            }
+
+            if (_gateSnapshotWakeArmed)
+            {
+                WriteTimeline(GateStepWakeStart);
+                // P4-LOCK: open uses wake.start only; never wake.resume after wake.stop close — P4-D02 / P4-D03
+                await ArmWakeAsync(fromGateOpen: true).ConfigureAwait(false);
+            }
+
+            StateChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(GateOpenedErrorPrefix + ex.Message);
+        }
+
+        WriteTimeline(GateOpenedDone);
+    }
+
+    private bool AbortOpenIfReGated()
+    {
+        if (!(SystemLocked || SystemSuspended))
+        {
+            return false;
+        }
+
+        WriteTimeline(GateOpenAborted);
+        return true;
+    }
+
+    private void ClearGateSnapshot()
+    {
+        _gateSnapshotTaken = false;
+        WriteTimeline(GateSnapshotCleared);
+    }
+
+    private bool RefuseIfGated(string reason)
+    {
+        if (!VoiceGated)
+        {
+            return false;
+        }
+
+        WriteTimeline(GateRefusePrefix + reason);
+        return true;
+    }
+
     public async Task SyncVoiceModeAsync()
     {
         // P2-VOICE: each socket re-reads voice status and turns voice on only when it is off — P2-D07
         if (Mode != ModeVoice)
+        {
+            return;
+        }
+
+        // P4-LOCK: reconnect sync must not reopen Hermes voice behind a closed gate — P4-D02
+        if (RefuseIfGated(GateRefuseSyncVoiceWake))
         {
             return;
         }
@@ -285,6 +681,12 @@ sealed class VoiceController
 
     public async Task SyncVoiceAndWakeAsync()
     {
+        // P4-LOCK: SessionReady sync must not re-arm wake behind the gate — P4-D02
+        if (RefuseIfGated(GateRefuseSyncVoiceWake))
+        {
+            return;
+        }
+
         // P2-WAKE: every new socket and Voice-mode entry syncs voice, then arms wake — P2-D04
         await SyncVoiceModeAsync().ConfigureAwait(false);
         if (Mode == ModeVoice && IsAvailable)
@@ -312,6 +714,14 @@ sealed class VoiceController
         Mode = ModeText;
         CaptureActive = false;
         RecorderState = StateIdle;
+        // P4-LOCK: mode change while gated updates the unlock snapshot — P4-D03
+        if (_gateHolding || SystemLocked || SystemSuspended)
+        {
+            _gateSnapshotMode = ModeText;
+            _gateSnapshotSpeechEnabled = false;
+            _gateSnapshotWakeArmed = false;
+        }
+
         StateChanged?.Invoke();
     }
 
@@ -323,6 +733,16 @@ sealed class VoiceController
         BumpConnectionGeneration();
         // P2-VOICE: switching back to Voice re-syncs this socket instead of restarting serve — P2-D07
         Mode = ModeVoice;
+        // P4-LOCK: while gated, only update the snapshot; unlock runs the open sequence — P4-D03
+        if (_gateHolding || SystemLocked || SystemSuspended)
+        {
+            _gateSnapshotMode = ModeVoice;
+            _gateSnapshotSpeechEnabled = true;
+            _gateSnapshotWakeArmed = true;
+            StateChanged?.Invoke();
+            return;
+        }
+
         await SyncVoiceAndWakeAsync().ConfigureAwait(false);
     }
 
@@ -468,6 +888,12 @@ sealed class VoiceController
 
     private async Task StartCaptureAsync(int? requiredGeneration)
     {
+        // P4-LOCK: every capture path refuses while the system gate holds — P4-D02
+        if (RefuseIfGated(GateRefuseCaptureStart))
+        {
+            return;
+        }
+
         // P2-VOICE: voice.record always carries the current runtime session id — P2-D01
         if (string.IsNullOrEmpty(_chat.SessionId))
         {
@@ -647,6 +1073,14 @@ sealed class VoiceController
 
     private void OnVoiceTranscript(ChatSocket.VoiceTranscript transcript)
     {
+        // P4-LOCK: drop any transcript that arrives while gated; never raise TranscriptReady — P4-D02
+        if (VoiceGated)
+        {
+            var length = transcript.Text?.Length ?? 0;
+            WriteTimeline(GateRefusePrefix + GateRefuseTranscript + " length=" + length);
+            return;
+        }
+
         if (transcript.IsStopPhrase)
         {
             // P2-VOICE: Hermes already turned voice off; syncing turns it back on for the next capture — P2-D05
@@ -710,6 +1144,12 @@ sealed class VoiceController
             return;
         }
 
+        // P4-LOCK: echo reopen must not start a capture while gated — P4-D02
+        if (RefuseIfGated(GateRefuseEchoReopen))
+        {
+            return;
+        }
+
         if (Mode != ModeVoice || !IsAvailable || TurnRunning)
         {
             WriteTimeline("echo-reopen skipped");
@@ -722,6 +1162,12 @@ sealed class VoiceController
 
     private async Task ResyncAfterStopAsync()
     {
+        // P4-LOCK: stop-phrase resync must not turn voice back on while gated — P4-D02
+        if (RefuseIfGated(GateRefuseResyncStop))
+        {
+            return;
+        }
+
         // P2-VOICE: the stop phrase ends the exchange and Voice mode is armed again — P2-D05
         try
         {
@@ -755,6 +1201,12 @@ sealed class VoiceController
         // P2-SPEAK: generation is checked at fire and again immediately before voice.record start — P2-D06
         SetSpeaking(false);
         if (generation != Volatile.Read(ref _followUpGeneration))
+        {
+            return;
+        }
+
+        // P4-LOCK: follow-up timer must not open the mic while gated — P4-D02
+        if (RefuseIfGated(GateRefuseFollowUp))
         {
             return;
         }
@@ -1108,8 +1560,22 @@ sealed class VoiceController
         }
     }
 
-    public async Task ArmWakeAsync()
+    public async Task ArmWakeAsync(bool fromGateOpen = false)
     {
+        // P4-LOCK: open-sequence arm passes fromGateOpen; still refuses if facts are gated — P4-D02 / P4-D03
+        if (fromGateOpen)
+        {
+            if (SystemLocked || SystemSuspended)
+            {
+                WriteTimeline(GateRefusePrefix + GateRefuseArmWake);
+                return;
+            }
+        }
+        else if (RefuseIfGated(GateRefuseArmWake))
+        {
+            return;
+        }
+
         // P2-WAKE: first wake.start may download the sherpa model inside this call — P2-D04
         var generation = Volatile.Read(ref _connectionGeneration);
         if (Mode != ModeVoice || !IsAvailable || string.IsNullOrEmpty(_chat.SessionId))
@@ -1139,6 +1605,13 @@ sealed class VoiceController
                     if (generation != Volatile.Read(ref _connectionGeneration))
                     {
                         WriteTimeline(NoticeStaleWake);
+                        return;
+                    }
+
+                    // P4-LOCK: mid-retry relock must not complete wake.start from an open sequence — P4-D03
+                    if (fromGateOpen && (SystemLocked || SystemSuspended))
+                    {
+                        WriteTimeline(GateRefusePrefix + GateRefuseArmWake);
                         return;
                     }
                 }
@@ -1293,6 +1766,12 @@ sealed class VoiceController
 
             if (Resting && WakePaused)
             {
+                // P4-LOCK: Resting auto-resume must not reopen the mic behind the gate — P4-D02
+                if (RefuseIfGated(GateRefuseWakeReconcileResume))
+                {
+                    return;
+                }
+
                 await ResumeWakeAsync(reason, generation).ConfigureAwait(false);
             }
         }
@@ -1343,6 +1822,12 @@ sealed class VoiceController
 
     private async Task ResumeWakeAsync(string reason, int generation)
     {
+        // P4-LOCK: every wake.resume path refuses while gated — P4-D02
+        if (RefuseIfGated(GateRefuseWakeResume))
+        {
+            return;
+        }
+
         if (generation != Volatile.Read(ref _connectionGeneration))
         {
             WriteTimeline(NoticeStaleWake);
@@ -1451,6 +1936,12 @@ sealed class VoiceController
         if (generation != Volatile.Read(ref _connectionGeneration))
         {
             WriteTimeline(NoticeStaleWake);
+            return;
+        }
+
+        // P4-LOCK: wake.detected must not start a capture while gated — P4-D02
+        if (RefuseIfGated(GateRefuseWakeDetected))
+        {
             return;
         }
 

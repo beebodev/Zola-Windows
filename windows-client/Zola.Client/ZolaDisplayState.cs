@@ -40,6 +40,9 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private const string WakeUnavailableLabel = "Wake word unavailable";
     private const string WakePausedLabel = "Wake listening paused";
     private const string WakeListeningLabel = "Mic: listening for \"Hey Zola\"";
+    // P4-LOCK: gated mic lines sit above every other mic state — P4-D05
+    private const string MicPausedLockedLabel = "Mic: paused — Windows locked";
+    private const string MicPausedSleepingLabel = "Mic: paused — sleeping";
     private const string ModeWordVoice = "Voice";
     private const string ModeWordText = "Text";
     private const string MicContentListening = "Listening";
@@ -87,6 +90,8 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private int _turnGeneration;
     private int _warnedGeneration;
     private long _lastActivityTicks;
+    // P4-LOCK: keep the last gated mic string while VoiceGated is hold-only after unlock — P4-D05
+    private string? _lastGatedMicLine;
 
     internal ZolaDisplayStateModel(VoiceController voice, DispatcherQueue dispatcher)
     {
@@ -211,39 +216,56 @@ public sealed class ZolaDisplayStateModel : IDisposable
             voiceLabel = IdleLabel;
         }
 
-        // P3-STATE: mic-line priority stays the Audit 01 §3 order — P3-D03
+        // P4-LOCK: gated mic line first; hold after unlock keeps the last gated string — P4-D05
         string micLine;
-        if (_voice.Mode != VoiceController.ModeVoice || !_voice.IsAvailable)
+        if (_voice.VoiceGated)
         {
-            micLine = MicOffLabel;
-        }
-        else if (_voice.CaptureActive)
-        {
-            micLine = MicRecordingLabel;
-        }
-        else if (_streaming || _voice.Speaking)
-        {
-            micLine = MicInterruptionsLabel;
-        }
-        else if (_switchInFlight || _historyPending)
-        {
-            micLine = MicReconnectingLabel;
-        }
-        else if (_voice.WakeUnavailable || _voice.WakeHeldElsewhere)
-        {
-            micLine = WakeUnavailableLabel;
-        }
-        else if (_voice.Resting && _voice.WakeArmed && _voice.WakePaused)
-        {
-            micLine = WakePausedLabel;
-        }
-        else if (_voice.Resting && _voice.WakeArmed && !_voice.WakePaused)
-        {
-            micLine = WakeListeningLabel;
+            if (_voice.SystemLocked)
+            {
+                _lastGatedMicLine = MicPausedLockedLabel;
+            }
+            else if (_voice.SystemSuspended)
+            {
+                _lastGatedMicLine = MicPausedSleepingLabel;
+            }
+
+            micLine = _lastGatedMicLine ?? MicPausedLockedLabel;
         }
         else
         {
-            micLine = MicOffLabel;
+            _lastGatedMicLine = null;
+            if (_voice.Mode != VoiceController.ModeVoice || !_voice.IsAvailable)
+            {
+                micLine = MicOffLabel;
+            }
+            else if (_voice.CaptureActive)
+            {
+                micLine = MicRecordingLabel;
+            }
+            else if (_streaming || _voice.Speaking)
+            {
+                micLine = MicInterruptionsLabel;
+            }
+            else if (_switchInFlight || _historyPending)
+            {
+                micLine = MicReconnectingLabel;
+            }
+            else if (_voice.WakeUnavailable || _voice.WakeHeldElsewhere)
+            {
+                micLine = WakeUnavailableLabel;
+            }
+            else if (_voice.Resting && _voice.WakeArmed && _voice.WakePaused)
+            {
+                micLine = WakePausedLabel;
+            }
+            else if (_voice.Resting && _voice.WakeArmed && !_voice.WakePaused)
+            {
+                micLine = WakeListeningLabel;
+            }
+            else
+            {
+                micLine = MicOffLabel;
+            }
         }
 
         var modeWord = _voice.Mode == VoiceController.ModeVoice ? ModeWordVoice : ModeWordText;
