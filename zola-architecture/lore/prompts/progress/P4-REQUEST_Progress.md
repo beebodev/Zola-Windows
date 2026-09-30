@@ -18,13 +18,13 @@
 | 4 | Build: Cards and Composer (`P4-D07`, `P4-D08`, `P4-D09`) | COMPLETE |
 | 5 | Clarify Timeout Profile Edit (`P4-D10`, `P4-D25`) | COMPLETE |
 | 6 | Smoke Test | COMPLETE — B11 ⚠️ PARTIAL (2nd Send after complete; drop via Part C); B16 lock PASS, no `suspended=true`; approvals.mode manual kept |
-| 7 | Closeout | IN PROGRESS |
+| 7 | Closeout | COMPLETE |
 
 ## Closeout SHAs
 
 - Implementation commit: `d21ff9f9ceeeb1fecb16c5603c6b0b9549f41ace` (`feat(P4-REQUEST): server-request broker, clarify and approval cards — P4-D06..D12`)
-- Merge SHA on main: *(pending 7g)*
-- Final main tip: *(pending 7i)*
+- Merge SHA on main: `76ea698542da538d2f8c8a0a32bf9ac1986ea062` (`Merge branch 'p4-request'`)
+- Final main tip: recorded in closeout final message (this docs commit on main)
 
 ## Guardrails summary
 
