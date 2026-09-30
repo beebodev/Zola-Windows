@@ -33,6 +33,8 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private const string TranscribingLabel = "Transcribing";
     private const string ListeningLabel = "Listening";
     private const string IdleLabel = "Idle";
+    // P4-ASK: HUD while a clarify is open for the current session — P4-D15
+    private const string WaitingForAnswerLabel = "Waiting for your answer";
     private const string MicOffLabel = "Mic: off";
     private const string MicRecordingLabel = "Mic: recording";
     private const string MicInterruptionsLabel = "Mic: listening for interruptions";
@@ -162,11 +164,24 @@ public sealed class ZolaDisplayStateModel : IDisposable
 
         _turnGeneration++;
         _lastActivityTicks = Environment.TickCount64;
+        // P4-ASK: stale-thinking clock does not run while awaiting a clarify answer — P4-D15
+        if (_voice.AwaitingAnswer)
+        {
+            return;
+        }
+
         _staleTimer.Start();
     }
 
     private void OnStaleThinkingTick(DispatcherQueueTimer sender, object args)
     {
+        // P4-ASK: suspend stale warn for the whole clarify wait — P4-D15
+        if (_voice.AwaitingAnswer)
+        {
+            _lastActivityTicks = Environment.TickCount64;
+            return;
+        }
+
         if (!_streaming || _warnedGeneration == _turnGeneration)
         {
             return;
@@ -184,7 +199,18 @@ public sealed class ZolaDisplayStateModel : IDisposable
 
     private void Recompute()
     {
+        // P4-ASK: keep the stale timer stopped for the whole await; restart only after — P4-D15
+        if (_voice.AwaitingAnswer)
+        {
+            _staleTimer.Stop();
+        }
+        else if (_streaming)
+        {
+            _staleTimer.Start();
+        }
+
         // P3-STATE: voice-label priority stays the P2 order from Audit 01 §3 — P3-D03
+        // P4-ASK: Waiting inserts after Text/unavailable and before Thinking — P4-D15
         string voiceLabel;
         if (!_voice.IsAvailable && _voice.Mode == VoiceController.ModeText)
         {
@@ -194,6 +220,10 @@ public sealed class ZolaDisplayStateModel : IDisposable
         else if (_voice.Mode == VoiceController.ModeText)
         {
             voiceLabel = TextModeLabel;
+        }
+        else if (_voice.AwaitingAnswer)
+        {
+            voiceLabel = WaitingForAnswerLabel;
         }
         else if (_streaming)
         {
@@ -274,6 +304,7 @@ public sealed class ZolaDisplayStateModel : IDisposable
         var micButtonContent = _voice.CaptureActive ? MicContentListening : MicContentMic;
 
         // P3-STATE: Speaking outranks streaming, and text mode is checked last — P3-D04
+        // P4-ASK: while awaiting, never THINKING; LISTENING if capture else IDLE (Speaking still wins for question TTS) — P4-D15
         PresenceMode presenceMode;
         if (_unreachable || !_backendReachable)
         {
@@ -286,6 +317,13 @@ public sealed class ZolaDisplayStateModel : IDisposable
         else if (_voice.Speaking)
         {
             presenceMode = PresenceMode.Speaking;
+        }
+        else if (_voice.AwaitingAnswer)
+        {
+            presenceMode = _voice.CaptureActive || _voice.RecorderState == VoiceController.StateListening
+                || _voice.RecorderState == VoiceController.StateTranscribing
+                ? PresenceMode.Listening
+                : PresenceMode.Idle;
         }
         else if (_streaming)
         {
