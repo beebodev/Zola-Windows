@@ -19,13 +19,13 @@
 | 5 | Build: Speak the Question and Listen (`P4-D13`) | COMPLETE |
 | 6 | Build: Honest Waiting State (`P4-D15`) | COMPLETE |
 | 7 | Smoke Test | COMPLETE |
-| 8 | Closeout | IN PROGRESS |
+| 8 | Closeout | COMPLETE |
 
 ## Closeout SHAs
 
 - Implementation commit: `7d0d81fcd8283234a62ed54a3f0acaf15fb3d46c`
-- Merge SHA on main: *(pending 8g)*
-- Final main tip: *(pending 8i)*
+- Merge SHA on main: 95578b10843feed473b83482c30e199bb909aa61
+- Final main tip: recorded in closeout final message (this docs commit on main)
 
 ## Final file list
 
