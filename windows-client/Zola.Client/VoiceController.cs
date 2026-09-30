@@ -45,6 +45,39 @@ sealed class VoiceController
     private const double FollowUpMarginSeconds = 3.0;
     private const double FollowUpMaxDelaySeconds = 90;
     private const double MaxEstimatedSpeechSeconds = 300;
+    // P4-ASK: no-bout startup window = FirstSentenceLatency + 1.0 s margin — P4-D13
+    private const double QuestionBoutStartupMarginSeconds = 1.0;
+    private const double QuestionBoutStartupWindowSeconds = FirstSentenceLatencySeconds + QuestionBoutStartupMarginSeconds;
+    private const string MethodTts = "voice.tts";
+    private const string ParamText = "text";
+    private const string SpokenBatchMoreSuffix = " …and there are more on screen.";
+    private const string LogQuestionSpokenPrefix = "question_spoken id=";
+    private const string LogQuestionReleasePrefix = "question_release rule=";
+    private const string LogQuestionAbandonedPrefix = "question_abandoned id=";
+    private const string LogQuestionRefusePrefix = "question_refuse reason=";
+    private const string LogQuestionCaptureSkipPrefix = "question_capture_skipped id=";
+    private const string QuestionRuleMonitor = "monitor";
+    private const string QuestionRuleNoBoutEstimate = "no_bout_estimate";
+    private const string QuestionRuleMonitorUnavailable = "monitor_unavailable";
+    private const string QuestionRuleForcedEstimate = "forced_release_estimate";
+    private const string AbandonReasonNewerClarify = "newer_clarify";
+    private const string AbandonReasonRequestClosed = "request_closed";
+    private const string AbandonReasonSessionChange = "session_change";
+    private const string AbandonReasonUnreachable = "unreachable";
+    private const string AbandonReasonTextMode = "text_mode";
+    private const string AbandonReasonSpeechOff = "speech_off";
+    private const string AbandonReasonVoiceGated = "voice_gated";
+    private const string AbandonReasonTtsFailed = "tts_failed";
+    private const string CaptureSkipTokenStale = "token_stale";
+    private const string CaptureSkipNotOpen = "not_open";
+    private const string CaptureSkipWrongSession = "wrong_session";
+    private const string CaptureSkipGated = "gated";
+    private const string CaptureSkipNotVoice = "not_voice";
+    private const string CaptureSkipSpeechOff = "speech_off";
+    private const string QuestionRefuseGated = "gated";
+    private const string QuestionRefuseTextMode = "text_mode";
+    private const string QuestionRefuseSpeechOff = "speech_off";
+    private const string QuestionRefuseEmpty = "empty_text";
     // P3-STATE: unused bag-of-words echo constants are removed; the live rule is P2-D14 — P3-D15
     private const int EchoLookbackWords = 20;
     private const int EchoReopenLimit = 3;
@@ -65,6 +98,8 @@ sealed class VoiceController
     private const int SpokenAcronymMinLetters = 2;
     private const int SpokenAcronymMaxLetters = 5;
     private const string NoticeIgnoredEcho = "Ignored: that sounded like Zola's own voice.";
+    // P4-ASK: timeline tag when a late bound clarify answer is dropped — P4-D14
+    private const string LogLateAnswerDroppedPrefix = "late_answer_dropped id=";
     // P2-SPEAK: three consecutive voice.interrupted trips with no complete in between pause Voice — P2-D12
     private const int SelfInterruptLimit = 3;
     // P2-SPEAK: one append-only line per spoken turn for Phase 5 measurement — P2-D06
@@ -159,6 +194,22 @@ sealed class VoiceController
     // P2-WAKE: a late STT result after follow-up idle must still be echo-checked — P2-D12
     private bool _followUpEchoPending;
     private int _echoIgnoreCount;
+    // P4-ASK: capture opened for a clarify carries its srq-* until the ending transcript — P4-D14
+    private string? _pendingClarifyCaptureId;
+    private string? _activeClarifyCaptureId;
+    // P4-ASK: after Cancel/interrupt, keep the closed id so a late transcript drops (never prompt.submit) — P4-D14
+    private string? _closedClarifyCaptureId;
+    // P4-ASK: one pending-question token (id + generation) for speak → release → capture — P4-D13
+    private string? _pendingQuestionId;
+    private int _pendingQuestionGeneration;
+    private bool _questionSpeaking;
+    private bool _questionBoutArmed;
+    private bool _questionBoutStarted;
+    private bool _questionBoutActive;
+    private TaskCompletionSource<bool>? _questionBoutStartedTcs;
+    private TaskCompletionSource<bool>? _questionBoutStoppedTcs;
+    private Func<bool>? _playbackMonitorAvailable;
+    private Func<string, bool>? _clarifyCaptureStillValid;
     private string _accumulatedReply = "";
     // P2-WAKE: echo compares against recent spoken words across turns, not only the latest reply — P2-D12
     private string _echoHaystack = "";
@@ -210,7 +261,11 @@ sealed class VoiceController
     public bool TurnRunning { get; private set; }
 
     // P2-SPEAK: Speaking is an estimate from the simulated playback clock, not measured audio — P2-D08
+    // P4-ASK: also held true while QuestionSpeaking drives the Speaking display/monitor path — P4-D13
     public bool Speaking { get; private set; }
+
+    // P4-ASK: question TTS in flight until release rule fires (feeds Speaking) — P4-D13
+    public bool QuestionSpeaking => _questionSpeaking;
 
     // P2-WAKE: armed and paused update only from confirmed Hermes replies or wake.detected — P2-D04
     public bool WakeArmed { get; private set; }
@@ -234,6 +289,9 @@ sealed class VoiceController
 
     // P4-LOCK: facts or an in-flight hold after unlock until open finishes — P4-D02
     public bool VoiceGated => SystemLocked || SystemSuspended || _gateHolding;
+
+    // P4-ASK: open clarify for current session — HUD waiting state (set by MainWindow) — P4-D15
+    public bool AwaitingAnswer { get; private set; }
 
     public bool Resting
     {
@@ -264,7 +322,8 @@ sealed class VoiceController
 
     public event Action? StateChanged;
 
-    public event Action<string>? TranscriptReady;
+    // P4-ASK: second arg is the srq-* id when this transcript ends a clarify-answer capture — P4-D14
+    public event Action<string, string?>? TranscriptReady;
 
     public event Action? VoiceChatEnded;
 
@@ -287,6 +346,469 @@ sealed class VoiceController
     {
         // P4-LOCK: MainWindow belt-and-braces submit refusal shares the timeline — P4-D02
         WriteTimeline(GateRefusePrefix + reason);
+    }
+
+    // P4-ASK: Phase 5 calls this immediately before opening the clarify-answer voice.record — P4-D14
+    public void ArmClarifyAnswerCapture(string requestId)
+    {
+        _pendingClarifyCaptureId = string.IsNullOrEmpty(requestId) ? null : requestId;
+    }
+
+    public void NoteLateAnswerDropped(string id, int length)
+    {
+        // P4-ASK: length only — never the spoken answer text — P4-D14 / G-PRIVACY
+        WriteTimeline(LogLateAnswerDroppedPrefix + id + " len=" + length);
+    }
+
+    // P4-ASK: MainWindow sets this from broker open-clarify-for-current — P4-D15
+    public void SetAwaitingAnswer(bool awaiting)
+    {
+        if (AwaitingAnswer == awaiting)
+        {
+            return;
+        }
+
+        AwaitingAnswer = awaiting;
+        StateChanged?.Invoke();
+    }
+
+    // P4-ASK: MainWindow wires monitor availability and pre-capture recheck — P4-D13
+    public void ConfigureQuestionSpeech(Func<bool> playbackMonitorAvailable, Func<string, bool> clarifyCaptureStillValid)
+    {
+        _playbackMonitorAvailable = playbackMonitorAvailable;
+        _clarifyCaptureStillValid = clarifyCaptureStillValid;
+    }
+
+    // P4-ASK: PresenceView bout forward — P4-D13
+    public void NotePlaybackBoutStarted()
+    {
+        if (!_questionBoutArmed)
+        {
+            return;
+        }
+
+        _questionBoutStarted = true;
+        _questionBoutActive = true;
+        // P4-ASK: stopped TCS was created at arm; do not recreate (waiter may already be awaiting it) — P4-D13
+        _questionBoutStartedTcs?.TrySetResult(true);
+    }
+
+    // P4-ASK: forced=true is never a rule-1 release — P4-D13
+    public void NotePlaybackBoutStopped(bool forced)
+    {
+        if (!_questionBoutArmed && !_questionBoutActive)
+        {
+            return;
+        }
+
+        _questionBoutActive = false;
+        _questionBoutStoppedTcs?.TrySetResult(forced);
+    }
+
+    public void AbandonPendingQuestion(string reason)
+    {
+        var id = _pendingQuestionId;
+        if (id is null && !_questionSpeaking)
+        {
+            return;
+        }
+
+        if (id is not null)
+        {
+            WriteTimeline(LogQuestionAbandonedPrefix + id + " reason=" + reason);
+        }
+
+        ClearPendingQuestionToken();
+        EndQuestionSpeaking();
+    }
+
+    public void AbandonPendingQuestionIfId(string id, string reason)
+    {
+        if (string.Equals(_pendingQuestionId, id, StringComparison.Ordinal))
+        {
+            AbandonPendingQuestion(reason);
+        }
+
+        // P4-ASK: speak token may already be cleared while the answer capture is still in flight — P4-D14
+        var captureId = _activeClarifyCaptureId ?? _pendingClarifyCaptureId;
+        if (string.Equals(captureId, id, StringComparison.Ordinal))
+        {
+            StashClosedClarifyCapture(captureId);
+            _pendingClarifyCaptureId = null;
+            _activeClarifyCaptureId = null;
+        }
+    }
+
+    private void StashClosedClarifyCapture(string? id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return;
+        }
+
+        _closedClarifyCaptureId = id;
+    }
+
+    private void ClearClosedClarifyCapture()
+    {
+        _closedClarifyCaptureId = null;
+    }
+
+    private static bool ShouldStashClosedClarify(string reason)
+    {
+        // P4-ASK: only Cancel/interrupt parks a late-drop id; idle/silence must not bind the next wake turn — P4-D14
+        return string.Equals(reason, "interrupted", StringComparison.Ordinal)
+            || string.Equals(reason, "voice.interrupted", StringComparison.Ordinal)
+            || string.Equals(reason, GateCancelReason, StringComparison.Ordinal);
+    }
+
+    // P4-ASK: speak the clarify once, wait for playback release, open bound clarify-answer capture — P4-D13
+    public async Task SpeakQuestionAsync(string id, ServerRequestBroker.ClarifyView view)
+    {
+        if (VoiceGated)
+        {
+            WriteTimeline(LogQuestionRefusePrefix + QuestionRefuseGated + " id=" + id);
+            return;
+        }
+
+        if (Mode != ModeVoice)
+        {
+            WriteTimeline(LogQuestionRefusePrefix + QuestionRefuseTextMode + " id=" + id);
+            return;
+        }
+
+        if (_ttsOn != true)
+        {
+            WriteTimeline(LogQuestionRefusePrefix + QuestionRefuseSpeechOff + " id=" + id);
+            return;
+        }
+
+        if (_pendingQuestionId is not null)
+        {
+            AbandonPendingQuestion(AbandonReasonNewerClarify);
+        }
+
+        var spoken = BuildSpokenQuestionText(view);
+        if (string.IsNullOrWhiteSpace(spoken))
+        {
+            WriteTimeline(LogQuestionRefusePrefix + QuestionRefuseEmpty + " id=" + id);
+            return;
+        }
+
+        CancelFollowUp("question-speak");
+        ClearClosedClarifyCapture();
+        var tokenGeneration = Interlocked.Increment(ref _pendingQuestionGeneration);
+        _pendingQuestionId = id;
+        _questionSpeaking = true;
+        SetSpeaking(true);
+        ArmQuestionBoutWait();
+
+        var ttsReply = await _chat.InvokeAsync(MethodTts, new Dictionary<string, string?>
+        {
+            [ParamText] = spoken,
+        }).ConfigureAwait(false);
+
+        if (!ttsReply.Ok)
+        {
+            WriteTimeline(LogQuestionRefusePrefix + AbandonReasonTtsFailed + " id=" + id + " error=" + (ttsReply.Error ?? ""));
+            AbandonPendingQuestion(AbandonReasonTtsFailed);
+            return;
+        }
+
+        RememberSpokenEcho(spoken);
+        WriteTimeline(LogQuestionSpokenPrefix + id + " chars=" + spoken.Length);
+        var ttsReturnedAt = DateTimeOffset.Now;
+        await WaitForQuestionReleaseThenCaptureAsync(id, tokenGeneration, spoken, ttsReturnedAt).ConfigureAwait(false);
+    }
+
+    private void ArmQuestionBoutWait()
+    {
+        _questionBoutArmed = true;
+        _questionBoutStarted = false;
+        _questionBoutActive = false;
+        // P4-ASK: both TCS live for the token lifetime so rule-1 never races a null stopped wait — P4-D13
+        _questionBoutStartedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _questionBoutStoppedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private void ClearPendingQuestionToken()
+    {
+        _pendingQuestionId = null;
+        Interlocked.Increment(ref _pendingQuestionGeneration);
+        _questionBoutArmed = false;
+        _questionBoutStarted = false;
+        _questionBoutActive = false;
+        _questionBoutStartedTcs?.TrySetCanceled();
+        _questionBoutStoppedTcs?.TrySetCanceled();
+        _questionBoutStartedTcs = null;
+        _questionBoutStoppedTcs = null;
+    }
+
+    private void EndQuestionSpeaking()
+    {
+        if (!_questionSpeaking)
+        {
+            return;
+        }
+
+        _questionSpeaking = false;
+        SetSpeaking(false);
+    }
+
+    private static string BuildSpokenQuestionText(ServerRequestBroker.ClarifyView view)
+    {
+        // P4-ASK: speak question text only — never choices (developer 2026-09-30 / P4-D13 amend) — P4-D13
+        if (view.IsBatch)
+        {
+            var first = view.Questions.Count > 0 ? view.Questions[0].Question.Trim() : "";
+            if (string.IsNullOrEmpty(first))
+            {
+                return "";
+            }
+
+            return view.Questions.Count > 1 ? first + SpokenBatchMoreSuffix : first;
+        }
+
+        return view.Question.Trim();
+    }
+
+    private double EstimateQuestionPlaybackSeconds(string text)
+    {
+        var words = CountSpokenWords(text);
+        var sentences = Math.Max(1, CountSpokenSentences(text));
+        return FirstSentenceLatencySeconds
+            + (words / EstimatedWordsPerSecond)
+            + (sentences * PerSentenceOverheadSeconds);
+    }
+
+    private bool IsPendingQuestionCurrent(string id, int tokenGeneration)
+    {
+        return tokenGeneration == Volatile.Read(ref _pendingQuestionGeneration)
+            && string.Equals(_pendingQuestionId, id, StringComparison.Ordinal);
+    }
+
+    private async Task WaitForQuestionReleaseThenCaptureAsync(
+        string id,
+        int tokenGeneration,
+        string spoken,
+        DateTimeOffset ttsReturnedAt)
+    {
+        try
+        {
+            if (!IsPendingQuestionCurrent(id, tokenGeneration))
+            {
+                return;
+            }
+
+            var monitorAvailable = _playbackMonitorAvailable?.Invoke() == true;
+            string rule;
+            if (!monitorAvailable)
+            {
+                rule = QuestionRuleMonitorUnavailable;
+                var estimateSeconds = EstimateQuestionPlaybackSeconds(spoken) + FollowUpMarginSeconds;
+                WriteTimeline(
+                    LogQuestionReleasePrefix + rule
+                    + " id=" + id
+                    + " estimate_s=" + estimateSeconds.ToString("0.###")
+                    + " tts_at=" + ttsReturnedAt.ToString("o"));
+                await Task.Delay(TimeSpan.FromSeconds(estimateSeconds)).ConfigureAwait(false);
+            }
+            else
+            {
+                var startedTcs = _questionBoutStartedTcs;
+                var startup = Task.Delay(TimeSpan.FromSeconds(QuestionBoutStartupWindowSeconds));
+                var startedWait = startedTcs?.Task ?? Task.FromResult(false);
+                var winner = await Task.WhenAny(startedWait, startup).ConfigureAwait(false);
+                if (!IsPendingQuestionCurrent(id, tokenGeneration))
+                {
+                    return;
+                }
+
+                if (winner == startedWait && _questionBoutStarted)
+                {
+                    // P4-ASK: rule 1 — bout started; exits are natural stop, forced estimate, or invalidation only — P4-D13
+                    var stoppedTcs = _questionBoutStoppedTcs
+                        ?? throw new InvalidOperationException("question bout stopped TCS missing while bout started");
+                    bool forced;
+                    try
+                    {
+                        forced = await stoppedTcs.Task.ConfigureAwait(false);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        return;
+                    }
+
+                    if (!IsPendingQuestionCurrent(id, tokenGeneration))
+                    {
+                        return;
+                    }
+
+                    if (forced)
+                    {
+                        // Forced release → unobservable; estimate from tts return unless abandoned.
+                        rule = QuestionRuleForcedEstimate;
+                        var elapsed = (DateTimeOffset.Now - ttsReturnedAt).TotalSeconds;
+                        var estimateSeconds = EstimateQuestionPlaybackSeconds(spoken) + FollowUpMarginSeconds;
+                        var remaining = Math.Max(0, estimateSeconds - elapsed);
+                        WriteTimeline(
+                            LogQuestionReleasePrefix + rule
+                            + " id=" + id
+                            + " remaining_s=" + remaining.ToString("0.###"));
+                        if (remaining > 0)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(remaining)).ConfigureAwait(false);
+                        }
+                    }
+                    else
+                    {
+                        rule = QuestionRuleMonitor;
+                        WriteTimeline(
+                            LogQuestionReleasePrefix + rule
+                            + " id=" + id
+                            + " tts_at=" + ttsReturnedAt.ToString("o")
+                            + " released_at=" + DateTimeOffset.Now.ToString("o"));
+                    }
+                }
+                else
+                {
+                    // Rule 2: no bout within startup window — estimate; late bout inside estimate upgrades to rule 1.
+                    rule = QuestionRuleNoBoutEstimate;
+                    var estimateSeconds = EstimateQuestionPlaybackSeconds(spoken) + FollowUpMarginSeconds;
+                    WriteTimeline(
+                        LogQuestionReleasePrefix + rule
+                        + " id=" + id
+                        + " estimate_s=" + estimateSeconds.ToString("0.###")
+                        + " startup_s=" + QuestionBoutStartupWindowSeconds.ToString("0.###"));
+                    var estimateDelay = Task.Delay(TimeSpan.FromSeconds(estimateSeconds));
+                    while (true)
+                    {
+                        if (!IsPendingQuestionCurrent(id, tokenGeneration))
+                        {
+                            return;
+                        }
+
+                        if (_questionBoutStarted)
+                        {
+                            // P4-ASK: late bout → rule 1; wait for stop (never timer while active) — P4-D13
+                            var stoppedTcs = _questionBoutStoppedTcs
+                                ?? throw new InvalidOperationException("question bout stopped TCS missing while bout started");
+                            bool forced;
+                            try
+                            {
+                                forced = await stoppedTcs.Task.ConfigureAwait(false);
+                            }
+                            catch (TaskCanceledException)
+                            {
+                                return;
+                            }
+
+                            if (!IsPendingQuestionCurrent(id, tokenGeneration))
+                            {
+                                return;
+                            }
+
+                            if (forced)
+                            {
+                                var elapsed = (DateTimeOffset.Now - ttsReturnedAt).TotalSeconds;
+                                var remaining = Math.Max(0, estimateSeconds - elapsed);
+                                WriteTimeline(
+                                    LogQuestionReleasePrefix + QuestionRuleForcedEstimate
+                                    + " id=" + id
+                                    + " late_bout=1 remaining_s=" + remaining.ToString("0.###"));
+                                if (remaining > 0)
+                                {
+                                    await Task.Delay(TimeSpan.FromSeconds(remaining)).ConfigureAwait(false);
+                                }
+                            }
+                            else
+                            {
+                                WriteTimeline(
+                                    LogQuestionReleasePrefix + QuestionRuleMonitor
+                                    + " id=" + id
+                                    + " late_bout=1");
+                            }
+
+                            break;
+                        }
+
+                        if (estimateDelay.IsCompleted)
+                        {
+                            break;
+                        }
+
+                        await Task.WhenAny(estimateDelay, Task.Delay(50)).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (!IsPendingQuestionCurrent(id, tokenGeneration))
+            {
+                return;
+            }
+
+            await OpenClarifyAnswerCaptureAsync(id, tokenGeneration).ConfigureAwait(false);
+        }
+        finally
+        {
+            // P4-ASK: always drop QuestionSpeaking after the wait chain (capture may still be open) — P4-D13
+            EndQuestionSpeaking();
+            _questionBoutArmed = false;
+        }
+    }
+
+    private async Task OpenClarifyAnswerCaptureAsync(string id, int tokenGeneration)
+    {
+        if (!IsPendingQuestionCurrent(id, tokenGeneration))
+        {
+            WriteTimeline(LogQuestionCaptureSkipPrefix + id + " reason=" + CaptureSkipTokenStale);
+            return;
+        }
+
+        if (VoiceGated)
+        {
+            WriteTimeline(LogQuestionCaptureSkipPrefix + id + " reason=" + CaptureSkipGated);
+            ClearPendingQuestionToken();
+            return;
+        }
+
+        if (Mode != ModeVoice)
+        {
+            WriteTimeline(LogQuestionCaptureSkipPrefix + id + " reason=" + CaptureSkipNotVoice);
+            ClearPendingQuestionToken();
+            return;
+        }
+
+        if (_ttsOn != true)
+        {
+            WriteTimeline(LogQuestionCaptureSkipPrefix + id + " reason=" + CaptureSkipSpeechOff);
+            ClearPendingQuestionToken();
+            return;
+        }
+
+        if (_clarifyCaptureStillValid?.Invoke(id) != true)
+        {
+            WriteTimeline(LogQuestionCaptureSkipPrefix + id + " reason=" + CaptureSkipNotOpen);
+            ClearPendingQuestionToken();
+            return;
+        }
+
+        ArmClarifyAnswerCapture(id);
+        _followUpArmed = true;
+        _followUpEchoPending = true;
+        _followUpTranscriptSeen = false;
+        _echoIgnoreCount = 0;
+        _cancelReason = "";
+        var generation = Volatile.Read(ref _followUpGeneration);
+        // P4-ASK: clear question token before capture; Speaking ends in WaitFor finally — P4-D13
+        ClearPendingQuestionToken();
+        EndQuestionSpeaking();
+        _followUpArmed = true;
+        await StartCaptureAsync(generation).ConfigureAwait(false);
+        if (!CaptureActive)
+        {
+            CancelFollowUp("clarify-capture-failed");
+        }
     }
 
     public void SetCaptureGate(bool sessionReady, bool backendReachable, bool turnRunning)
@@ -393,6 +915,8 @@ sealed class VoiceController
         }
 
         WriteTimeline(GateStepCancelFollowUp);
+        // P4-ASK: gate close abandons pending question speech/capture chain — P4-D13
+        AbandonPendingQuestion(AbandonReasonVoiceGated);
         CancelFollowUp(GateCancelReason);
 
         var ok = true;
@@ -699,6 +1223,8 @@ sealed class VoiceController
     {
         // P2-SPEAK: leaving Voice cancels the follow-up window and clears the self-trip count — P2-D06
         ResetSelfInterruptCount();
+        // P4-ASK: Text mode invalidates a pending spoken question — P4-D13
+        AbandonPendingQuestion(AbandonReasonTextMode);
         CancelFollowUp("mode-text");
         // P2-VOICE: text mode turns Hermes voice off and clears a live capture — P2-D07
         var reply = await ToggleAsync(ActionOff).ConfigureAwait(false);
@@ -900,6 +1426,12 @@ sealed class VoiceController
             return;
         }
 
+        // P4-ASK: a new wake capture is a fresh turn — never bind it to a prior cancelled clarify — P4-D14
+        if (requiredGeneration is null)
+        {
+            ClearClosedClarifyCapture();
+        }
+
         // P2-SPEAK: a stale follow-up must not send voice.record after any await — P2-D06
         if (requiredGeneration is int generation && generation != Volatile.Read(ref _followUpGeneration))
         {
@@ -917,6 +1449,7 @@ sealed class VoiceController
         if (wakeGeneration != Volatile.Read(ref _connectionGeneration))
         {
             WriteTimeline(NoticeStaleWake);
+            _pendingClarifyCaptureId = null;
             await RecoverWakeCaptureIfNeededAsync(wakeGeneration).ConfigureAwait(false);
             return;
         }
@@ -924,6 +1457,9 @@ sealed class VoiceController
         var reply = await RecordAsync(ActionStart, allowResync: true, requiredGeneration).ConfigureAwait(false);
         if (requiredGeneration is int afterAwait && afterAwait != Volatile.Read(ref _followUpGeneration))
         {
+            // P4-ASK: interrupt may bump generation after Hermes already started record — keep id for late drop — P4-D14
+            StashClosedClarifyCapture(_pendingClarifyCaptureId);
+            _pendingClarifyCaptureId = null;
             return;
         }
 
@@ -935,6 +1471,10 @@ sealed class VoiceController
             {
                 // P2-WAKE: a failed follow-up listen must not leave Resting blocked — P2-D12
                 CancelFollowUp("follow-up-record-failed");
+            }
+            else
+            {
+                _pendingClarifyCaptureId = null;
             }
 
             return;
@@ -949,6 +1489,10 @@ sealed class VoiceController
                 // P2-WAKE: a failed follow-up listen must not leave Resting blocked — P2-D12
                 CancelFollowUp("follow-up-record-failed");
             }
+            else
+            {
+                _pendingClarifyCaptureId = null;
+            }
 
             return;
         }
@@ -956,6 +1500,9 @@ sealed class VoiceController
         CaptureActive = true;
         // P2-WAKE: a successful record start confirms the wake capture; do not resume — P2-D12
         _wakeCapturePending = false;
+        // P4-ASK: bind this capture to the armed clarify id (if any); otherwise unbound — P4-D14
+        _activeClarifyCaptureId = _pendingClarifyCaptureId;
+        _pendingClarifyCaptureId = null;
         if (RecorderState == StateIdle)
         {
             RecorderState = StateListening;
@@ -1128,10 +1675,24 @@ sealed class VoiceController
 
             _followUpEchoPending = false;
             _followUpTranscriptSeen = true;
+            // P4-ASK: prefer live binding; else closed id from Cancel so late answers drop (C4) — P4-D14
+            var boundClarifyId = _activeClarifyCaptureId;
+            if (string.IsNullOrEmpty(boundClarifyId))
+            {
+                boundClarifyId = _closedClarifyCaptureId;
+            }
+
+            _activeClarifyCaptureId = null;
+            if (!string.IsNullOrEmpty(boundClarifyId)
+                && string.Equals(boundClarifyId, _closedClarifyCaptureId, StringComparison.Ordinal))
+            {
+                ClearClosedClarifyCapture();
+            }
+
             // P2-SPEAK: a transcript is a new utterance, so the pending follow-up is cancelled — P2-D06
             CancelFollowUp("voice.transcript");
             // P2-VOICE: a non-empty transcript is submitted once by the window — P2-D05
-            TranscriptReady?.Invoke(transcript.Text.Trim());
+            TranscriptReady?.Invoke(transcript.Text.Trim(), boundClarifyId);
         }
     }
 
@@ -1235,6 +1796,14 @@ sealed class VoiceController
         _followUpArmed = false;
         // P2-WAKE: Resting also requires this flag off; leaving it true ignores later detections as follow-up — P2-D12
         _followUpCaptureStarted = false;
+        // P4-ASK: stash closed id only on interrupt-like cancel (not idle/silence — that stole the next wake turn) — P4-D14
+        if (ShouldStashClosedClarify(reason))
+        {
+            StashClosedClarifyCapture(_activeClarifyCaptureId ?? _pendingClarifyCaptureId);
+        }
+
+        _pendingClarifyCaptureId = null;
+        _activeClarifyCaptureId = null;
         SetSpeaking(false);
         // P2-WAKE: ending the follow-up window can re-enter Resting — P2-D12
         _ = ReconcileWakeRestingAsync("follow-up-end");

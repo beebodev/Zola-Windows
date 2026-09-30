@@ -63,6 +63,8 @@ internal sealed class PresenceAnimator
     private bool _stopMonitorAfterRelease;
     private bool _mouthWasOwning;
     private long _onsetTicks;
+    // P4-ASK: next BoutStopped from ForceInactive is forced (stop/pause/dispose/unbind) — P4-D13
+    private bool _forwardForcedBoutStop;
 #if DEBUG
     private int _debugMorphCursor = -1;
     private bool _debugMorphOverride;
@@ -85,6 +87,14 @@ internal sealed class PresenceAnimator
     internal bool TickRunning => _tickRunning;
 
     internal float Multiplier => _multiplier;
+
+    // P4-ASK: thin pass-through of monitor bout signals for question speech release — P4-D13
+    internal bool PlaybackMonitorAvailable => _playback is { IsAvailable: true };
+
+    internal event Action? PlaybackBoutStarted;
+
+    // P4-ASK: true when BoutStopped came from ForceInactive (never a rule-1 release) — P4-D13
+    internal event Action<bool>? PlaybackBoutStopped;
 
     // P3-LIFE: Hermes serve PID for owned-ffplay matching — P3-D14 / S17
     internal void AttachPlaybackMonitor(Func<int?> serveProcessId)
@@ -443,6 +453,8 @@ internal sealed class PresenceAnimator
         var now = NowTicks();
         _playback?.ApplyLife(_life);
         _usingEstimateFallback = _playback is null;
+        // P4-ASK: clear stale forced flag from a prior StopMonitoring with no bout — P4-D13
+        _forwardForcedBoutStop = false;
         if (_playback is not null)
         {
             // Probe availability by starting; StartMonitoring refreshes roots + COM.
@@ -517,6 +529,9 @@ internal sealed class PresenceAnimator
 
     private void OnPlaybackBoutStarted()
     {
+        // P4-ASK: forward before mouth logic so VoiceController associates the question bout — P4-D13
+        PlaybackBoutStarted?.Invoke();
+
         if (_mode != PresenceMode.Speaking || _usingEstimateFallback)
         {
             return;
@@ -541,6 +556,11 @@ internal sealed class PresenceAnimator
 
     private void OnPlaybackBoutStopped()
     {
+        var forced = _forwardForcedBoutStop;
+        _forwardForcedBoutStop = false;
+        // P4-ASK: forward forced flag; forced stops are never question rule-1 releases — P4-D13
+        PlaybackBoutStopped?.Invoke(forced);
+
         if (_mode != PresenceMode.Speaking)
         {
             return;
@@ -617,6 +637,12 @@ internal sealed class PresenceAnimator
             _stopMonitorAfterRelease = false;
             if (_playback is not null)
             {
+                // P4-ASK: only mark forced when a bout is active (else the flag sticks for the next bout) — P4-D13
+                if (_playback.IsBoutActive)
+                {
+                    _forwardForcedBoutStop = true;
+                }
+
                 _playback.StopMonitoring();
             }
         }
@@ -748,7 +774,16 @@ internal sealed class PresenceAnimator
             if (_mouthPhase == MouthSpeakPhase.Idle && _stopMonitorAfterRelease)
             {
                 _stopMonitorAfterRelease = false;
-                _playback?.StopMonitoring();
+                if (_playback is not null)
+                {
+                    // P4-ASK: deferred monitor stop is forced only if a bout is still active — P4-D13
+                    if (_playback.IsBoutActive)
+                    {
+                        _forwardForcedBoutStop = true;
+                    }
+
+                    _playback.StopMonitoring();
+                }
             }
         }
         if (_mouthWasOwning && !_mouth.OwnsMouth)

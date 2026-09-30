@@ -104,6 +104,9 @@ public sealed partial class MainWindow : Window
     private const string RecordSendFailed = "Send failed";
     private const string RecordDeclined = "Declined";
     private const string RecordWithdrawn = "Withdrawn";
+    // P4-ASK: late bound answer after the card closed — P4-D14
+    private const string NoticeLateAnswer =
+        "Your answer arrived after Zola stopped waiting — say it again if you still need it.";
     private const string HeadingClarify = "Zola asks";
     private const string HeadingApproval = "Approval needed";
     private const string CommandFontFamilyName = "Cascadia Mono";
@@ -122,6 +125,8 @@ public sealed partial class MainWindow : Window
     private const string FieldQid = "qid";
     private readonly Dictionary<string, FrameworkElement> _requestCards = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _requestCloseRecords = new(StringComparer.Ordinal);
+    // P4-ASK: one spoken question per clarify id; re-shows do not speak again — P4-D13
+    private readonly HashSet<string> _spokenClarifyIds = new(StringComparer.Ordinal);
 
     public MainWindow(HermesProcessManager backend)
     {
@@ -169,6 +174,22 @@ public sealed partial class MainWindow : Window
         // P3-LIFE: animator follows display mode and the window's reduced-motion flag — P3-D22
         _presence!.AttachDisplay(_display);
         _presence.AttachPlaybackMonitor(() => _backend.ServeProcessId);
+        // P4-ASK: monitor bout forward + question speech wiring — P4-D13
+        _presence.PlaybackBoutStarted += () => _voice.NotePlaybackBoutStarted();
+        _presence.PlaybackBoutStopped += forced => _voice.NotePlaybackBoutStopped(forced);
+        _voice.ConfigureQuestionSpeech(
+            () => _presence?.PlaybackMonitorAvailable == true,
+            id =>
+            {
+                if (_requests.GetState(id) != ServerRequestBroker.Lifecycle.Open)
+                {
+                    return false;
+                }
+
+                var sessionId = _requests.TryGetSessionId(id);
+                return !string.IsNullOrEmpty(sessionId)
+                    && string.Equals(sessionId, _chat.SessionId, StringComparison.Ordinal);
+            });
         _presence.SetReducedMotion(!_uiSettings.AnimationsEnabled);
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
         {
@@ -176,16 +197,8 @@ public sealed partial class MainWindow : Window
         }
         _voice.StateChanged += () => Dispatch(ApplyVoiceChrome);
         // P4-LOCK: belt-and-braces refuse of voice submit while gated — P4-D02
-        _voice.TranscriptReady += text => Dispatch(() =>
-        {
-            if (_voice.VoiceGated)
-            {
-                _voice.NoteGateRefusal(VoiceController.GateRefuseVoiceSubmitReason);
-                return;
-            }
-
-            _ = SubmitTurnAsync(text);
-        });
+        // P4-ASK: bound clarify id, then open clarify, else prompt.submit — P4-D14
+        _voice.TranscriptReady += (text, boundClarifyId) => Dispatch(() => OnTranscriptReady(text, boundClarifyId));
         _voice.VoiceChatEnded += () => Dispatch(OnVoiceChatEnded);
         _voice.StatusMessage += message => Dispatch(() => OnVoiceStatusMessage(message));
         _chat.SessionReady += (sessionId, storedId) => Dispatch(() => OnSessionReady(sessionId, storedId));
@@ -524,8 +537,92 @@ public sealed partial class MainWindow : Window
 
     private void OnVoiceChatEnded()
     {
+        // P4-ASK: stop phrase while a clarify is open sends Skip, then existing end handling — P4-D14
+        if (_requests.HasOpenClarify(_chat.SessionId))
+        {
+            var id = _requests.NewestOpenClarify(_chat.SessionId);
+            if (id is not null)
+            {
+                _requestCloseRecords[id] = RecordSkipped;
+                _requests.SkipClarify(id);
+            }
+        }
+
         // P2-VOICE: a spoken stop ends the exchange with a status line and no turn — P2-D05
         StatusText.Text = "Voice chat ended";
+        UpdateChrome();
+    }
+
+    private void OnTranscriptReady(string text, string? boundClarifyId)
+    {
+        if (_voice.VoiceGated)
+        {
+            _voice.NoteGateRefusal(VoiceController.GateRefuseVoiceSubmitReason);
+            return;
+        }
+
+        // P4-ASK: transcript from a clarify-answer capture answers only that id — P4-D14
+        if (!string.IsNullOrEmpty(boundClarifyId))
+        {
+            if (_requests.GetState(boundClarifyId) == ServerRequestBroker.Lifecycle.Open)
+            {
+                ApplyVoiceClarifyAnswer(boundClarifyId, text);
+                return;
+            }
+
+            _voice.NoteLateAnswerDropped(boundClarifyId, text.Length);
+            _requests.NoteLateAnswerDropped(boundClarifyId, text.Length);
+            OnRouted(NoticeLateAnswer);
+            return;
+        }
+
+        // P4-ASK: unbound capture while a clarify is open answers the newest (probe / Option D) — P4-D14
+        if (_requests.HasOpenClarify(_chat.SessionId))
+        {
+            var id = _requests.NewestOpenClarify(_chat.SessionId);
+            if (id is not null)
+            {
+                ApplyVoiceClarifyAnswer(id, text);
+                return;
+            }
+        }
+
+        _ = SubmitTurnAsync(text);
+    }
+
+    private void ApplyVoiceClarifyAnswer(string id, string text)
+    {
+        var view = _requests.TryGetClarifyView(id);
+        if (view is null)
+        {
+            // P4-ASK: missing view for an id is a late/stale drop, never silent — P4-D14
+            _voice.NoteLateAnswerDropped(id, text.Length);
+            _requests.NoteLateAnswerDropped(id, text.Length);
+            OnRouted(NoticeLateAnswer);
+            return;
+        }
+
+        if (view.IsBatch)
+        {
+            // P4-ASK: fill first unanswered row; Hermes always wires clarify as questions[] (batch).
+            // Auto-send when no unanswered rows remain (one-question = C1; multi stays open for C8) — P4-D14 / K7
+            FillFirstUnansweredBatchRow(id, text);
+            if (!BatchHasUnansweredRows(id))
+            {
+                var answers = CollectBatchAnswers(id);
+                if (answers.Count > 0)
+                {
+                    _requestCloseRecords[id] = RecordAnsweredPrefix + string.Join("; ", answers.Values);
+                    _requests.AnswerBatch(id, answers);
+                }
+            }
+
+            UpdateChrome();
+            return;
+        }
+
+        _requestCloseRecords[id] = RecordAnsweredPrefix + text;
+        _requests.AnswerClarify(id, text);
         UpdateChrome();
     }
 
@@ -767,6 +864,8 @@ public sealed partial class MainWindow : Window
         _unreachable = true;
         _streaming = false;
         _sessionReady = false;
+        // P4-ASK: disconnect abandons pending question speech/capture — P4-D13
+        _voice.AbandonPendingQuestion("unreachable");
         StatusText.Text = reason.StartsWith("Backend unreachable", StringComparison.Ordinal)
             ? reason
             : "Backend unreachable. " + reason;
@@ -886,6 +985,16 @@ public sealed partial class MainWindow : Window
         Transcript.Children.Add(card);
         EnsureConversationOpen();
         UpdateChrome();
+
+        // P4-ASK: Voice mode speaks each clarify id once after the card is rendered Open — P4-D13
+        if (_voice.Mode == VoiceController.ModeVoice
+            && _requests.GetState(id) == ServerRequestBroker.Lifecycle.Open
+            && !_spokenClarifyIds.Contains(id)
+            && string.Equals(fresh.SessionId, _chat.SessionId, StringComparison.Ordinal))
+        {
+            _spokenClarifyIds.Add(id);
+            _ = _voice.SpeakQuestionAsync(id, fresh);
+        }
     }
 
     private void OnApprovalOpened(string id, ServerRequestBroker.ApprovalView view)
@@ -920,6 +1029,9 @@ public sealed partial class MainWindow : Window
 
     private void OnRequestClosed(string id, ServerRequestBroker.CloseOutcome outcome)
     {
+        // P4-ASK: closing the card abandons pending speak/capture for that id — P4-D13
+        _voice.AbandonPendingQuestionIfId(id, "request_closed");
+
         if (!_requestCards.TryGetValue(id, out var card))
         {
             _requestCloseRecords.Remove(id);
@@ -1303,6 +1415,48 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // P4-ASK: true while any batch row still needs an answer — P4-D14 / K7
+    private bool BatchHasUnansweredRows(string id)
+    {
+        if (!_requestCards.TryGetValue(id, out var card) || card is not Border { Tag: BatchCardState batch })
+        {
+            return true;
+        }
+
+        foreach (var row in batch.Rows.Values)
+        {
+            if (row.MultiSelect)
+            {
+                if (!row.Checks.Any(c => c.IsChecked == true) && row.FreeText.Text.Trim().Length == 0)
+                {
+                    return true;
+                }
+            }
+            else if (row.FreeText.Text.Trim().Length == 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private Dictionary<string, string> CollectBatchAnswers(string id)
+    {
+        var answers = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!_requestCards.TryGetValue(id, out var card) || card is not Border { Tag: BatchCardState batch })
+        {
+            return answers;
+        }
+
+        foreach (var (qid, row) in batch.Rows)
+        {
+            answers[qid] = ReadRowAnswer(row);
+        }
+
+        return answers;
+    }
+
     private static string ReadRowAnswer(BatchRowState row)
     {
         if (row.MultiSelect)
@@ -1365,6 +1519,8 @@ public sealed partial class MainWindow : Window
         // P1-CLIENT: the composer is usable only with a session, no live turn, and a live backend — P1-D01
         // P4-REQUEST: open clarify is the only streaming exception for canType — P4-D09
         var openClarify = _requests.HasOpenClarify(_chat.SessionId);
+        // P4-ASK: awaiting fact from broker open clarify for current session; clear on disconnect — P4-D15
+        _voice.SetAwaitingAnswer(!_unreachable && openClarify);
         var canType = _sessionReady && !_unreachable && !_switchInFlight && !_historyPending
             && (!_streaming || openClarify);
         var composerWasEnabled = Composer.IsEnabled;
@@ -1605,6 +1761,8 @@ public sealed partial class MainWindow : Window
     private void ClearTranscript()
     {
         // P1-SESSION: new and resumed sessions do not keep the previous transcript on screen — P1-D04
+        // P4-ASK: session change abandons pending question; spoken-id set kept so re-shows stay silent — P4-D13
+        _voice.AbandonPendingQuestion("session_change");
         Transcript.Children.Clear();
         // P4-REQUEST: card visuals drop with the transcript; broker keeps parked entries — P4-D08
         _requestCards.Clear();

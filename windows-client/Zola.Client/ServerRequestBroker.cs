@@ -31,6 +31,8 @@ sealed class ServerRequestBroker
     private const string EventReplayIgnoredClosed = "replay_ignored_closed";
     private const string EventGatedClickRefused = "gated_click_refused";
     private const string EventPendingApprovalIgnored = "pending_approval_ignored";
+    // P4-ASK: bound clarify answer arrived after the id closed — P4-D14
+    private const string EventLateAnswerDropped = "late_answer_dropped";
     private const string DropReasonNotOpen = "not_open";
     private const string DropReasonAlreadySettled = "already_settled";
     private const string FieldSessionId = "session_id";
@@ -102,6 +104,8 @@ sealed class ServerRequestBroker
 
     public sealed class ClarifyView
     {
+        // P4-ASK: session of the open request for pre-capture recheck (read-only) — P4-D13
+        public string SessionId { get; init; } = "";
         public bool IsBatch { get; init; }
         public string Question { get; init; } = "";
         public IReadOnlyList<string> Choices { get; init; } = Array.Empty<string>();
@@ -219,6 +223,12 @@ sealed class ServerRequestBroker
         WriteLog(EventPendingApprovalIgnored, id: "-", method: MethodApproval, sessionId: sessionId ?? "", textOrLen: null, reason: "no_srq_id");
     }
 
+    // P4-ASK: length only — never answer text — P4-D14 / G-PRIVACY
+    public void NoteLateAnswerDropped(string id, int length)
+    {
+        WriteLog(EventLateAnswerDropped, id, MethodClarify, _currentSessionId ?? "", length.ToString(), null);
+    }
+
     public void NoteGatedClickRefused(string id)
     {
         WriteLog(EventGatedClickRefused, id, MethodApproval, _currentSessionId ?? "", null, "voice_gated");
@@ -229,6 +239,15 @@ sealed class ServerRequestBroker
         lock (_gate)
         {
             return _entries.TryGetValue(id, out var entry) ? entry.State : null;
+        }
+    }
+
+    // P4-ASK: read-only session of an id for pre-capture recheck — P4-D13
+    public string? TryGetSessionId(string id)
+    {
+        lock (_gate)
+        {
+            return _entries.TryGetValue(id, out var entry) ? entry.SessionId : null;
         }
     }
 
@@ -397,7 +416,7 @@ sealed class ServerRequestBroker
             return raises;
         }
 
-        var clarify = BuildClarifyView(parameters, replayed);
+        var clarify = BuildClarifyView(parameters, replayed, sessionId);
         var clarifyEntry = NewEntry(id, sessionId, method, parameters, replayed, clarify, null);
         _entries[id] = clarifyEntry;
         if (!string.IsNullOrEmpty(_currentSessionId) && sessionId == _currentSessionId)
@@ -653,7 +672,7 @@ sealed class ServerRequestBroker
         }
     }
 
-    private static ClarifyView BuildClarifyView(Dictionary<string, JsonElement> parameters, bool replayed)
+    private static ClarifyView BuildClarifyView(Dictionary<string, JsonElement> parameters, bool replayed, string sessionId)
     {
         if (parameters.TryGetValue(FieldQuestions, out var questionsEl) && questionsEl.ValueKind == JsonValueKind.Array)
         {
@@ -679,6 +698,7 @@ sealed class ServerRequestBroker
 
             return new ClarifyView
             {
+                SessionId = sessionId,
                 IsBatch = true,
                 Questions = list,
                 Replayed = replayed,
@@ -687,6 +707,7 @@ sealed class ServerRequestBroker
 
         return new ClarifyView
         {
+            SessionId = sessionId,
             IsBatch = false,
             Question = ReadString(parameters, FieldQuestion) ?? "",
             Choices = ReadStringList(parameters, FieldChoices),

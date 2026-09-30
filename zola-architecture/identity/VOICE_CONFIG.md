@@ -14,7 +14,7 @@ tts:
     voice: en-US-AriaNeural
 voice:
   silence_duration: 1.5
-  barge_in: true
+  barge_in: false
   stop_phrases: ["stop"]
   thinking_sound: true
 # P2-VOICE: Hermes must not install packages during a probe or a turn — P2-D10
@@ -39,7 +39,7 @@ wake_word:
 - `tts.provider`: `edge` is the free spoken-reply engine. Track 1 writes the key; Track 2 is what turns speech on (`P2-D03`, `P2-D09`).
 - `tts.edge.voice`: `en-US-AriaNeural` is the default Edge voice (`P2-D03`, `P2-D09`).
 - `voice.silence_duration`: `1.5` seconds of quiet after speech ends a capture. The Hermes default of 3.0 is too slow for a conversation (`P2-D09`).
-- `voice.barge_in`: `true` leaves Hermes's interruption listener on during a turn (`P2-D09`).
+- `voice.barge_in`: `false` (P4-ASK Option A / `P4-D25`). Was `true` under `P2-D09`; talking over her no longer interrupts (Cancel / "Hey Zola" after she finishes still work).
 - `voice.stop_phrases`: `["stop"]` ends the voice exchange when that is the whole utterance (`P2-D09`).
 - `voice.thinking_sound`: `true` plays Hermes's thinking sound during a Voice-mode turn (`P2-D09`).
 - `security.allow_lazy_installs`: `false` stops Hermes from installing packages during a probe or a turn. A missing dependency shows up as a requirement hint (`P2-D10`).
@@ -68,6 +68,23 @@ P4-REQUEST: profile clarify wait before Hermes skips — P4-D10
 | Approval | developer-approved |
 
 Applied under `agent:` beside `reasoning_effort`. No serve restart required; Hermes reloads this on each clarify. No other profile key was changed in that edit.
+
+## Barge-in off (P4-ASK Option A)
+
+P4-ASK: disable Hermes full-duplex barge listener so clarify answers use the client capture — P4-D25 / Option A
+
+| Field | Value |
+|---|---|
+| Key | `voice.barge_in` |
+| Value | `false` |
+| Date | 2026-09-30 |
+| Decision | `P4-D25` / Option A |
+| Backup | `config.yaml.bak-P4-ASK-20260930-102716` (same folder as live `config.yaml`) |
+| Approval | developer-approved (`apply barge-in off`) |
+
+Diff vs backup: one line (`barge_in: true` → `false`). No other profile key changed.
+
+**Serve restart:** not strictly required for the next arm (`_voice_cfg_dict` / mtime-cached effective load). An already-running FD listener is not stopped by the flip. **Recommend restart** before Phase 5/smoke so no stale listener remains.
 
 ### Approvals mode (P4-REQUEST smoke retarget)
 
