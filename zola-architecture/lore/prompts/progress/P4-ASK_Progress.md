@@ -495,10 +495,6 @@ Speaking still wins (question TTS / monitor). Else: capture/listening/transcribi
 - P2-D13: no self-interrupt / “Voice paused” trips in `voice-timeline.log` during this smoke.
 - Live profile: `voice.barge_in: false` (unchanged).
 
-## Exit-criteria table (closeout)
-
-(Pending — awaits “proceed to closeout”.)
-
 **C1 FAIL (2026-09-30 ~10:47):** natural bout mislabeled `forced_release_estimate` (stale flag); capture late; answer discarded too-quiet. Fixed forced-flag.
 **C1 FAIL retry (2026-09-30 ~10:52):**
 - Release: `rule=monitor` ✓; capture opened; Hermes transcribed 3.1s answer; client `voice.transcript`
