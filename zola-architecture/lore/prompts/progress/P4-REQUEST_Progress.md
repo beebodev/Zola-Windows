@@ -22,7 +22,7 @@
 
 ## Closeout SHAs
 
-- Implementation commit: *(pending 7d)*
+- Implementation commit: `d21ff9f9ceeeb1fecb16c5603c6b0b9549f41ace` (`feat(P4-REQUEST): server-request broker, clarify and approval cards — P4-D06..D12`)
 - Merge SHA on main: *(pending 7g)*
 - Final main tip: *(pending 7i)*
 
