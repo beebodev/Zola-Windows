@@ -23,7 +23,7 @@
 
 ## Closeout SHAs
 
-- Implementation commit: *(pending 8d)*
+- Implementation commit: `7d0d81fcd8283234a62ed54a3f0acaf15fb3d46c`
 - Merge SHA on main: *(pending 8g)*
 - Final main tip: *(pending 8i)*
 
