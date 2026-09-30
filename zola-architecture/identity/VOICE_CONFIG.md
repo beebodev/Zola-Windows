@@ -54,6 +54,32 @@ wake_word:
 
 Detection runs on-device. No audio leaves the PC for wake detection.
 
+## Clarify timeout (P4-REQUEST)
+
+P4-REQUEST: profile clarify wait before Hermes skips — P4-D10
+
+| Field | Value |
+|---|---|
+| Key | `agent.clarify_timeout` |
+| Value | `300` |
+| Date | 2026-09-30 |
+| Decision | `P4-D10` |
+| Backup | `config.yaml.bak-P4-REQUEST-20260930-072643` (same folder as live `config.yaml`) |
+| Approval | developer-approved |
+
+Applied under `agent:` beside `reasoning_effort`. No serve restart required; Hermes reloads this on each clarify. No other profile key was changed in that edit.
+
+### Approvals mode (P4-REQUEST smoke retarget)
+
+| Field | Value |
+|---|---|
+| Key | `approvals.mode` |
+| Value | `manual` |
+| Date | 2026-09-30 |
+| Reason | Smoke B6: Hermes default merge is `smart` (auxiliary LLM auto-approved); force gateway cards |
+| Backup | `config.yaml.bak-P4-REQUEST-approvals-manual-20260930-075913` |
+| Approval | developer Option 1 after B6 FAIL |
+
 ## Dependencies
 
 Interpreter: `C:\Users\test\Dev\hermes-agent\.venv\Scripts\python.exe`.

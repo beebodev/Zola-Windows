@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -20,6 +21,7 @@ public sealed partial class MainWindow : Window
     private readonly HermesProcessManager _backend;
     private readonly ChatSocket _chat;
     private readonly VoiceController _voice;
+    private readonly ServerRequestBroker _requests;
     private readonly ZolaDisplayStateModel _display;
     private LiveResponse? _live;
     private bool _connectStarted;
@@ -68,6 +70,7 @@ public sealed partial class MainWindow : Window
     private const string TokenBubbleCornerRadius = "ZolaBubbleCornerRadius";
     private const string TokenBubbleBorderThickness = "ZolaBubbleBorderThickness";
     private const string TokenSpace4 = "ZolaSpace4";
+    private const string TokenSpace8 = "ZolaSpace8";
     private const string TokenUserBubble = "ZolaUserBubbleBrush";
     private const string TokenAssistantBubble = "ZolaAssistantBubbleBrush";
     private const string TokenAmberMuted = "ZolaAmberMutedBrush";
@@ -75,6 +78,9 @@ public sealed partial class MainWindow : Window
     private const string TokenError = "ZolaErrorBrush";
     private const string TokenBodyStyle = "ZolaBodyStyle";
     private const string TokenBubbleHeadingStyle = "ZolaBubbleHeadingStyle";
+    private const string TokenPanelBorderStyle = "ZolaPanelBorderStyle";
+    private const string TokenTextButtonStyle = "ZolaTextButtonStyle";
+    private const string TokenComposerStyle = "ZolaComposerStyle";
     private const string TokenDockRevealMargin = "DockRevealMargin";
     private const string TokenDockHideDelaySeconds = "DockHideDelaySeconds";
     private const string TokenDockFadeMilliseconds = "DockFadeMilliseconds";
@@ -82,6 +88,40 @@ public sealed partial class MainWindow : Window
     private const string TokenNoticeMargin = "ZolaNoticeMargin";
     private const double DockShownOpacity = 1;
     private const double DockHiddenOpacity = 0;
+    // P4-REQUEST: composer and card chrome strings — P4-D08 / P4-D09
+    private const string PlaceholderAnswerClarify = "Answer Zola's question…";
+    private const string PlaceholderMessage = "Message";
+    private const string LabelApproveOnce = "Approve once";
+    private const string LabelDeny = "Deny";
+    private const string LabelSkip = "Skip";
+    private const string LabelSend = "Send";
+    private const string LabelRecommended = "(Recommended)";
+    private const string RecordAnsweredPrefix = "You answered: ";
+    private const string RecordApprovedPrefix = "You approved once: ";
+    private const string RecordDeniedPrefix = "You denied: ";
+    private const string RecordSkipped = "Skipped";
+    private const string RecordCancelled = "Cancelled";
+    private const string RecordSendFailed = "Send failed";
+    private const string RecordDeclined = "Declined";
+    private const string RecordWithdrawn = "Withdrawn";
+    private const string HeadingClarify = "Zola asks";
+    private const string HeadingApproval = "Approval needed";
+    private const string CommandFontFamilyName = "Cascadia Mono";
+    private const string MethodTour = "tour";
+    private const string MethodClarify = "clarify";
+    private const string MethodApproval = "approval";
+    private const string DebugRequestIdPrefix = "srq-debug-";
+    private const string FieldSessionId = "session_id";
+    private const string FieldQuestion = "question";
+    private const string FieldQuestions = "questions";
+    private const string FieldChoices = "choices";
+    private const string FieldMultiSelect = "multi_select";
+    private const string FieldCommand = "command";
+    private const string FieldDescription = "description";
+    private const string FieldRequestId = "request_id";
+    private const string FieldQid = "qid";
+    private readonly Dictionary<string, FrameworkElement> _requestCards = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _requestCloseRecords = new(StringComparer.Ordinal);
 
     public MainWindow(HermesProcessManager backend)
     {
@@ -106,6 +146,8 @@ public sealed partial class MainWindow : Window
         _noticeHoldTimer.Tick += OnNoticeHoldTimerTick;
 #if DEBUG
         AddPresenceDebugAccelerators();
+        // P4-REQUEST: env-triggered card inject for screenshot capture when hotkeys cannot reach WinUI — P4-D08
+        CompositionTarget.Rendering += OnDebugInjectCardsOnce;
 #endif
         _clockTimer = DispatcherQueue.CreateTimer();
         _clockTimer.IsRepeating = true;
@@ -114,6 +156,8 @@ public sealed partial class MainWindow : Window
         _chat = new ChatSocket(backend);
         // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
         _voice = new VoiceController(_chat);
+        // P4-REQUEST: one broker owns open server requests — P4-D06
+        _requests = new ServerRequestBroker(_chat);
         // P4-LOCK: one lock/sleep watcher, app-level — P4-D01
         _lockWatcher = new SessionLockWatcher(hwnd);
         _lockWatcher.Locked += OnSystemLocked;
@@ -152,6 +196,15 @@ public sealed partial class MainWindow : Window
         _chat.InterruptAcknowledged += status => Dispatch(() => OnInterruptAcknowledged(status));
         _chat.Routed += note => Dispatch(() => OnRouted(note));
         _chat.Unreachable += reason => Dispatch(() => ShowUnreachable(reason));
+        // P4-REQUEST: socket hand-off into the broker; notices use the existing route — P4-D06
+        _chat.Replacing += () => _requests.MarkSocketReplacing();
+        _chat.ServerRequestReceived += (id, method, parameters) => _requests.OnRequest(id, method, parameters);
+        _chat.ServerRequestCancelled += (id, method, reason) => _requests.OnCancel(id, method, reason);
+        _requests.Notice += text => Dispatch(() => OnRouted(text));
+        // P4-REQUEST: card UI listens for open/close; render only while still Open — P4-D07 / P4-D08
+        _requests.ClarifyOpened += (id, view) => Dispatch(() => OnClarifyOpened(id, view));
+        _requests.ApprovalOpened += (id, view) => Dispatch(() => OnApprovalOpened(id, view));
+        _requests.RequestClosed += (id, outcome) => Dispatch(() => OnRequestClosed(id, outcome));
         _backend.StateChanged += (_, _) => DispatcherQueue.TryEnqueue(Render);
         Composer.TextChanged += (_, _) => UpdateChrome();
         Composer.PreviewKeyDown += OnComposerKeyDown;
@@ -233,6 +286,14 @@ public sealed partial class MainWindow : Window
     {
         // P2-SPEAK: every SessionReady cancels a leftover follow-up from the previous session — P2-D06
         _voice.OnSessionReady();
+        // P4-REQUEST: reconcile parked/open requests against this session's open_requests — P4-D11
+        _requests.OnSessionChanged(sessionId);
+        if (_chat.LastPendingApprovalPresent)
+        {
+            _requests.NotePendingApprovalIgnored(sessionId);
+        }
+
+        _requests.LoadOpenRequests(sessionId, _chat.LastOpenRequests);
         // P1-CLIENT: store both ids once; later sends reuse them so the agent keeps context — P1-D01
         _sessionDetail = $"session {sessionId} · stored {storedId}";
         // P1-CLIENT: an error event can arrive before session.create's result; keep it beside the ids — P1-D01
@@ -255,15 +316,50 @@ public sealed partial class MainWindow : Window
 
         _sessionReady = true;
         StatusText.Text = "Session ready.";
-        Composer.PlaceholderText = "Message";
+        Composer.PlaceholderText = PlaceholderMessage;
         UpdateChrome();
     }
 
     private async void OnSendClick(object sender, RoutedEventArgs e)
     {
         var text = Composer.Text.Trim();
-        if (!_sessionReady || _streaming || _unreachable || text.Length == 0)
+        if (!_sessionReady || _unreachable || text.Length == 0)
         {
+            return;
+        }
+
+        // P4-REQUEST: open clarify routes Send to the broker, not prompt.submit — P4-D09
+        var openClarify = _requests.HasOpenClarify(_chat.SessionId);
+        if (!openClarify && _streaming)
+        {
+            return;
+        }
+
+        if (openClarify)
+        {
+            var id = _requests.NewestOpenClarify(_chat.SessionId);
+            if (id is null)
+            {
+                return;
+            }
+
+            var view = _requests.TryGetClarifyView(id);
+            if (view is null)
+            {
+                return;
+            }
+
+            Composer.Text = "";
+            if (view.IsBatch)
+            {
+                FillFirstUnansweredBatchRow(id, text);
+                UpdateChrome();
+                return;
+            }
+
+            _requestCloseRecords[id] = RecordAnsweredPrefix + text;
+            _requests.AnswerClarify(id, text);
+            UpdateChrome();
             return;
         }
 
@@ -461,6 +557,8 @@ public sealed partial class MainWindow : Window
         LinkText.Text = s.LinkLabel;
         ModeButton.IsEnabled = s.ModeButtonEnabled;
         MicButton.IsEnabled = s.MicButtonEnabled;
+        // P4-REQUEST: approval buttons follow VoiceGated on every chrome refresh — P4-D07
+        RefreshApprovalGateButtons();
     }
 
     private void OnSubmitAcknowledged(string status)
@@ -759,12 +857,527 @@ public sealed partial class MainWindow : Window
         ScrollToEnd();
     }
 
+    // P4-REQUEST: clarify and approval cards live in the transcript — P4-D07 / P4-D08
+    private void OnClarifyOpened(string id, ServerRequestBroker.ClarifyView view)
+    {
+        if (_historyPending)
+        {
+            return;
+        }
+
+        if (_requests.GetState(id) != ServerRequestBroker.Lifecycle.Open)
+        {
+            return;
+        }
+
+        if (_requestCards.ContainsKey(id))
+        {
+            return;
+        }
+
+        var fresh = _requests.TryGetClarifyView(id);
+        if (fresh is null)
+        {
+            return;
+        }
+
+        var card = BuildClarifyCard(id, fresh);
+        _requestCards[id] = card;
+        Transcript.Children.Add(card);
+        EnsureConversationOpen();
+        UpdateChrome();
+    }
+
+    private void OnApprovalOpened(string id, ServerRequestBroker.ApprovalView view)
+    {
+        if (_historyPending)
+        {
+            return;
+        }
+
+        if (_requests.GetState(id) != ServerRequestBroker.Lifecycle.Open)
+        {
+            return;
+        }
+
+        if (_requestCards.ContainsKey(id))
+        {
+            return;
+        }
+
+        var fresh = _requests.TryGetApprovalView(id);
+        if (fresh is null)
+        {
+            return;
+        }
+
+        var card = BuildApprovalCard(id, fresh);
+        _requestCards[id] = card;
+        Transcript.Children.Add(card);
+        EnsureConversationOpen();
+        UpdateChrome();
+    }
+
+    private void OnRequestClosed(string id, ServerRequestBroker.CloseOutcome outcome)
+    {
+        if (!_requestCards.TryGetValue(id, out var card))
+        {
+            _requestCloseRecords.Remove(id);
+            UpdateChrome();
+            return;
+        }
+
+        var record = _requestCloseRecords.TryGetValue(id, out var summary)
+            ? summary
+            : DefaultCloseRecord(outcome);
+        _requestCloseRecords.Remove(id);
+        CollapseCardToRecord(id, card, record);
+        UpdateChrome();
+    }
+
+    private static string DefaultCloseRecord(ServerRequestBroker.CloseOutcome outcome) => outcome switch
+    {
+        ServerRequestBroker.CloseOutcome.Cancelled => RecordCancelled,
+        ServerRequestBroker.CloseOutcome.SendFailed => RecordSendFailed,
+        ServerRequestBroker.CloseOutcome.Declined => RecordDeclined,
+        ServerRequestBroker.CloseOutcome.WithdrawnWhileAway => RecordWithdrawn,
+        ServerRequestBroker.CloseOutcome.Answered => RecordAnsweredPrefix.TrimEnd(' ', ':'),
+        _ => RecordDeclined,
+    };
+
+    private void CollapseCardToRecord(string id, FrameworkElement card, string record)
+    {
+        var index = Transcript.Children.IndexOf(card);
+        if (index < 0)
+        {
+            _requestCards.Remove(id);
+            return;
+        }
+
+        var body = new TextBlock
+        {
+            Text = record,
+            Style = Token<Style>(TokenBodyStyle),
+            TextWrapping = TextWrapping.WrapWholeWords,
+            IsTextSelectionEnabled = true,
+        };
+        var border = new Border
+        {
+            Child = body,
+            Style = Token<Style>(TokenPanelBorderStyle),
+            Padding = new Thickness(Token<double>(TokenBubblePadding)),
+            CornerRadius = new CornerRadius(Token<double>(TokenBubbleCornerRadius)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MaxWidth = Token<double>(TokenBubbleMaxWidth),
+        };
+        Transcript.Children[index] = border;
+        _requestCards.Remove(id);
+        EnsureConversationOpen();
+        ScrollToEnd();
+    }
+
+    private Border BuildClarifyCard(string id, ServerRequestBroker.ClarifyView view)
+    {
+        var stack = new StackPanel { Spacing = Token<double>(TokenSpace8) };
+        stack.Children.Add(new TextBlock { Text = HeadingClarify, Style = Token<Style>(TokenBubbleHeadingStyle) });
+
+        BatchCardState? batchState = null;
+        if (view.IsBatch)
+        {
+            batchState = new BatchCardState();
+            foreach (var question in view.Questions)
+            {
+                var row = BuildClarifyQuestionBlock(
+                    question.Question,
+                    question.Choices,
+                    question.MultiSelect,
+                    question.PrefillAnswer,
+                    onChoice: bare =>
+                    {
+                        if (batchState.Rows.TryGetValue(question.Qid, out var state))
+                        {
+                            state.FreeText.Text = bare;
+                        }
+                    },
+                    out var freeText,
+                    out var checks);
+                if (!string.IsNullOrEmpty(question.PrefillAnswer))
+                {
+                    freeText.Text = question.PrefillAnswer;
+                }
+
+                batchState.Rows[question.Qid] = new BatchRowState(freeText, checks, question.MultiSelect);
+                stack.Children.Add(row);
+            }
+
+            var batchActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Token<double>(TokenSpace8) };
+            var batchSend = MakeTextButton(LabelSend, (_, _) =>
+            {
+                if (_requests.GetState(id) != ServerRequestBroker.Lifecycle.Open)
+                {
+                    return;
+                }
+
+                var answers = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var (qid, row) in batchState.Rows)
+                {
+                    answers[qid] = ReadRowAnswer(row);
+                }
+
+                _requestCloseRecords[id] = RecordAnsweredPrefix + string.Join("; ", answers.Values);
+                _requests.AnswerBatch(id, answers);
+            });
+            var batchSkip = MakeTextButton(LabelSkip, (_, _) =>
+            {
+                _requestCloseRecords[id] = RecordSkipped;
+                _requests.SkipClarify(id);
+            });
+            batchActions.Children.Add(batchSend);
+            batchActions.Children.Add(batchSkip);
+            stack.Children.Add(batchActions);
+        }
+        else
+        {
+            var block = BuildClarifyQuestionBlock(
+                view.Question,
+                view.Choices,
+                view.MultiSelect,
+                prefill: "",
+                onChoice: bare =>
+                {
+                    _requestCloseRecords[id] = RecordAnsweredPrefix + bare;
+                    _requests.AnswerClarify(id, bare);
+                },
+                out var freeText,
+                out var checks);
+
+            stack.Children.Add(block);
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Token<double>(TokenSpace8) };
+            var send = MakeTextButton(LabelSend, (_, _) =>
+            {
+                if (_requests.GetState(id) != ServerRequestBroker.Lifecycle.Open)
+                {
+                    return;
+                }
+
+                if (view.MultiSelect)
+                {
+                    var labels = checks.Where(c => c.IsChecked == true).Select(c => (string)c.Tag).ToList();
+                    if (labels.Count == 0 && freeText.Text.Trim().Length > 0)
+                    {
+                        _requestCloseRecords[id] = RecordAnsweredPrefix + freeText.Text.Trim();
+                        _requests.AnswerClarify(id, freeText.Text.Trim());
+                        return;
+                    }
+
+                    _requestCloseRecords[id] = RecordAnsweredPrefix + string.Join(", ", labels);
+                    _requests.AnswerClarifyMulti(id, labels);
+                    return;
+                }
+
+                var text = freeText.Text.Trim();
+                if (text.Length == 0)
+                {
+                    return;
+                }
+
+                _requestCloseRecords[id] = RecordAnsweredPrefix + text;
+                _requests.AnswerClarify(id, text);
+            });
+            var skip = MakeTextButton(LabelSkip, (_, _) =>
+            {
+                _requestCloseRecords[id] = RecordSkipped;
+                _requests.SkipClarify(id);
+            });
+            actions.Children.Add(send);
+            actions.Children.Add(skip);
+            stack.Children.Add(actions);
+        }
+
+        var border = new Border
+        {
+            Child = stack,
+            Style = Token<Style>(TokenPanelBorderStyle),
+            Padding = new Thickness(Token<double>(TokenBubblePadding)),
+            CornerRadius = new CornerRadius(Token<double>(TokenBubbleCornerRadius)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MaxWidth = Token<double>(TokenBubbleMaxWidth),
+            Tag = batchState,
+        };
+        return border;
+    }
+
+    private FrameworkElement BuildClarifyQuestionBlock(
+        string question,
+        IReadOnlyList<string> choices,
+        bool multiSelect,
+        string prefill,
+        Action<string> onChoice,
+        out TextBox freeText,
+        out List<CheckBox> checks)
+    {
+        var stack = new StackPanel { Spacing = Token<double>(TokenSpace4) };
+        stack.Children.Add(new TextBlock
+        {
+            Text = question,
+            Style = Token<Style>(TokenBodyStyle),
+            TextWrapping = TextWrapping.WrapWholeWords,
+            IsTextSelectionEnabled = true,
+        });
+
+        checks = new List<CheckBox>();
+        if (multiSelect)
+        {
+            foreach (var choice in choices)
+            {
+                var bare = ServerRequestBroker.StripRecommended(choice);
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Token<double>(TokenSpace4) };
+                var box = new CheckBox
+                {
+                    Content = bare,
+                    Tag = bare,
+                    Foreground = Token<Brush>(TokenAmberMuted),
+                };
+                checks.Add(box);
+                row.Children.Add(box);
+                if (!string.Equals(choice.Trim(), bare, StringComparison.Ordinal))
+                {
+                    row.Children.Add(new TextBlock
+                    {
+                        Text = LabelRecommended,
+                        Style = Token<Style>(TokenBodyStyle),
+                        Foreground = Token<Brush>(TokenAmberMuted),
+                        VerticalAlignment = VerticalAlignment.Center,
+                    });
+                }
+
+                stack.Children.Add(row);
+            }
+        }
+        else
+        {
+            foreach (var choice in choices)
+            {
+                var bare = ServerRequestBroker.StripRecommended(choice);
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Token<double>(TokenSpace4) };
+                var button = MakeTextButton(bare, (_, _) => onChoice(bare));
+                row.Children.Add(button);
+                if (!string.Equals(choice.Trim(), bare, StringComparison.Ordinal))
+                {
+                    row.Children.Add(new TextBlock
+                    {
+                        Text = LabelRecommended,
+                        Style = Token<Style>(TokenBodyStyle),
+                        Foreground = Token<Brush>(TokenAmberMuted),
+                        VerticalAlignment = VerticalAlignment.Center,
+                    });
+                }
+
+                stack.Children.Add(row);
+            }
+        }
+
+        freeText = new TextBox
+        {
+            Style = Token<Style>(TokenComposerStyle),
+            AcceptsReturn = false,
+            TextWrapping = TextWrapping.Wrap,
+            Text = prefill,
+        };
+        stack.Children.Add(freeText);
+        return stack;
+    }
+
+    private Border BuildApprovalCard(string id, ServerRequestBroker.ApprovalView view)
+    {
+        var stack = new StackPanel { Spacing = Token<double>(TokenSpace8) };
+        stack.Children.Add(new TextBlock { Text = HeadingApproval, Style = Token<Style>(TokenBubbleHeadingStyle) });
+        if (!string.IsNullOrEmpty(view.Description))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = view.Description,
+                Style = Token<Style>(TokenBodyStyle),
+                TextWrapping = TextWrapping.WrapWholeWords,
+                IsTextSelectionEnabled = true,
+            });
+        }
+
+        // FLAG: no monospace token in ZolaTokens; Cascadia Mono used for the command line only.
+        stack.Children.Add(new TextBlock
+        {
+            Text = view.Command,
+            Style = Token<Style>(TokenBodyStyle),
+            FontFamily = new FontFamily(CommandFontFamilyName),
+            TextWrapping = TextWrapping.WrapWholeWords,
+            IsTextSelectionEnabled = true,
+        });
+
+        var gated = _voice.VoiceGated;
+        var approve = MakeTextButton(LabelApproveOnce, (_, _) => OnApproveOnceClick(id, view.Command));
+        var deny = MakeTextButton(LabelDeny, (_, _) => OnDenyClick(id, view.Command));
+        approve.IsEnabled = !gated;
+        deny.IsEnabled = !gated;
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Token<double>(TokenSpace8) };
+        actions.Children.Add(approve);
+        actions.Children.Add(deny);
+        stack.Children.Add(actions);
+
+        var border = new Border
+        {
+            Child = stack,
+            Style = Token<Style>(TokenPanelBorderStyle),
+            Padding = new Thickness(Token<double>(TokenBubblePadding)),
+            CornerRadius = new CornerRadius(Token<double>(TokenBubbleCornerRadius)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MaxWidth = Token<double>(TokenBubbleMaxWidth),
+            Tag = new ApprovalCardState(approve, deny),
+        };
+        return border;
+    }
+
+    private void OnApproveOnceClick(string id, string command)
+    {
+        // P4-REQUEST: re-check VoiceGated before ApproveOnce — P4-D07
+        if (_voice.VoiceGated)
+        {
+            _requests.NoteGatedClickRefused(id);
+            RefreshApprovalGateButtons();
+            return;
+        }
+
+        _requestCloseRecords[id] = RecordApprovedPrefix + command;
+        _requests.ApproveOnce(id);
+    }
+
+    private void OnDenyClick(string id, string command)
+    {
+        // P4-REQUEST: re-check VoiceGated before Deny — P4-D07
+        if (_voice.VoiceGated)
+        {
+            _requests.NoteGatedClickRefused(id);
+            RefreshApprovalGateButtons();
+            return;
+        }
+
+        _requestCloseRecords[id] = RecordDeniedPrefix + command;
+        _requests.Deny(id);
+    }
+
+    private void RefreshApprovalGateButtons()
+    {
+        var gated = _voice.VoiceGated;
+        foreach (var card in _requestCards.Values)
+        {
+            if (card is Border { Tag: ApprovalCardState state })
+            {
+                state.ApproveButton.IsEnabled = !gated;
+                state.DenyButton.IsEnabled = !gated;
+            }
+        }
+    }
+
+    private void FillFirstUnansweredBatchRow(string id, string text)
+    {
+        if (!_requestCards.TryGetValue(id, out var card) || card is not Border { Tag: BatchCardState batch })
+        {
+            return;
+        }
+
+        foreach (var row in batch.Rows.Values)
+        {
+            if (row.MultiSelect)
+            {
+                if (row.Checks.Any(c => c.IsChecked == true))
+                {
+                    continue;
+                }
+            }
+            else if (row.FreeText.Text.Trim().Length > 0)
+            {
+                continue;
+            }
+
+            row.FreeText.Text = text;
+            return;
+        }
+    }
+
+    private static string ReadRowAnswer(BatchRowState row)
+    {
+        if (row.MultiSelect)
+        {
+            var labels = row.Checks.Where(c => c.IsChecked == true).Select(c => (string)c.Tag).ToList();
+            if (labels.Count > 0)
+            {
+                return JsonSerializer.Serialize(labels);
+            }
+        }
+
+        return row.FreeText.Text.Trim();
+    }
+
+    private Button MakeTextButton(string content, RoutedEventHandler handler)
+    {
+        var button = new Button
+        {
+            Content = content,
+            Style = Token<Style>(TokenTextButtonStyle),
+        };
+        button.Click += handler;
+        return button;
+    }
+
+    private void EnsureConversationOpen()
+    {
+        if (ConversationOverlay.Visibility != Visibility.Visible)
+        {
+            HideSessions();
+            SizeConversationOverlay();
+            ConversationOverlay.Visibility = Visibility.Visible;
+            UpdateDockVisibility();
+            UpdateNoticeVisibility();
+        }
+
+        ScrollToEnd();
+    }
+
+    private sealed class ApprovalCardState(Button approveButton, Button denyButton)
+    {
+        public Button ApproveButton { get; } = approveButton;
+        public Button DenyButton { get; } = denyButton;
+    }
+
+    private sealed class BatchRowState(TextBox freeText, List<CheckBox> checks, bool multiSelect)
+    {
+        public TextBox FreeText { get; } = freeText;
+        public List<CheckBox> Checks { get; } = checks;
+        public bool MultiSelect { get; } = multiSelect;
+    }
+
+    private sealed class BatchCardState
+    {
+        public Dictionary<string, BatchRowState> Rows { get; } = new(StringComparer.Ordinal);
+    }
+
     private void UpdateChrome()
     {
         // P1-CLIENT: the composer is usable only with a session, no live turn, and a live backend — P1-D01
-        var canType = _sessionReady && !_streaming && !_unreachable && !_switchInFlight && !_historyPending;
+        // P4-REQUEST: open clarify is the only streaming exception for canType — P4-D09
+        var openClarify = _requests.HasOpenClarify(_chat.SessionId);
+        var canType = _sessionReady && !_unreachable && !_switchInFlight && !_historyPending
+            && (!_streaming || openClarify);
         var composerWasEnabled = Composer.IsEnabled;
         Composer.IsEnabled = canType;
+        if (openClarify)
+        {
+            Composer.PlaceholderText = PlaceholderAnswerClarify;
+        }
+        else if (_sessionReady && !_historyPending)
+        {
+            Composer.PlaceholderText = PlaceholderMessage;
+        }
+
         // P3-SHELL: typed send returns focus to the composer when the turn ends — P3-D11
         if (!composerWasEnabled && canType && _returnFocusToComposer && ConversationOverlay.Visibility == Visibility.Visible)
         {
@@ -910,7 +1523,9 @@ public sealed partial class MainWindow : Window
                 _sessionReady = true;
                 _switchInFlight = false;
                 StatusText.Text = "Session ready.";
-                Composer.PlaceholderText = "Message";
+                Composer.PlaceholderText = PlaceholderMessage;
+                // P4-REQUEST: re-show open cards after history bubbles (ClearTranscript dropped visuals) — P4-D08 / P4-D11
+                _requests.OnSessionChanged(_chat.SessionId);
                 UpdateChrome();
                 HideSessions();
             });
@@ -991,6 +1606,9 @@ public sealed partial class MainWindow : Window
     {
         // P1-SESSION: new and resumed sessions do not keep the previous transcript on screen — P1-D04
         Transcript.Children.Clear();
+        // P4-REQUEST: card visuals drop with the transcript; broker keeps parked entries — P4-D08
+        _requestCards.Clear();
+        _requestCloseRecords.Clear();
         _live = null;
         _streaming = false;
         _turnFinalized = true;
@@ -1158,6 +1776,10 @@ public sealed partial class MainWindow : Window
         // P3-LIFE: F3 force monitor fallback; F4 cycle segment override (pause sim) — P3-D14 / S17
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F3, OnDebugPlaybackUnavailableHotkey));
         RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F4, OnDebugPlaybackSegmentHotkey));
+        // P4-REQUEST: F5 injects a synthetic tour decline; F1/F2 preview clarify/approval cards — P4-D06
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F5, OnDebugTourRequestHotkey));
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F1, OnDebugClarifyCardHotkey));
+        RootGrid.KeyboardAccelerators.Add(CreatePresenceAccelerator(VirtualKey.F2, OnDebugApprovalCardHotkey));
     }
 
     private static KeyboardAccelerator CreatePresenceAccelerator(VirtualKey key, TypedEventHandler<KeyboardAccelerator, KeyboardAcceleratorInvokedEventArgs> handler)
@@ -1235,6 +1857,174 @@ public sealed partial class MainWindow : Window
             _ => null,
         };
         _presence?.DebugSetSegmentOverride(value);
+    }
+
+    private void OnDebugTourRequestHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (args is not null)
+        {
+            args.Handled = true;
+        }
+
+        var sessionId = _chat.SessionId ?? "";
+        var id = DebugRequestIdPrefix + Guid.NewGuid().ToString("N")[..12];
+        var parameters = new Dictionary<string, JsonElement>
+        {
+            [FieldSessionId] = JsonSerializer.SerializeToElement(sessionId),
+        };
+        _chat.DebugInjectServerRequest(id, MethodTour, parameters);
+    }
+
+    private void OnDebugClarifyCardHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (args is not null)
+        {
+            args.Handled = true;
+        }
+
+        var sessionId = _chat.SessionId ?? "";
+        if (string.IsNullOrEmpty(sessionId))
+        {
+            return;
+        }
+
+        var id = DebugRequestIdPrefix + Guid.NewGuid().ToString("N")[..12];
+        // Alternate single-choice vs batch for UI screenshots.
+        _debugClarifyBatch ^= true;
+        Dictionary<string, JsonElement> parameters;
+        if (_debugClarifyBatch)
+        {
+            parameters = new Dictionary<string, JsonElement>
+            {
+                [FieldSessionId] = JsonSerializer.SerializeToElement(sessionId),
+                [FieldQuestions] = JsonSerializer.SerializeToElement(new[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        [FieldQid] = "q1",
+                        [FieldQuestion] = "Which city?",
+                        [FieldChoices] = new[] { "Seattle (Recommended)", "Portland" },
+                        [FieldMultiSelect] = false,
+                    },
+                    new Dictionary<string, object?>
+                    {
+                        [FieldQid] = "q2",
+                        [FieldQuestion] = "Pick themes",
+                        [FieldChoices] = new[] { "Quiet", "Bright" },
+                        [FieldMultiSelect] = true,
+                    },
+                }),
+            };
+        }
+        else
+        {
+            parameters = new Dictionary<string, JsonElement>
+            {
+                [FieldSessionId] = JsonSerializer.SerializeToElement(sessionId),
+                [FieldQuestion] = JsonSerializer.SerializeToElement("Which reply shape do you want?"),
+                [FieldChoices] = JsonSerializer.SerializeToElement(new[] { "Short (Recommended)", "Detailed", "Bullet list" }),
+                [FieldMultiSelect] = JsonSerializer.SerializeToElement(false),
+            };
+        }
+
+        _chat.DebugInjectServerRequest(id, MethodClarify, parameters);
+    }
+
+    private bool _debugClarifyBatch;
+    private bool _debugInjectCardsArmed;
+    private bool _debugInjectCardsDone;
+
+    private void OnDebugInjectCardsOnce(object? sender, object e)
+    {
+        if (_debugInjectCardsDone)
+        {
+            return;
+        }
+
+        if (!_debugInjectCardsArmed)
+        {
+            var flag = Environment.GetEnvironmentVariable("ZOLA_DEBUG_INJECT_CARDS");
+            if (string.IsNullOrEmpty(flag))
+            {
+                CompositionTarget.Rendering -= OnDebugInjectCardsOnce;
+                _debugInjectCardsDone = true;
+                return;
+            }
+
+            _debugInjectCardsArmed = true;
+        }
+
+        if (string.IsNullOrEmpty(_chat.SessionId) || !_sessionReady)
+        {
+            return;
+        }
+
+        _debugInjectCardsDone = true;
+        CompositionTarget.Rendering -= OnDebugInjectCardsOnce;
+        var mode = (Environment.GetEnvironmentVariable("ZOLA_DEBUG_INJECT_CARDS") ?? "").Trim().ToLowerInvariant();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            switch (mode)
+            {
+                case "batch":
+                    _debugClarifyBatch = false;
+                    OnDebugClarifyCardHotkey(null!, null!);
+                    break;
+                case "approval":
+                    OnDebugApprovalCardHotkey(null!, null!);
+                    break;
+                case "record":
+                    _debugClarifyBatch = true;
+                    OnDebugClarifyCardHotkey(null!, null!);
+                    var settle = DispatcherQueue.CreateTimer();
+                    settle.IsRepeating = false;
+                    settle.Interval = TimeSpan.FromMilliseconds(400);
+                    settle.Tick += (_, _) =>
+                    {
+                        settle.Stop();
+                        var id = _requests.NewestOpenClarify(_chat.SessionId);
+                        if (id is null)
+                        {
+                            return;
+                        }
+
+                        _requestCloseRecords[id] = RecordAnsweredPrefix + "Short";
+                        _requests.AnswerClarify(id, "Short");
+                    };
+                    settle.Start();
+                    break;
+                default:
+                    _debugClarifyBatch = true;
+                    OnDebugClarifyCardHotkey(null!, null!);
+                    break;
+            }
+        });
+    }
+
+    private void OnDebugApprovalCardHotkey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (args is not null)
+        {
+            args.Handled = true;
+        }
+
+        var sessionId = _chat.SessionId ?? "";
+        if (string.IsNullOrEmpty(sessionId))
+        {
+            return;
+        }
+
+        var id = DebugRequestIdPrefix + Guid.NewGuid().ToString("N")[..12];
+        var parameters = new Dictionary<string, JsonElement>
+        {
+            [FieldSessionId] = JsonSerializer.SerializeToElement(sessionId),
+            [FieldRequestId] = JsonSerializer.SerializeToElement(id),
+            [FieldCommand] = JsonSerializer.SerializeToElement(
+                "Remove-Item -LiteralPath 'C:\\Users\\test\\AppData\\Local\\Temp\\zola-p4-approval-probe.txt' -Recurse -Force"),
+            [FieldDescription] = JsonSerializer.SerializeToElement("PowerShell destructive delete (Remove-Item)"),
+            [FieldChoices] = JsonSerializer.SerializeToElement(new[] { "once", "session", "always", "deny" }),
+        };
+        _chat.DebugInjectServerRequest(id, MethodApproval, parameters);
     }
 #endif
 

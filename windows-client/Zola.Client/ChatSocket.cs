@@ -67,6 +67,11 @@ sealed class ChatSocket : IDisposable
 
     public event Action<string, string>? SessionReady;
 
+    // P4-REQUEST: last open_requests snapshot from create/resume/activate — P4-D11
+    public IReadOnlyList<OpenRequestSnapshot> LastOpenRequests { get; private set; } = Array.Empty<OpenRequestSnapshot>();
+
+    public bool LastPendingApprovalPresent { get; private set; }
+
     public event Action<string>? SubmitAcknowledged;
 
     public event Action? MessageStarted;
@@ -114,6 +119,23 @@ sealed class ChatSocket : IDisposable
         });
     }
 
+    // P4-REQUEST: cloned server-request frames for the broker — P4-D06
+    public event Action<string, string, Dictionary<string, JsonElement>>? ServerRequestReceived;
+
+    // P4-REQUEST: request.cancel payload for the broker — P4-D11
+    public event Action<string, string?, string?>? ServerRequestCancelled;
+
+    // P4-REQUEST: socket about to be replaced; broker clears current session — P4-D11
+    public event Action? Replacing;
+
+#if DEBUG
+    // P4-REQUEST: DEBUG inject shares the live ServerRequestReceived hand-off — P4-D06
+    public void DebugInjectServerRequest(string id, string method, Dictionary<string, JsonElement> parameters)
+    {
+        ServerRequestReceived?.Invoke(id, method, parameters);
+    }
+#endif
+
     private async Task OpenAsync(string method, Dictionary<string, string?> parameters)
     {
         // P1-SESSION: replace the previous socket so create and resume do not share one runtime session — P1-D04
@@ -125,6 +147,9 @@ sealed class ChatSocket : IDisposable
         await _open.WaitAsync(_lifetime.Token).ConfigureAwait(false);
         try
         {
+            // P4-REQUEST: signal replace before aborting so mid-resume requests are not tombstoned — P4-D11
+            Replacing?.Invoke();
+
             // P2-WAKE: disarm the old transport while Send still works; skip if that socket is already dead — P2-D04
             if (_socket is { State: WebSocketState.Open } && BeforeReplaceAsync is { } replacing)
             {
@@ -204,6 +229,9 @@ sealed class ChatSocket : IDisposable
 
             SessionId = greeted.SessionId;
             StoredSessionId = greeted.StoredSessionId ?? parameters.GetValueOrDefault("session_id") ?? "";
+            // P4-REQUEST: surface open_requests; ignore pending_approval (no srq id) — P4-D11
+            LastOpenRequests = greeted.OpenRequests ?? Array.Empty<OpenRequestSnapshot>();
+            LastPendingApprovalPresent = greeted.PendingApprovalPresent;
             SessionReady?.Invoke(SessionId, StoredSessionId);
         }
         finally
@@ -279,6 +307,33 @@ sealed class ChatSocket : IDisposable
     {
         // P2-WAKE: wake.start can download the sherpa model; a timeout must not Fault the socket — P2-D04
         return CallAsync(method, parameters, timeout, faultOnTimeout);
+    }
+
+    // P4-REQUEST: broker-only response writers; no method member (is_response_frame) — P4-D06
+    public Task SendResponseAsync(string id, object result)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = id,
+            ["result"] = result,
+        };
+        return SendTextAsync(JsonSerializer.Serialize(payload));
+    }
+
+    public Task SendErrorAsync(string id, int code, string message)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = id,
+            ["error"] = new Dictionary<string, object?>
+            {
+                ["code"] = code,
+                ["message"] = message,
+            },
+        };
+        return SendTextAsync(JsonSerializer.Serialize(payload));
     }
 
     public void Dispose()
@@ -499,8 +554,19 @@ sealed class ChatSocket : IDisposable
 
             if (method is not null && root.TryGetProperty("id", out var requestId) && requestId.ValueKind == JsonValueKind.String)
             {
-                // P1-CLIENT: srq- server requests share this socket and are not chat tokens — P1-D01
-                Routed?.Invoke($"Ignored a server request ({method}). It was not treated as a chat message.");
+                // P4-REQUEST: hand string-id server requests to the broker; clone params first — P4-D06
+                var requestIdText = requestId.GetString() ?? "";
+                Dictionary<string, JsonElement> parameters;
+                if (root.TryGetProperty("params", out var paramsElement) && paramsElement.ValueKind == JsonValueKind.Object)
+                {
+                    parameters = CloneObject(paramsElement);
+                }
+                else
+                {
+                    parameters = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                }
+
+                ServerRequestReceived?.Invoke(requestIdText, method, parameters);
                 return;
             }
 
@@ -592,6 +658,17 @@ sealed class ChatSocket : IDisposable
                     hasPayload ? ReadString(payload, FieldProfile) : null,
                     hasPayload && ReadBool(payload, FieldStartNewSession) == true);
                 return;
+            case "request.cancel":
+                // P4-REQUEST: forward cancel to the broker — P4-D11
+                if (hasPayload)
+                {
+                    ServerRequestCancelled?.Invoke(
+                        ReadString(payload, "id") ?? "",
+                        ReadString(payload, "method"),
+                        ReadString(payload, "reason"));
+                }
+
+                return;
             default:
                 // P1-CLIENT: reasoning.delta and other event types are read and not appended — P1-D01
                 return;
@@ -671,7 +748,10 @@ sealed class ChatSocket : IDisposable
             ReadBool(result, FieldListening),
             ReadBool(result, FieldOwnedByCaller),
             ReadBool(result, FieldAudioSilent),
-            ReadString(result, FieldHint));
+            ReadString(result, FieldHint),
+            // P4-REQUEST: typed open_requests only; pending_approval is a presence flag — P4-D11
+            ReadOpenRequests(result),
+            result.TryGetProperty("pending_approval", out var pending) && pending.ValueKind == JsonValueKind.Object);
     }
 
     private static string? DeltaChunk(JsonElement payload)
@@ -730,6 +810,56 @@ sealed class ChatSocket : IDisposable
         return null;
     }
 
+    // P4-REQUEST: clone open_requests entries out of the reply document — P4-D11
+    private static IReadOnlyList<OpenRequestSnapshot>? ReadOpenRequests(JsonElement result)
+    {
+        if (!result.TryGetProperty("open_requests", out var list) || list.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var snapshots = new List<OpenRequestSnapshot>();
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var id = ReadString(item, "id");
+            var method = ReadString(item, "method");
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(method))
+            {
+                continue;
+            }
+
+            Dictionary<string, JsonElement> parameters;
+            if (item.TryGetProperty("params", out var paramsElement) && paramsElement.ValueKind == JsonValueKind.Object)
+            {
+                parameters = CloneObject(paramsElement);
+            }
+            else
+            {
+                parameters = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            }
+
+            snapshots.Add(new OpenRequestSnapshot(id, method, parameters));
+        }
+
+        return snapshots;
+    }
+
+    private static Dictionary<string, JsonElement> CloneObject(JsonElement obj)
+    {
+        var map = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var prop in obj.EnumerateObject())
+        {
+            map[prop.Name] = prop.Value.Clone();
+        }
+
+        return map;
+    }
+
     // P2-VOICE: voice replies add optional fields; chat still reads Ok, Error, Status, and the session ids — P2-D01
     internal readonly record struct RpcReply(
         bool Ok,
@@ -753,7 +883,13 @@ sealed class ChatSocket : IDisposable
         bool? Listening = null,
         bool? OwnedByCaller = null,
         bool? AudioSilent = null,
-        string? Hint = null);
+        string? Hint = null,
+        // P4-REQUEST: optional open_requests from resume/activate — P4-D11
+        IReadOnlyList<OpenRequestSnapshot>? OpenRequests = null,
+        bool PendingApprovalPresent = false);
+
+    // P4-REQUEST: one open_requests row cloned for the broker — P4-D11
+    internal readonly record struct OpenRequestSnapshot(string Id, string Method, Dictionary<string, JsonElement> Params);
 
     // P2-VOICE: one transcript carries the text plus the stop-phrase and no-speech flags — P2-D01
     internal readonly record struct VoiceTranscript(string Text, bool IsStopPhrase, bool IsNoSpeechLimit);
