@@ -51,7 +51,7 @@ ON, speakers ~15, and `ffplay` on PATH (`P2-D16`).
    - P2-WAKE: `0c375efee1ea58d937a1e468ab614bfcf109e0f6`
 7. ✅ **LORE CLOSEOUT** — this pass. `S17`–`S23` recorded;
    `S17` recommended first for Phase 3.
-## Current stage — Phase 3 complete
+## Phase 3 complete
 Phase 3 closed at five presence tracks plus this lore pass. The Windows
 client is presence-first: Helix renders `zola.glb` with the approved unlit
 look (`P3-D20` / `P3-D24`), `ZolaDisplayState` owns labels and
@@ -80,18 +80,66 @@ static look ~**0.0013%**; cold rest memory **809 MB** (2048²).
    - P3-LOOK: `c8f666251deacaf0fcb6a714594abf44da2e931b`
    - P3-LIFE: `8a00f6e87c68d28231d9ba1fc9ec1f4d29de1f40`
 7. ✅ **LORE CLOSEOUT** — this pass. `S17` updated; `S24`–`S32` filed.
-## Phase 4 — not started
-Candidates for Brian to prioritize. Not a committed order. No plan yet.
-- `S32` — Voice active while Windows is locked (security/privacy). Listed
-  first.
-- `S17` — Audio-driven lip sync / precise speaking end (remainder).
-- `S22` — Voice naturalness (pacing and inflection).
-- `S16` — Google Workspace (Gmail, Calendar, Drive, Contacts).
-- `S20` — Client cannot answer Hermes clarify-tool requests.
-- `S24` — GLB asset rework.
-- `S25` — HUD data sources (includes ALERT trigger).
-- `S13` — SMS-reading research.
+## Current stage — Phase 4 complete
+Phase 4 closed five conversation-safety and voice tracks plus this lore
+pass. Lock/sleep gate; server-request broker; spoken clarify; tool activity
+and Stop speaking; Sonia at 0.95 with spoken-style shaping; pitch dropped
+(Edge). Idle GPU (Voice app idle, window foreground, presence blinks
+confirmed, 60 s GPU Engine sum): avg **3.5291%** (≤ 10% budget;
+Phase 3 blinks baseline was 2.27%).
+1. ✅ **AUDIT** — P4PRE conversation audit, merge
+   `4181f0402eaaaabf137bace3650615be00dca6af`.
+2. ✅ **DECISIONS LOCKED** — `P4-D01`–`P4-D29`. See `DESIGN_DECISIONS.md`
+   Phase 4 — Conversation Safety and Voice.
+3. ✅ **BUILD PLAN WRITTEN** — `PHASE4_BUILD_PLAN.md` v1.1, commit
+   `5eb8fd94c69889701fe12809fc2b56b79644a8dc`.
+4. ✅ **TRACKS EXECUTED** — five tracks merged.
+5. ✅ **VERIFICATION / SMOKE TEST** — per-track Part B; acknowledged
+   PARTIALs: LOCK sleep/Modern Standby; REQUEST B11; VOICE V7 GPU
+   measured at lore closeout (PASS ≤ 10%; pid 7940 → Zola.Client, 26 blinks).
+6. ✅ **TRACK MERGED**
+   - Plan v1.1: `5eb8fd94c69889701fe12809fc2b56b79644a8dc`
+   - P4-LOCK impl: `c01fe3b6725a3814a368d48c0d06a2da1d16305f`
+   - P4-LOCK merge: `245d171ebd106f5af52190b63c7d18f866c5a923`
+   - P4-REQUEST impl: `d21ff9f9ceeeb1fecb16c5603c6b0b9549f41ace`
+   - P4-REQUEST merge: `76ea698542da538d2f8c8a0a32bf9ac1986ea062`
+   - P4-ASK impl: `7d0d81fcd8283234a62ed54a3f0acaf15fb3d46c`
+   - P4-ASK merge: `95578b10843feed473b83482c30e199bb909aa61`
+   - P4-FEEDBACK impl: `5c3197ed0b7f16ac75c95ccb12dc04bac0a2a290`
+   - P4-FEEDBACK merge: `044df5e3ab6ec7d6393e0ebfa915583782177c3c`
+   - P4-VOICE impl: `81652ca7442dd96aace777ff21914f9c9256ab42`
+   - P4-VOICE merge: `e1a069eccca1e0c3d2bdc40c1c7bc5d4764f2a03`
+   - Final `main` tip after this lore task: *(fill at P4-LORE closeout)*
+7. ✅ **LORE CLOSEOUT** — this pass. `S20`/`S22`/`S32` resolved; `S17`/`S21`/
+   `S26` updated; `S33`–`S41` filed; `P2`/`P3`/`A3` annotated.
+
+One-line track results:
+- **P4-LOCK** — lock/sleep voice gate; Modern Standby ⚠️ PARTIAL.
+- **P4-REQUEST** — broker + cards; `approvals.mode: manual`; B11 ⚠️ PARTIAL.
+- **P4-ASK** — spoken clarify; barge_in false; question-only speech.
+- **P4-FEEDBACK** — activity + notices + Stop; AUD-37 closed.
+- **P4-VOICE** — Sonia 0.95; shaping; pitch dropped; P2-D15 refit/margin/
+  startup window.
+
+## Phase 5 — not started
+Scope TBD; await developer instruction. Candidates (not a committed order):
+- `S36` — Barge-in return (state-aware). **Listed first.**
+- `S41` — Wake/mic not restored after clarify until Text↔Voice toggle.
+- `S33` — Non-interactive Windows states + Modern Standby.
+- `S34` — Hermes chunking / voice-only shaping / `voice-live`.
+- `S35` — Approval scopes / `approvals.mode`.
+- `S37` — Estimate anchor on first reply text.
+- `S38` — Listen-to-think latency.
+- `S39` — Voice timbre (premium provider).
+- `S40` — UI polish (Esc, notice hold, activity batch).
+- `S17` — Audio-driven lip sync / true end-of-playback (remainder).
+- `S21` — Typed Cancel latch (remainder).
+- `S26` — Missing `message.complete` / resumed-running (remainder).
 - `S12` — Daily Brief pipeline.
+- `S13` — SMS-reading research.
+- `S16` — Google Workspace.
+- `S24` — GLB asset rework.
+- `S25` — HUD data sources.
 - `S31` — Helix reload memory.
 
 ## Source documents
