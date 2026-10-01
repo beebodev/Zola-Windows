@@ -181,9 +181,31 @@ synthesis document.
   reason=follow-up-end`). Fails quiet (mic off). Open: exact repro; whether
   the `P2-D12` wake-reconcile fix should cover it, or the clarify path never
   requests resume. Source: `P4-VOICE_Progress.md` Phase 6 developer notes.
+
+- **S42 — Memory is not shared across sessions.** Developer-requested
+  2026-10-01; Phase 5 scope. A fact told to Zola in one Hermes session does
+  not reach her in another. Principle (developer): a Hermes session is a
+  conversation boundary, not a Zola memory boundary. Durable facts, decisions
+  and episodes belong to Zola and are retrieved by relevance in any session;
+  sessions produce and consume memories but never read each other's
+  transcripts. Zola-Windows has no entity store or session brief of its own
+  (those are Android-Zola designs, not present here); its memory today is
+  Hermes's. Hermes has a pluggable memory layer (`agent/memory_provider.py`,
+  `agent/memory_manager.py`): the builtin provider plus at most one external
+  provider (`memory.provider`, `plugins/memory/<name>/`), with hooks
+  `system_prompt_block`, per-turn `prefetch(query)`, `sync_turn`,
+  `on_session_end`, `on_pre_compress` and `on_memory_write`. Likely shape: a
+  Zola memory provider as the single owner of retrieval and injection, with
+  no parallel client-side injection path. Open before design (P5PRE): what
+  memory the `zola` profile actually uses; why a session-A fact misses
+  session B (storage, retrieval, injection or scoping); whether an external
+  provider loads without editing `hermes-agent`; what `session_search` does
+  and whether Zola uses it; a live repro capturing what was injected.
+  Related: S28 (session UI retirement).
 *S13 and S16 remain open. S17, S21, S26 updated at Phase 4 lore closeout.
 S20, S22, S32 resolved (see DESIGN_DECISIONS Phase 4). S33–S41 added at
-Phase 4 lore closeout. Not open questions (one line): question quiet window
+Phase 4 lore closeout. S42 added at Phase 5 kickoff (2026-10-01). Not open
+questions (one line): question quiet window
 withdrawn (B38); gap "no Stop" closed by P4-D29; AUD-37 closed by P4-D18
 (residual in S36); external dictation tool is test hygiene (A20). Resolved
 items stay in DESIGN_DECISIONS.md.*
