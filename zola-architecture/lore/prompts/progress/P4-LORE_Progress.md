@@ -15,7 +15,7 @@
 | 2 | Read, Cross-Check and Report | COMPLETE |
 | 3 | Draft (STOP for developer review) | COMPLETE |
 | 4 | Apply and Verify | COMPLETE |
-| 5 | Closeout | IN PROGRESS |
+| 5 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -757,7 +757,7 @@ Phase 3 blinks baseline was 2.27%).
    - P4-FEEDBACK merge: `044df5e3ab6ec7d6393e0ebfa915583782177c3c`
    - P4-VOICE impl: `81652ca7442dd96aace777ff21914f9c9256ab42`
    - P4-VOICE merge: `e1a069eccca1e0c3d2bdc40c1c7bc5d4764f2a03`
-   - Final `main` tip after this lore task: *(fill at P4-LORE closeout)*
+   - Final `main` tip after this lore task: `5a43c3698ebc4796992f2709c1bfd2e1d96a8e05`
 7. ✅ **LORE CLOSEOUT** — this pass. `S20`/`S22`/`S32` resolved; `S17`/`S21`/
    `S26` updated; `S33`–`S41` filed; `P2`/`P3`/`A3` annotated.
 
@@ -892,6 +892,6 @@ Applied approved Phase 3 draft (revised) to lore files. No source/profile/plan e
 - Diff scope: G-SCOPE only — `DESIGN_DECISIONS.md`, `OPEN_QUESTIONS.md`, `ROADMAP.md`, `VOICE_CONFIG.md`, this progress doc.
 
 ### Closeout SHAs
-- Lore commit: *(pending)*
-- Merge SHA on main: *(pending)*
-- Final main tip: *(pending)*
+- Lore commit: `0fba13dc95e95780312a42febbf0a0538c5b898e`
+- Merge SHA on main: `5a43c3698ebc4796992f2709c1bfd2e1d96a8e05`
+- Final main tip: *(filled after tip-record commit; see closeout final message)*
