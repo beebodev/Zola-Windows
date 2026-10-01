@@ -80,7 +80,7 @@ static look ~**0.0013%**; cold rest memory **809 MB** (2048²).
    - P3-LOOK: `c8f666251deacaf0fcb6a714594abf44da2e931b`
    - P3-LIFE: `8a00f6e87c68d28231d9ba1fc9ec1f4d29de1f40`
 7. ✅ **LORE CLOSEOUT** — this pass. `S17` updated; `S24`–`S32` filed.
-## Current stage — Phase 4 complete
+## Phase 4 complete
 Phase 4 closed five conversation-safety and voice tracks plus this lore
 pass. Lock/sleep gate; server-request broker; spoken clarify; tool activity
 and Stop speaking; Sonia at 0.95 with spoken-style shaping; pitch dropped
@@ -121,26 +121,22 @@ One-line track results:
 - **P4-VOICE** — Sonia 0.95; shaping; pitch dropped; P2-D15 refit/margin/
   startup window.
 
-## Phase 5 — not started
-Scope TBD; await developer instruction. Candidates (not a committed order):
-- `S36` — Barge-in return (state-aware). **Listed first.**
-- `S41` — Wake/mic not restored after clarify until Text↔Voice toggle.
-- `S33` — Non-interactive Windows states + Modern Standby.
-- `S34` — Hermes chunking / voice-only shaping / `voice-live`.
-- `S35` — Approval scopes / `approvals.mode`.
-- `S37` — Estimate anchor on first reply text.
-- `S38` — Listen-to-think latency.
-- `S39` — Voice timbre (premium provider).
-- `S40` — UI polish (Esc, notice hold, activity batch).
-- `S17` — Audio-driven lip sync / true end-of-playback (remainder).
-- `S21` — Typed Cancel latch (remainder).
-- `S26` — Missing `message.complete` / resumed-running (remainder).
-- `S12` — Daily Brief pipeline.
-- `S13` — SMS-reading research.
-- `S16` — Google Workspace.
-- `S24` — GLB asset rework.
-- `S25` — HUD data sources.
-- `S31` — Helix reload memory.
+## Current stage — Phase 5 scoped
+Scope locked by the developer 2026-10-01. Track order: `S41` → `S42` →
+`S36`. One read-only pre-audit (P5PRE) covers all four scoped items before
+decisions or a build plan.
+1. ⏳ **AUDIT** — P5PRE, not started.
+In scope:
+- `S41` — Wake/mic not restored after clarify. Track 1, so later voice
+  testing isn't fighting it.
+- `S42` — Cross-session memory. Main track.
+- `S36` — Barge-in return. **Feasibility gate:** the audit ranks candidate
+  paths against acceptance (a)–(e). It is built in Phase 5 only if one path
+  can pass all five; otherwise it moves to a later phase.
+- `S38` — Listen-to-think latency. **Measure only**, inside the audit; no
+  tuning in Phase 5.
+Not in Phase 5 (remain candidates): `S33`, `S34`, `S35`, `S37`, `S39`,
+`S40`, `S17`, `S21`, `S26`, `S12`, `S13`, `S16`, `S24`, `S25`, `S31`.
 
 ## Source documents
 - Audit series: `zola-architecture/audit/winh-hermes-gap/`
