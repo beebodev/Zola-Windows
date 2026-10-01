@@ -20,12 +20,12 @@
 | 6 | Round 3: Pitch (`P4-D21`) | COMPLETE — pitch dropped (latency); offline A/B partial |
 | 7 | Round 4: Refit `P2-D15` (`P4-D22`) | COMPLETE — constants + margin 5.0 + StartupWindow 5.3 |
 | 8 | Smoke Test | COMPLETE — Part A/B/C PASS |
-| 9 | Closeout | IN PROGRESS |
+| 9 | Closeout | COMPLETE |
 
 ## Closeout SHAs
 
 - Implementation commit: `81652ca7442dd96aace777ff21914f9c9256ab42`
-- Merge SHA on main: *(pending 9g)*
+- Merge SHA on main: `e1a069eccca1e0c3d2bdc40c1c7bc5d4764f2a03`
 - Final main tip: *(pending 9i)*
 
 ## Final file list
