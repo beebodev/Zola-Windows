@@ -23,8 +23,9 @@
 ## Closeout SHAs
 
 - Implementation commit: `5c3197ed0b7f16ac75c95ccb12dc04bac0a2a290` (`feat(P4-FEEDBACK): tool activity, visible notices, stop speaking — P4-D16..D18`)
-- Merge commit: `044df5e3ab6ec7d6393e0ebfa915583782177c3c` (`Merge branch 'p4-feedback'`)
-- Docs merge-SHA commit: *(pending 7h)*
+- Merge SHA on main: `044df5e3ab6ec7d6393e0ebfa915583782177c3c` (`Merge branch 'p4-feedback'`)
+- Docs merge-SHA commit: `880d65c5951e909939abe5b621ee2dd3c70e62bd` (`docs: record P4-FEEDBACK merge SHA`)
+- Final `main` tip: `880d65c5951e909939abe5b621ee2dd3c70e62bd` (updated if a follow-up docs tweak lands)
 - Hermes HEAD at closeout: `345cd2b057a452236de401d3534b8502a7465e8d` (clean)
 
 ## Guardrails summary
