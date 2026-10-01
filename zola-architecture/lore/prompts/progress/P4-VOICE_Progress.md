@@ -26,7 +26,7 @@
 
 - Implementation commit: `81652ca7442dd96aace777ff21914f9c9256ab42`
 - Merge SHA on main: `e1a069eccca1e0c3d2bdc40c1c7bc5d4764f2a03`
-- Final main tip: *(pending 9i)*
+- Final main tip: `c832c0dfd4e7b45b53ee8f053968758b4c63df35` (pre-finalize; updated next)
 
 ## Final file list
 
