@@ -23,7 +23,7 @@
 ## Closeout SHAs
 
 - Implementation commit: `5c3197ed0b7f16ac75c95ccb12dc04bac0a2a290` (`feat(P4-FEEDBACK): tool activity, visible notices, stop speaking — P4-D16..D18`)
-- Merge commit: *(pending 7g)*
+- Merge commit: `044df5e3ab6ec7d6393e0ebfa915583782177c3c` (`Merge branch 'p4-feedback'`)
 - Docs merge-SHA commit: *(pending 7h)*
 - Hermes HEAD at closeout: `345cd2b057a452236de401d3534b8502a7465e8d` (clean)
 
