@@ -42,16 +42,18 @@ sealed class VoiceController
     private const double EstimatedWordsPerSecond = 2.5;
     internal const double FirstSentenceLatencySeconds = 3.3;
     private const double PerSentenceOverheadSeconds = 0.5;
-    private const double FollowUpMarginSeconds = 3.0;
+    // P4-VOICE: cover worst estimatedEnd lead (4.33 s on six-pack); fail late not early — P4-D22
+    private const double FollowUpMarginSeconds = 5.0;
     private const double FollowUpMaxDelaySeconds = 90;
     private const double MaxEstimatedSpeechSeconds = 300;
-    // P4-ASK: no-bout startup window = FirstSentenceLatency + 1.0 s margin — P4-D13
-    private const double QuestionBoutStartupMarginSeconds = 1.0;
-    private const double QuestionBoutStartupWindowSeconds = FirstSentenceLatencySeconds + QuestionBoutStartupMarginSeconds;
+    // P4-VOICE: bout-startup safety window; ≥1.5× worst Edge first-audio (~3.49 s → 5.3) — P4-D22
+    private const double StartupWindowSeconds = 5.3;
+    // P4-ASK: no-bout startup window before estimate fallback — P4-D13
+    private const double QuestionBoutStartupWindowSeconds = StartupWindowSeconds;
     // P4-FEEDBACK: reply follow-up release — quiet after natural bout; startup from message.complete — P4-D18
     // P4-FEEDBACK: 0.5 s (was 1.2); bout stop already ~0.49 s debounce; bridged sentence gaps max 441 ms — P4-D18 amendment 2 / Probe2
     private const double FollowUpPostBoutQuietSeconds = 0.5;
-    private const double ReplyBoutStartupWindowSeconds = QuestionBoutStartupWindowSeconds;
+    private const double ReplyBoutStartupWindowSeconds = StartupWindowSeconds;
     private const string LogFollowUpReleasePrefix = "follow_up_release rule=";
     private const string FollowUpRuleMonitor = "monitor";
     private const string FollowUpRuleNoBoutEstimate = "no_bout_estimate";
