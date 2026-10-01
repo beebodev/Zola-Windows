@@ -48,6 +48,15 @@ sealed class VoiceController
     // P4-ASK: no-bout startup window = FirstSentenceLatency + 1.0 s margin — P4-D13
     private const double QuestionBoutStartupMarginSeconds = 1.0;
     private const double QuestionBoutStartupWindowSeconds = FirstSentenceLatencySeconds + QuestionBoutStartupMarginSeconds;
+    // P4-FEEDBACK: reply follow-up release — quiet after natural bout; startup from message.complete — P4-D18
+    // P4-FEEDBACK: 0.5 s (was 1.2); bout stop already ~0.49 s debounce; bridged sentence gaps max 441 ms — P4-D18 amendment 2 / Probe2
+    private const double FollowUpPostBoutQuietSeconds = 0.5;
+    private const double ReplyBoutStartupWindowSeconds = QuestionBoutStartupWindowSeconds;
+    private const string LogFollowUpReleasePrefix = "follow_up_release rule=";
+    private const string FollowUpRuleMonitor = "monitor";
+    private const string FollowUpRuleNoBoutEstimate = "no_bout_estimate";
+    private const string FollowUpRuleForcedEstimate = "forced_estimate";
+    private const string FollowUpRuleMonitorUnavailable = "monitor_unavailable";
     private const string MethodTts = "voice.tts";
     private const string ParamText = "text";
     private const string SpokenBatchMoreSuffix = " …and there are more on screen.";
@@ -150,6 +159,20 @@ sealed class VoiceController
     private const string GateCancelReason = "system-gate";
     private const string GateBoolTrue = "true";
     private const string GateBoolFalse = "false";
+    // P4-FEEDBACK: Stop speaking through the serialized gate worker — P4-FB-STOP
+    private const string StopSpeakingRequested = "stop_speaking requested";
+    private const string StopSpeakingDone = "stop_speaking done";
+    private const string StopSpeakingRefusedPrefix = "stop_speaking refused reason=";
+    private const string StopSpeakingRefuseGated = "gated";
+    private const string StopSpeakingRefuseNotSpeaking = "not_speaking";
+    private const string StopSpeakingRefuseQuestionSpeaking = "question_speaking";
+    private const string StopSpeakingRefuseReGated = "re-gated";
+    private const string StopSpeakingStepPrefix = "stop_speaking step=";
+    private const string StopSpeakingCancelReason = "stop-speaking";
+    // P4-FEEDBACK: every voice.transcript line (length + flags + window; never text) — P4-D18
+    private const string TranscriptLogFormat =
+        "transcript len={0} filtered={1} stop={2} nospeech={3} bound={4} capture_start={5} capture_stop={6} duration_s={7}";
+    private const string TranscriptBoundNone = "none";
 
     // P2-WAKE: wake RPC names, params, reasons, and timings are named constants — P2-D04
     private const string MethodWakeStart = "wake.start";
@@ -209,6 +232,7 @@ sealed class VoiceController
     private TaskCompletionSource<bool>? _questionBoutStartedTcs;
     private TaskCompletionSource<bool>? _questionBoutStoppedTcs;
     private Func<bool>? _playbackMonitorAvailable;
+    private Func<bool>? _playbackBoutActive;
     private Func<string, bool>? _clarifyCaptureStillValid;
     private string _accumulatedReply = "";
     // P2-WAKE: echo compares against recent spoken words across turns, not only the latest reply — P2-D12
@@ -231,6 +255,26 @@ sealed class VoiceController
     private string _gateSnapshotMode = ModeVoice;
     private bool _gateSnapshotSpeechEnabled;
     private bool _gateSnapshotWakeArmed;
+    // P4-FEEDBACK: Stop speaking queued into the same serialized worker as the gate — P4-FB-STOP
+    private int _stopSpeakingQueued;
+    private int _stopSpeakingDone;
+    // P4-FEEDBACK: Stop silenced this turn's estimate; deltas must not re-arm Speaking/follow-up — P4-FB-STOP
+    private bool _speechStoppedThisTurn;
+    // P2-WAKE / P4-FEEDBACK: single-flight wake reconcile + pending coalesce — P2-D12 / P4-FB-STOP
+    private int _wakeReconcileBusy;
+    private int _wakeReconcilePending;
+    private string _wakeReconcileReason = "";
+    // P4-FEEDBACK: reply follow-up release arm (holds Speaking until release fires) — P4-D18
+    private bool _replyReleaseArmed;
+    private bool _replyBoutSeen;
+    private bool _replyBoutActive;
+    private TaskCompletionSource<bool>? _replyBoutStartedTcs;
+    private TaskCompletionSource<bool>? _replyBoutStoppedTcs;
+    private CancellationTokenSource? _replyQuietCts;
+    // P4-FEEDBACK: capture window for transcript logging (never text) — P4-D18
+    private DateTimeOffset _captureWindowStart;
+    private DateTimeOffset _captureWindowStop;
+    private bool _captureWindowOpen;
 
     public VoiceController(ChatSocket chat)
     {
@@ -262,10 +306,18 @@ sealed class VoiceController
 
     // P2-SPEAK: Speaking is an estimate from the simulated playback clock, not measured audio — P2-D08
     // P4-ASK: also held true while QuestionSpeaking drives the Speaking display/monitor path — P4-D13
-    public bool Speaking { get; private set; }
+    // P4-FEEDBACK: also held while reply follow-up release is armed (bout + quiet) — P4-D18
+    private bool _speakingEstimate;
+
+    public bool Speaking => _speakingEstimate || _replyReleaseArmed;
 
     // P4-ASK: question TTS in flight until release rule fires (feeds Speaking) — P4-D13
     public bool QuestionSpeaking => _questionSpeaking;
+
+    // P4-FEEDBACK: Stop visibility from existing VC facts only (estimate accuracy limit) — P4-FB-STOP
+    // P4-FEEDBACK: not while QuestionSpeaking — toggle off would mute the rest of the turn's TTS — P4-FB-STOP
+    public bool CanStopSpeaking =>
+        Mode == ModeVoice && !VoiceGated && Speaking && !_questionSpeaking;
 
     // P2-WAKE: armed and paused update only from confirmed Hermes replies or wake.detected — P2-D04
     public bool WakeArmed { get; private set; }
@@ -373,36 +425,70 @@ sealed class VoiceController
     }
 
     // P4-ASK: MainWindow wires monitor availability and pre-capture recheck — P4-D13
-    public void ConfigureQuestionSpeech(Func<bool> playbackMonitorAvailable, Func<string, bool> clarifyCaptureStillValid)
+    // P4-FEEDBACK: also wires bout-active for reply release seed at complete — P4-D18
+    public void ConfigureQuestionSpeech(
+        Func<bool> playbackMonitorAvailable,
+        Func<string, bool> clarifyCaptureStillValid,
+        Func<bool> playbackBoutActive)
     {
         _playbackMonitorAvailable = playbackMonitorAvailable;
         _clarifyCaptureStillValid = clarifyCaptureStillValid;
+        _playbackBoutActive = playbackBoutActive;
     }
 
     // P4-ASK: PresenceView bout forward — P4-D13
+    // P4-FEEDBACK: also arms reply follow-up release (same monitor) — P4-D18
     public void NotePlaybackBoutStarted()
     {
-        if (!_questionBoutArmed)
+        if (_questionBoutArmed)
+        {
+            _questionBoutStarted = true;
+            _questionBoutActive = true;
+            // P4-ASK: stopped TCS was created at arm; do not recreate (waiter may already be awaiting it) — P4-D13
+            _questionBoutStartedTcs?.TrySetResult(true);
+            return;
+        }
+
+        if (!_replyReleaseArmed)
         {
             return;
         }
 
-        _questionBoutStarted = true;
-        _questionBoutActive = true;
-        // P4-ASK: stopped TCS was created at arm; do not recreate (waiter may already be awaiting it) — P4-D13
-        _questionBoutStartedTcs?.TrySetResult(true);
+        // P4-FEEDBACK: set active before cancel so a cancelled quiet delay cannot open mid-bout — P4-D18
+        _replyBoutSeen = true;
+        _replyBoutActive = true;
+        CancelReplyQuietWait();
+        if (_replyBoutStoppedTcs is null || _replyBoutStoppedTcs.Task.IsCompleted)
+        {
+            _replyBoutStoppedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        _replyBoutStartedTcs?.TrySetResult(true);
+        if (!_speakingEstimate)
+        {
+            // P4-FEEDBACK: bout keeps Speaking true so presence does not StopMonitoring mid-reply — P4-D18
+            StateChanged?.Invoke();
+            _ = ReconcileWakeRestingAsync("reply-bout-start");
+        }
     }
 
     // P4-ASK: forced=true is never a rule-1 release — P4-D13
     public void NotePlaybackBoutStopped(bool forced)
     {
-        if (!_questionBoutArmed && !_questionBoutActive)
+        if (_questionBoutArmed || _questionBoutActive)
+        {
+            _questionBoutActive = false;
+            _questionBoutStoppedTcs?.TrySetResult(forced);
+            return;
+        }
+
+        if (!_replyReleaseArmed && !_replyBoutActive)
         {
             return;
         }
 
-        _questionBoutActive = false;
-        _questionBoutStoppedTcs?.TrySetResult(forced);
+        _replyBoutActive = false;
+        _replyBoutStoppedTcs?.TrySetResult(forced);
     }
 
     public void AbandonPendingQuestion(string reason)
@@ -848,6 +934,7 @@ sealed class VoiceController
     private async Task RunGateSequenceAsync()
     {
         // P4-LOCK: one worker; re-reads facts each loop so latest desired state wins — P4-D02 / P4-D03
+        // P4-FEEDBACK: Stop speaking shares this worker; a gated close always wins — P4-FB-STOP
         await _gateSequenceLock.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -857,6 +944,8 @@ sealed class VoiceController
                 var factsGated = SystemLocked || SystemSuspended;
                 if (factsGated)
                 {
+                    // P4-FEEDBACK: gate close supersedes any pending Stop restore — P4-FB-STOP
+                    Volatile.Write(ref _stopSpeakingDone, Volatile.Read(ref _stopSpeakingQueued));
                     _gateHolding = true;
                     if (!_gateCloseCompleted)
                     {
@@ -879,6 +968,11 @@ sealed class VoiceController
                         StateChanged?.Invoke();
                     }
                 }
+                else if (Volatile.Read(ref _stopSpeakingQueued) > Volatile.Read(ref _stopSpeakingDone))
+                {
+                    await ExecuteStopSpeakingAsync().ConfigureAwait(false);
+                    Volatile.Write(ref _stopSpeakingDone, Volatile.Read(ref _stopSpeakingQueued));
+                }
 
                 if (epoch == Volatile.Read(ref _gateEpoch))
                 {
@@ -890,6 +984,162 @@ sealed class VoiceController
         {
             _gateSequenceLock.Release();
         }
+    }
+
+    // P4-FEEDBACK: Stop = toggle off + restore availability; no interrupt; no AbandonPendingQuestion — P4-FB-STOP
+    public async Task StopSpeakingAsync()
+    {
+        WriteTimeline(StopSpeakingRequested);
+        if (SystemLocked || SystemSuspended || _gateHolding)
+        {
+            WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseGated);
+            return;
+        }
+
+        // P4-FEEDBACK: refuse while clarify question TTS — off would silence the whole turn — P4-FB-STOP
+        if (_questionSpeaking)
+        {
+            WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseQuestionSpeaking);
+            return;
+        }
+
+        if (!Speaking)
+        {
+            WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseNotSpeaking);
+            return;
+        }
+
+        Interlocked.Increment(ref _stopSpeakingQueued);
+        Interlocked.Increment(ref _gateEpoch);
+        await RunGateSequenceAsync().ConfigureAwait(false);
+    }
+
+    private async Task ExecuteStopSpeakingAsync()
+    {
+        if (SystemLocked || SystemSuspended)
+        {
+            WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseGated);
+            return;
+        }
+
+        // P4-FEEDBACK: refuse while clarify question TTS — off would silence the whole turn — P4-FB-STOP
+        if (_questionSpeaking)
+        {
+            WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseQuestionSpeaking);
+            return;
+        }
+
+        if (!Speaking)
+        {
+            WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseNotSpeaking);
+            return;
+        }
+
+        var speechWasOn = _ttsOn == true;
+        var wakeWasArmed = WakeArmed;
+        WriteTimeline(string.Format(
+            StopSpeakingStepPrefix + "snapshot speech={0} wake={1}",
+            speechWasOn ? GateBoolTrue : GateBoolFalse,
+            wakeWasArmed ? GateBoolTrue : GateBoolFalse));
+
+        // P4-FEEDBACK: cancel pending follow-up so she does not auto-listen; keep clarify token — P4-FB-STOP
+        WriteTimeline(StopSpeakingStepPrefix + "cancel_follow_up");
+        CancelFollowUp(StopSpeakingCancelReason);
+        // P4-FEEDBACK: freeze P2-D15 estimate for the rest of this turn (not QuestionSpeaking) — P4-FB-STOP
+        _speechStoppedThisTurn = true;
+
+        try
+        {
+            // P4-FEEDBACK: same voice.toggle off as gate close — no S21 latch — P4-FB-STOP
+            WriteTimeline(StopSpeakingStepPrefix + "voice.toggle_off");
+            var off = await ToggleAsync(ActionOff).ConfigureAwait(false);
+            WriteTimeline(string.Format(
+                StopSpeakingStepPrefix + "voice.toggle_off ok={0} enabled={1} tts={2} error={3}",
+                off.Ok ? GateBoolTrue : GateBoolFalse,
+                off.Enabled?.ToString() ?? "",
+                off.Tts?.ToString() ?? "",
+                off.Error ?? ""));
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(StopSpeakingStepPrefix + "voice.toggle_off error=" + ex.Message);
+        }
+
+        if (SystemLocked || SystemSuspended)
+        {
+            WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseReGated);
+            return;
+        }
+
+        try
+        {
+            WriteTimeline(StopSpeakingStepPrefix + "voice.toggle_on");
+            var on = await ToggleAsync(ActionOn).ConfigureAwait(false);
+            WriteTimeline(string.Format(
+                StopSpeakingStepPrefix + "voice.toggle_on ok={0} enabled={1} error={2}",
+                on.Ok ? GateBoolTrue : GateBoolFalse,
+                on.Enabled?.ToString() ?? "",
+                on.Error ?? ""));
+            if (!on.Ok || on.Enabled == false)
+            {
+                WriteTimeline(StopSpeakingDone);
+                StateChanged?.Invoke();
+                return;
+            }
+
+            if (SystemLocked || SystemSuspended)
+            {
+                WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseReGated);
+                return;
+            }
+
+            var status = await ToggleAsync(ActionStatus).ConfigureAwait(false);
+            WriteTimeline(string.Format(
+                StopSpeakingStepPrefix + "voice.toggle_status ok={0} tts={1} error={2}",
+                status.Ok ? GateBoolTrue : GateBoolFalse,
+                status.Tts?.ToString() ?? "",
+                status.Error ?? ""));
+            if (status.Ok)
+            {
+                IsAvailable = status.Available == true && status.AudioAvailable == true && status.SttAvailable == true;
+                UnavailableDetails = status.Details ?? "";
+            }
+
+            // P4-FEEDBACK: restore speech via P2-D03 status-first flip only (not used to stop) — P4-FB-STOP
+            if (speechWasOn && status.Ok && status.Tts == false)
+            {
+                WriteTimeline(StopSpeakingStepPrefix + "voice.toggle_tts_restore");
+                var spoken = await ToggleAsync(ActionTts).ConfigureAwait(false);
+                WriteTimeline(string.Format(
+                    StopSpeakingStepPrefix + "voice.toggle_tts_restore ok={0} tts={1} error={2}",
+                    spoken.Ok ? GateBoolTrue : GateBoolFalse,
+                    spoken.Tts?.ToString() ?? "",
+                    spoken.Error ?? ""));
+            }
+            else
+            {
+                WriteTimeline(StopSpeakingStepPrefix + "voice.toggle_tts_restore skipped");
+            }
+
+            if (SystemLocked || SystemSuspended)
+            {
+                WriteTimeline(StopSpeakingRefusedPrefix + StopSpeakingRefuseReGated);
+                return;
+            }
+
+            if (wakeWasArmed)
+            {
+                WriteTimeline(StopSpeakingStepPrefix + "wake_rearm");
+                await ArmWakeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(StopSpeakingStepPrefix + "restore error=" + ex.Message);
+        }
+
+        WriteTimeline(StopSpeakingDone);
+        StateChanged?.Invoke();
     }
 
     private async Task<bool> CloseGateAsync()
@@ -1298,8 +1548,14 @@ sealed class VoiceController
     public void OnTurnStarted()
     {
         // P2-SPEAK: a new turn invalidates any pending follow-up and restarts the clock — P2-D06
+        // P4-FEEDBACK: typed or voice turn clears the closed-clarify late-drop id — P4-D14
+        ClearClosedClarifyCapture();
+        // P4-FEEDBACK: new turn clears Stop-this-turn freeze so the estimate can run again — P4-FB-STOP
+        _speechStoppedThisTurn = false;
         BumpFollowUpGeneration();
         DisposeFollowUpTimer();
+        // P4-FEEDBACK: new turn drops reply release arm (Speaking hold) — P4-D18
+        ClearReplyFollowUpRelease();
         _accumulatedReply = "";
         _countedWords = 0;
         _countedSentences = 0;
@@ -1337,6 +1593,15 @@ sealed class VoiceController
             return;
         }
 
+        // P4-FEEDBACK: after Stop, still accumulate text for echo; do not re-arm the estimate — P4-FB-STOP
+        if (_speechStoppedThisTurn)
+        {
+            _accumulatedReply += chunk ?? "";
+            _countedWords = CountSpokenWords(_accumulatedReply);
+            _countedSentences = CountSpokenSentences(_accumulatedReply);
+            return;
+        }
+
         _accumulatedReply += chunk ?? "";
         var cumulativeWords = CountSpokenWords(_accumulatedReply);
         var cumulativeSentences = CountSpokenSentences(_accumulatedReply);
@@ -1355,6 +1620,17 @@ sealed class VoiceController
         if (string.Equals(status, "complete", StringComparison.Ordinal))
         {
             ResetSelfInterruptCount();
+            // P4-FEEDBACK: Stop this turn → no follow-up auto-listen; Speaking stays false — P4-FB-STOP
+            if (_speechStoppedThisTurn)
+            {
+                SetSpeaking(false);
+                _turnCompletedAt = DateTimeOffset.Now;
+                RememberSpokenEcho(_accumulatedReply);
+                WriteTimeline(StopSpeakingStepPrefix + "follow_up_skipped");
+                _ = ReconcileWakeRestingAsync("stop-speaking-complete");
+                return;
+            }
+
             if (!ClockEligible)
             {
                 SetSpeaking(false);
@@ -1363,15 +1639,6 @@ sealed class VoiceController
 
             _turnCompletedAt = DateTimeOffset.Now;
             RememberSpokenEcho(_accumulatedReply);
-            var remaining = (_estimatedSpeechEnd - _turnCompletedAt).TotalSeconds;
-            var uncapped = Math.Max(0, remaining) + FollowUpMarginSeconds;
-            var delay = Math.Min(uncapped, FollowUpMaxDelaySeconds);
-            _timerDelaySeconds = delay;
-            if (uncapped > FollowUpMaxDelaySeconds)
-            {
-                WriteTimeline($"WARN uncapped-follow-up-delay={uncapped:0.###}s capped={FollowUpMaxDelaySeconds}s");
-            }
-
             if ((_estimatedSpeechEnd - _turnStartedAt).TotalSeconds > MaxEstimatedSpeechSeconds)
             {
                 WriteTimeline($"WARN estimated-speech={(_estimatedSpeechEnd - _turnStartedAt).TotalSeconds:0.###}s exceeds {MaxEstimatedSpeechSeconds}s");
@@ -1380,7 +1647,9 @@ sealed class VoiceController
             var generation = _followUpGeneration;
             _followUpArmed = true;
             DisposeFollowUpTimer();
-            _followUpTimer = new Timer(_ => _ = OnFollowUpTimerAsync(generation), null, TimeSpan.FromSeconds(delay), Timeout.InfiniteTimeSpan);
+            // P4-FEEDBACK: arm reply release (monitor + quiet, or estimate fallback) — P4-D18
+            ArmReplyFollowUpRelease();
+            _ = RunReplyFollowUpReleaseAsync(generation);
             // P2-WAKE: an armed follow-up window is not Resting, so the detector stays paused — P2-D12
             _ = ReconcileWakeRestingAsync("follow-up-armed");
             return;
@@ -1498,6 +1767,8 @@ sealed class VoiceController
         }
 
         CaptureActive = true;
+        // P4-FEEDBACK: capture window opens on successful voice.record start — P4-D18
+        NoteCaptureWindowStarted();
         // P2-WAKE: a successful record start confirms the wake capture; do not resume — P2-D12
         _wakeCapturePending = false;
         // P4-ASK: bind this capture to the armed clarify id (if any); otherwise unbound — P4-D14
@@ -1594,6 +1865,8 @@ sealed class VoiceController
         if (RecorderState == StateIdle)
         {
             CaptureActive = false;
+            // P4-FEEDBACK: capture window closes on idle — P4-D18
+            NoteCaptureWindowStopped();
             // P2-SPEAK: a silent follow-up ends on Hermes's 15 s no-speech timeout and returns to Idle — P2-D06
             if (_followUpCaptureStarted && !_followUpTranscriptSeen)
             {
@@ -1620,11 +1893,13 @@ sealed class VoiceController
 
     private void OnVoiceTranscript(ChatSocket.VoiceTranscript transcript)
     {
+        // P4-FEEDBACK: log every transcript (length + flags + window; never text) — P4-D18
+        LogVoiceTranscript(transcript);
+
         // P4-LOCK: drop any transcript that arrives while gated; never raise TranscriptReady — P4-D02
         if (VoiceGated)
         {
-            var length = transcript.Text?.Length ?? 0;
-            WriteTimeline(GateRefusePrefix + GateRefuseTranscript + " length=" + length);
+            WriteTimeline(GateRefusePrefix + GateRefuseTranscript);
             return;
         }
 
@@ -1694,6 +1969,60 @@ sealed class VoiceController
             // P2-VOICE: a non-empty transcript is submitted once by the window — P2-D05
             TranscriptReady?.Invoke(transcript.Text.Trim(), boundClarifyId);
         }
+    }
+
+    // P4-FEEDBACK: capture window bookkeeping for transcript lines — P4-D18
+    private void NoteCaptureWindowStarted()
+    {
+        _captureWindowStart = DateTimeOffset.Now;
+        _captureWindowStop = default;
+        _captureWindowOpen = true;
+    }
+
+    private void NoteCaptureWindowStopped()
+    {
+        if (!_captureWindowOpen)
+        {
+            return;
+        }
+
+        _captureWindowStop = DateTimeOffset.Now;
+        _captureWindowOpen = false;
+    }
+
+    private void LogVoiceTranscript(ChatSocket.VoiceTranscript transcript)
+    {
+        var stop = _captureWindowOpen ? DateTimeOffset.Now : _captureWindowStop;
+        if (_captureWindowOpen)
+        {
+            NoteCaptureWindowStopped();
+            stop = _captureWindowStop;
+        }
+
+        var bound = _activeClarifyCaptureId ?? _closedClarifyCaptureId;
+        if (string.IsNullOrEmpty(bound))
+        {
+            bound = TranscriptBoundNone;
+        }
+
+        var startText = _captureWindowStart == default ? "" : _captureWindowStart.ToString("o");
+        var stopText = stop == default ? "" : stop.ToString("o");
+        var duration = "";
+        if (_captureWindowStart != default && stop != default)
+        {
+            duration = (stop - _captureWindowStart).TotalSeconds.ToString("0.###");
+        }
+
+        WriteTimeline(string.Format(
+            TranscriptLogFormat,
+            transcript.Text?.Length ?? 0,
+            transcript.Filtered ? GateBoolTrue : GateBoolFalse,
+            transcript.IsStopPhrase ? GateBoolTrue : GateBoolFalse,
+            transcript.IsNoSpeechLimit ? GateBoolTrue : GateBoolFalse,
+            bound,
+            startText,
+            stopText,
+            duration));
     }
 
     private async Task ReopenFollowUpAfterEchoAsync(int generation)
@@ -1787,6 +2116,8 @@ sealed class VoiceController
         // P2-SPEAK: every cancel cause bumps generation so a later timer cannot start a capture — P2-D06
         BumpFollowUpGeneration();
         DisposeFollowUpTimer();
+        // P4-FEEDBACK: cancel reply release arm with the follow-up — P4-D18
+        ClearReplyFollowUpRelease();
         if (_followUpArmed && string.IsNullOrEmpty(_cancelReason))
         {
             _cancelReason = reason;
@@ -1825,15 +2156,319 @@ sealed class VoiceController
 
     private void SetSpeaking(bool value)
     {
-        if (Speaking == value)
+        var previous = Speaking;
+        if (_speakingEstimate == value)
         {
             return;
         }
 
-        Speaking = value;
+        _speakingEstimate = value;
+        if (Speaking == previous)
+        {
+            return;
+        }
+
         StateChanged?.Invoke();
         // P2-WAKE: Speaking starting leaves Resting; the estimate ending may re-enter it — P2-D12
-        _ = ReconcileWakeRestingAsync(value ? "speaking-start" : "speaking-end");
+        _ = ReconcileWakeRestingAsync(Speaking ? "speaking-start" : "speaking-end");
+    }
+
+    // P4-FEEDBACK: arm reply bout wait; Speaking stays held via _replyReleaseArmed — P4-D18
+    private void ArmReplyFollowUpRelease()
+    {
+        var previous = Speaking;
+        CancelReplyQuietWait();
+        // P4-FEEDBACK: arm before seed so a stop between check and seed still hits NotePlaybackBoutStopped — P4-D18
+        _replyReleaseArmed = true;
+        _replyBoutSeen = false;
+        _replyBoutActive = false;
+        _replyBoutStartedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _replyBoutStoppedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_speakingEstimate)
+        {
+            _speakingEstimate = true;
+        }
+
+        if (Speaking != previous)
+        {
+            StateChanged?.Invoke();
+            _ = ReconcileWakeRestingAsync("reply-release-arm");
+        }
+
+        // P4-FEEDBACK: seed if a bout is already playing at message.complete (streaming TTS) — P4-D18
+        var monitorAvailable = _playbackMonitorAvailable?.Invoke() == true;
+        if (monitorAvailable && _playbackBoutActive?.Invoke() == true)
+        {
+            _replyBoutSeen = true;
+            _replyBoutActive = true;
+            _replyBoutStartedTcs.TrySetResult(true);
+            WriteTimeline("follow_up_release seeded_active_bout=true");
+        }
+    }
+
+    private void ClearReplyFollowUpRelease()
+    {
+        var previous = Speaking;
+        CancelReplyQuietWait();
+        _replyReleaseArmed = false;
+        _replyBoutSeen = false;
+        _replyBoutActive = false;
+        _replyBoutStartedTcs?.TrySetCanceled();
+        _replyBoutStoppedTcs?.TrySetCanceled();
+        _replyBoutStartedTcs = null;
+        _replyBoutStoppedTcs = null;
+        if (Speaking != previous)
+        {
+            StateChanged?.Invoke();
+            _ = ReconcileWakeRestingAsync(Speaking ? "speaking-start" : "speaking-end");
+        }
+    }
+
+    private void CancelReplyQuietWait()
+    {
+        try
+        {
+            _replyQuietCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        _replyQuietCts?.Dispose();
+        _replyQuietCts = null;
+    }
+
+    private double EstimateFollowUpDelayFromCompleteSeconds()
+    {
+        var remaining = (_estimatedSpeechEnd - DateTimeOffset.Now).TotalSeconds;
+        var uncapped = Math.Max(0, remaining) + FollowUpMarginSeconds;
+        if (uncapped > FollowUpMaxDelaySeconds)
+        {
+            WriteTimeline($"WARN uncapped-follow-up-delay={uncapped:0.###}s capped={FollowUpMaxDelaySeconds}s");
+        }
+
+        return Math.Min(uncapped, FollowUpMaxDelaySeconds);
+    }
+
+    private bool IsReplyReleaseCurrent(int generation)
+    {
+        return _replyReleaseArmed && generation == Volatile.Read(ref _followUpGeneration);
+    }
+
+    // P4-FEEDBACK: open follow-up on monitor natural+quiet, or estimate fallbacks — P4-D18
+    private async Task RunReplyFollowUpReleaseAsync(int generation)
+    {
+        try
+        {
+            if (!IsReplyReleaseCurrent(generation))
+            {
+                return;
+            }
+
+            var completeAt = _turnCompletedAt;
+            var estimatedEnd = _estimatedSpeechEnd;
+            var monitorAvailable = _playbackMonitorAvailable?.Invoke() == true;
+            string rule;
+
+            if (!monitorAvailable)
+            {
+                rule = FollowUpRuleMonitorUnavailable;
+                var delay = EstimateFollowUpDelayFromCompleteSeconds();
+                _timerDelaySeconds = delay;
+                WriteTimeline(
+                    LogFollowUpReleasePrefix + rule
+                    + " complete=" + completeAt.ToString("o")
+                    + " estimatedEnd=" + estimatedEnd.ToString("o")
+                    + " delay_s=" + delay.ToString("0.###"));
+                await Task.Delay(TimeSpan.FromSeconds(delay)).ConfigureAwait(false);
+                if (!IsReplyReleaseCurrent(generation))
+                {
+                    return;
+                }
+
+                ClearReplyFollowUpRelease();
+                await OnFollowUpTimerAsync(generation).ConfigureAwait(false);
+                return;
+            }
+
+            var startedTcs = _replyBoutStartedTcs;
+            var startup = Task.Delay(TimeSpan.FromSeconds(ReplyBoutStartupWindowSeconds));
+            var startedWait = startedTcs?.Task ?? Task.FromResult(false);
+            var winner = await Task.WhenAny(startedWait, startup).ConfigureAwait(false);
+            if (!IsReplyReleaseCurrent(generation))
+            {
+                return;
+            }
+
+            if (winner == startedWait && _replyBoutSeen)
+            {
+                await WaitReplyBoutsThenOpenAsync(generation, completeAt, estimatedEnd).ConfigureAwait(false);
+                return;
+            }
+
+            // No bout within startup window — estimate; late bout upgrades to monitor wait.
+            rule = FollowUpRuleNoBoutEstimate;
+            var estimateDelay = EstimateFollowUpDelayFromCompleteSeconds();
+            _timerDelaySeconds = estimateDelay;
+            WriteTimeline(
+                LogFollowUpReleasePrefix + rule
+                + " complete=" + completeAt.ToString("o")
+                + " estimatedEnd=" + estimatedEnd.ToString("o")
+                + " startup_s=" + ReplyBoutStartupWindowSeconds.ToString("0.###")
+                + " delay_s=" + estimateDelay.ToString("0.###"));
+            var estimateTask = Task.Delay(TimeSpan.FromSeconds(estimateDelay));
+            while (true)
+            {
+                if (!IsReplyReleaseCurrent(generation))
+                {
+                    return;
+                }
+
+                if (_replyBoutSeen)
+                {
+                    await WaitReplyBoutsThenOpenAsync(generation, completeAt, estimatedEnd).ConfigureAwait(false);
+                    return;
+                }
+
+                if (estimateTask.IsCompleted)
+                {
+                    if (!IsReplyReleaseCurrent(generation))
+                    {
+                        return;
+                    }
+
+                    ClearReplyFollowUpRelease();
+                    await OnFollowUpTimerAsync(generation).ConfigureAwait(false);
+                    return;
+                }
+
+                var lateStart = _replyBoutStartedTcs?.Task ?? Task.Delay(Timeout.Infinite);
+                await Task.WhenAny(estimateTask, lateStart).ConfigureAwait(false);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task WaitReplyBoutsThenOpenAsync(int generation, DateTimeOffset completeAt, DateTimeOffset estimatedEnd)
+    {
+        while (IsReplyReleaseCurrent(generation))
+        {
+            // Wait until a bout is active (or its stop TCS is pending).
+            if (!_replyBoutActive)
+            {
+                var startedTcs = _replyBoutStartedTcs
+                    ?? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _replyBoutStartedTcs = startedTcs;
+                if (!startedTcs.Task.IsCompleted)
+                {
+                    try
+                    {
+                        await startedTcs.Task.ConfigureAwait(false);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        return;
+                    }
+                }
+
+                if (!IsReplyReleaseCurrent(generation))
+                {
+                    return;
+                }
+            }
+
+            var stoppedTcs = _replyBoutStoppedTcs
+                ?? throw new InvalidOperationException("reply bout stopped TCS missing while bout active");
+            bool forced;
+            try
+            {
+                forced = await stoppedTcs.Task.ConfigureAwait(false);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
+            if (!IsReplyReleaseCurrent(generation))
+            {
+                return;
+            }
+
+            if (forced)
+            {
+                var remaining = Math.Max(0, (estimatedEnd - DateTimeOffset.Now).TotalSeconds);
+                _timerDelaySeconds = remaining;
+                WriteTimeline(
+                    LogFollowUpReleasePrefix + FollowUpRuleForcedEstimate
+                    + " complete=" + completeAt.ToString("o")
+                    + " estimatedEnd=" + estimatedEnd.ToString("o")
+                    + " remaining_s=" + remaining.ToString("0.###"));
+                if (remaining > 0)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(remaining)).ConfigureAwait(false);
+                }
+
+                if (!IsReplyReleaseCurrent(generation))
+                {
+                    return;
+                }
+
+                ClearReplyFollowUpRelease();
+                await OnFollowUpTimerAsync(generation).ConfigureAwait(false);
+                return;
+            }
+
+            // Natural stop — quiet window; a new bout restarts the wait.
+            var boutStoppedAt = DateTimeOffset.Now;
+            while (IsReplyReleaseCurrent(generation))
+            {
+                CancelReplyQuietWait();
+                _replyBoutStartedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var boutDuringQuiet = _replyBoutStartedTcs.Task;
+                var quietCts = new CancellationTokenSource();
+                _replyQuietCts = quietCts;
+                Task quietTask;
+                try
+                {
+                    quietTask = Task.Delay(TimeSpan.FromSeconds(FollowUpPostBoutQuietSeconds), quietCts.Token);
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+
+                await Task.WhenAny(quietTask, boutDuringQuiet).ConfigureAwait(false);
+                if (!IsReplyReleaseCurrent(generation))
+                {
+                    return;
+                }
+
+                // P4-FEEDBACK: open only on a fully elapsed quiet with no bout; cancelled delay must not open — P4-D18
+                if (quietTask.Status != TaskStatus.RanToCompletion || _replyBoutActive)
+                {
+                    // P4-FEEDBACK: sentence gap beat debounce — log gap for Probe telemetry — P4-D18 amendment 2
+                    var gapMs = Math.Max(0, (DateTimeOffset.Now - boutStoppedAt).TotalMilliseconds);
+                    WriteTimeline(
+                        "follow_up_release quiet_restart gap_ms="
+                        + gapMs.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
+                    // Cancelled quiet, or bout started during quiet — wait for that bout's stop.
+                    break;
+                }
+
+                WriteTimeline(
+                    LogFollowUpReleasePrefix + FollowUpRuleMonitor
+                    + " complete=" + completeAt.ToString("o")
+                    + " estimatedEnd=" + estimatedEnd.ToString("o")
+                    + " bout_stop=" + DateTimeOffset.Now.ToString("o")
+                    + " quiet_s=" + FollowUpPostBoutQuietSeconds.ToString("0.###")
+                    + " fire=" + DateTimeOffset.Now.ToString("o"));
+                ClearReplyFollowUpRelease();
+                await OnFollowUpTimerAsync(generation).ConfigureAwait(false);
+                return;
+            }
+        }
     }
 
     private void ResetSelfInterruptCount()
@@ -2319,34 +2954,77 @@ sealed class VoiceController
     private async Task ReconcileWakeRestingAsync(string reason)
     {
         // P2-WAKE: one method owns pause and resume; Resting is re-checked after every await — P2-D12
-        var generation = Volatile.Read(ref _connectionGeneration);
-        if (!WakeArmed || generation != Volatile.Read(ref _connectionGeneration))
+        // P4-FEEDBACK: single-flight + post-await converge so concurrent stop-speaking-complete / turn-end cannot no-op — P4-FB-STOP
+        _wakeReconcileReason = reason;
+        if (Interlocked.Exchange(ref _wakeReconcileBusy, 1) == 1)
         {
+            Volatile.Write(ref _wakeReconcilePending, 1);
             return;
         }
 
         try
         {
-            if (!Resting && !WakePaused)
+            for (var pass = 1; pass <= 3; pass++)
             {
-                await PauseWakeAsync(reason, generation).ConfigureAwait(false);
-                return;
-            }
+                Interlocked.Exchange(ref _wakeReconcilePending, 0);
+                var passReason = _wakeReconcileReason;
+                if (pass > 1)
+                {
+                    WriteTimeline($"wake reconcile pass={pass} reason={passReason}");
+                }
 
-            if (Resting && WakePaused)
-            {
-                // P4-LOCK: Resting auto-resume must not reopen the mic behind the gate — P4-D02
-                if (RefuseIfGated(GateRefuseWakeReconcileResume))
+                var generation = Volatile.Read(ref _connectionGeneration);
+                if (!WakeArmed || generation != Volatile.Read(ref _connectionGeneration))
                 {
                     return;
                 }
 
-                await ResumeWakeAsync(reason, generation).ConfigureAwait(false);
+                try
+                {
+                    if (!Resting && !WakePaused)
+                    {
+                        await PauseWakeAsync(passReason, generation).ConfigureAwait(false);
+                    }
+                    else if (Resting && WakePaused)
+                    {
+                        // P4-LOCK: Resting auto-resume must not reopen the mic behind the gate — P4-D02
+                        if (RefuseIfGated(GateRefuseWakeReconcileResume))
+                        {
+                            return;
+                        }
+
+                        await ResumeWakeAsync(passReason, generation).ConfigureAwait(false);
+                    }
+
+                    generation = Volatile.Read(ref _connectionGeneration);
+                    if (!WakeArmed || generation != Volatile.Read(ref _connectionGeneration))
+                    {
+                        return;
+                    }
+
+                    var converged = (Resting && !WakePaused) || (!Resting && WakePaused);
+                    var pending = Volatile.Read(ref _wakeReconcilePending) == 1;
+                    if (converged && !pending)
+                    {
+                        return;
+                    }
+                }
+                catch (ChatUnreachableException ex)
+                {
+                    WriteTimeline("wake reconcile unreachable " + ex.Message);
+                    return;
+                }
             }
+
+            WriteTimeline("wake reconcile not converged");
         }
-        catch (ChatUnreachableException ex)
+        finally
         {
-            WriteTimeline("wake reconcile unreachable " + ex.Message);
+            Interlocked.Exchange(ref _wakeReconcileBusy, 0);
+            if (Interlocked.Exchange(ref _wakeReconcilePending, 0) == 1)
+            {
+                _ = ReconcileWakeRestingAsync(_wakeReconcileReason);
+            }
         }
     }
 

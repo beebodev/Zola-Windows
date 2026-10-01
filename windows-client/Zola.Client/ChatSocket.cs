@@ -19,6 +19,7 @@ sealed class ChatSocket : IDisposable
     private const string FieldText = "text";
     private const string FieldStopPhrase = "stop_phrase";
     private const string FieldNoSpeechLimit = "no_speech_limit";
+    private const string FieldFiltered = "filtered";
     private const string FieldPhrase = "phrase";
     private const string FieldProfile = "profile";
     private const string FieldStartNewSession = "start_new_session";
@@ -39,6 +40,16 @@ sealed class ChatSocket : IDisposable
     private const string FieldOwnedByCaller = "owned_by_caller";
     private const string FieldAudioSilent = "audio_silent";
     private const string FieldHint = "hint";
+    // P4-FEEDBACK: tool.* event names and payload fields — P4-D16
+    private const string EventToolStart = "tool.start";
+    private const string EventToolComplete = "tool.complete";
+    private const string EventToolGenerating = "tool.generating";
+    private const string EventToolOutputRisk = "tool.output_risk";
+    private const string FieldToolId = "tool_id";
+    private const string FieldName = "name";
+    private const string FieldRisk = "risk";
+    private const string ToolRiskLogFile = "tool-events.log";
+    private const string ToolRiskLineFormat = "tool.output_risk name={0} risk={1}";
     internal const string ErrorTimeout = "timeout";
 
     private readonly HermesProcessManager _backend;
@@ -127,6 +138,13 @@ sealed class ChatSocket : IDisposable
 
     // P4-REQUEST: socket about to be replaced; broker clears current session — P4-D11
     public event Action? Replacing;
+
+    // P4-FEEDBACK: typed tool lifecycle for the activity line (time = UTC ticks) — P4-D16
+    public event Action<string?, string, long>? ToolStarted;
+
+    public event Action<string?, string, long>? ToolCompleted;
+
+    public event Action<string, long>? ToolGenerating;
 
 #if DEBUG
     // P4-REQUEST: DEBUG inject shares the live ServerRequestReceived hand-off — P4-D06
@@ -642,10 +660,12 @@ sealed class ChatSocket : IDisposable
                 return;
             case EventVoiceTranscript:
                 // P2-VOICE: text, stop phrase, and no-speech limit are one transcript event — P2-D01
+                // P4-FEEDBACK: filtered flag for hallucination logging (never text) — P4-D18
                 VoiceTranscriptReceived?.Invoke(new VoiceTranscript(
                     hasPayload ? ReadString(payload, FieldText) ?? "" : "",
                     hasPayload && ReadBool(payload, FieldStopPhrase) == true,
-                    hasPayload && ReadBool(payload, FieldNoSpeechLimit) == true));
+                    hasPayload && ReadBool(payload, FieldNoSpeechLimit) == true,
+                    hasPayload && ReadBool(payload, FieldFiltered) == true));
                 return;
             case EventVoiceInterrupted:
                 // P2-VOICE: barge-in is parsed now; Track 2 is what acts on it beyond a status line — P2-D01
@@ -669,9 +689,71 @@ sealed class ChatSocket : IDisposable
                 }
 
                 return;
+            case EventToolStart:
+                // P4-FEEDBACK: forward tool.start with tool_id + name — P4-D16
+                if (hasPayload)
+                {
+                    ToolStarted?.Invoke(
+                        ReadString(payload, FieldToolId),
+                        ReadString(payload, FieldName) ?? "",
+                        DateTimeOffset.UtcNow.UtcTicks);
+                }
+
+                return;
+            case EventToolComplete:
+                // P4-FEEDBACK: forward tool.complete with tool_id + name — P4-D16
+                if (hasPayload)
+                {
+                    ToolCompleted?.Invoke(
+                        ReadString(payload, FieldToolId),
+                        ReadString(payload, FieldName) ?? "",
+                        DateTimeOffset.UtcNow.UtcTicks);
+                }
+
+                return;
+            case EventToolGenerating:
+                // P4-FEEDBACK: provisional hint only (no tool_id) — P4-D16
+                if (hasPayload)
+                {
+                    ToolGenerating?.Invoke(
+                        ReadString(payload, FieldName) ?? "",
+                        DateTimeOffset.UtcNow.UtcTicks);
+                }
+
+                return;
+            case EventToolOutputRisk:
+                // P4-FEEDBACK: log name + risk only; never findings text — P4-D16
+                if (hasPayload)
+                {
+                    WriteToolRiskLog(string.Format(
+                        ToolRiskLineFormat,
+                        ReadString(payload, FieldName) ?? "",
+                        ReadString(payload, FieldRisk) ?? ""));
+                }
+
+                return;
             default:
                 // P1-CLIENT: reasoning.delta and other event types are read and not appended — P1-D01
                 return;
+        }
+    }
+
+    // P4-FEEDBACK: tool.output_risk lands beside voice-timeline; write failures are ignored — P4-D16
+    private static void WriteToolRiskLog(string line)
+    {
+        try
+        {
+            var root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                VoiceController.TimelineClientFolder,
+                VoiceController.TimelineLogFolder);
+            Directory.CreateDirectory(root);
+            File.AppendAllText(
+                Path.Combine(root, ToolRiskLogFile),
+                DateTimeOffset.Now.ToString("o") + " " + line + Environment.NewLine);
+        }
+        catch
+        {
         }
     }
 
@@ -892,7 +974,8 @@ sealed class ChatSocket : IDisposable
     internal readonly record struct OpenRequestSnapshot(string Id, string Method, Dictionary<string, JsonElement> Params);
 
     // P2-VOICE: one transcript carries the text plus the stop-phrase and no-speech flags — P2-D01
-    internal readonly record struct VoiceTranscript(string Text, bool IsStopPhrase, bool IsNoSpeechLimit);
+    // P4-FEEDBACK: filtered is the hallucination flag; timeline logs never include text — P4-D18
+    internal readonly record struct VoiceTranscript(string Text, bool IsStopPhrase, bool IsNoSpeechLimit, bool Filtered);
 }
 
 // P1-CLIENT: socket loss and health loss share one exception so the composer cannot keep waiting — P1-D01

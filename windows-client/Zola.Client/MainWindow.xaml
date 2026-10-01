@@ -68,6 +68,8 @@
                 Spacing="{StaticResource ZolaSpace4}">
                 <TextBlock Text="VOICE" Style="{StaticResource ZolaRightHeaderStyle}" TextAlignment="Right" />
                 <TextBlock x:Name="VoiceStateText" Style="{StaticResource ZolaRightValueStyle}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
+                <!-- P4-FEEDBACK: tool activity under the voice label — P4-D16 -->
+                <TextBlock x:Name="ActivityText" Style="{StaticResource ZolaRightValueStyle}" FontSize="14" TextAlignment="Right" TextWrapping="WrapWholeWords" Visibility="Collapsed" />
                 <TextBlock x:Name="MicIndicatorText" Style="{StaticResource ZolaRightValueStyle}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
                 <Rectangle
                     Height="{StaticResource ZolaDividerThickness}"
@@ -197,6 +199,24 @@
                         <TextBlock Style="{StaticResource ZolaDockLabelStyle}" Text="CANCEL" />
                     </StackPanel>
                 </Button>
+                <!-- P4-FEEDBACK: Stop silences speech only; Cancel still ends the turn — P4-FB-STOP -->
+                <Button
+                    x:Name="StopSpeakingButton"
+                    Style="{StaticResource ZolaDockButtonStyle}"
+                    Click="OnStopSpeakingClick"
+                    IsEnabled="False"
+                    Visibility="Collapsed"
+                    AutomationProperties.Name="Stop speaking">
+                    <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE71A;"
+                            HorizontalAlignment="Center" />
+                        <TextBlock Style="{StaticResource ZolaDockLabelStyle}" Text="STOP" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </Border>
 
@@ -216,8 +236,32 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Grid Grid.Row="0" Margin="{StaticResource ZolaHeaderBottomMargin}">
-                    <TextBlock Text="CONVERSATION" Style="{StaticResource ZolaSectionHeaderStyle}" VerticalAlignment="Center" />
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="CONVERSATION" Style="{StaticResource ZolaSectionHeaderStyle}" VerticalAlignment="Center" />
+                    <!-- P4-FEEDBACK: panel-header notice mirror when the overlay occludes NoticeHost — P4-D17 -->
+                    <StackPanel
+                        x:Name="PanelNoticeHost"
+                        Grid.Column="1"
+                        Margin="16,0,8,0"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed"
+                        Spacing="{StaticResource ZolaSpace4}">
+                        <TextBlock
+                            x:Name="PanelNoticeStatus"
+                            Style="{StaticResource ZolaNoticeStyle}"
+                            TextWrapping="WrapWholeWords" />
+                        <TextBlock
+                            x:Name="PanelNoticeDetail"
+                            Style="{StaticResource ZolaNoticeStyle}"
+                            TextWrapping="WrapWholeWords"
+                            Visibility="Collapsed" />
+                    </StackPanel>
                     <Button
+                        Grid.Column="2"
                         HorizontalAlignment="Right"
                         Style="{StaticResource ZolaDockButtonStyle}"
                         Click="OnConversationCloseClick"

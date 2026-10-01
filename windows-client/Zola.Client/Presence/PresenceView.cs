@@ -230,6 +230,9 @@ internal sealed class PresenceView : UserControl, IDisposable
     // P4-ASK: forward monitor bout signals and availability for question speech release — P4-D13
     internal bool PlaybackMonitorAvailable => _animator.PlaybackMonitorAvailable;
 
+    // P4-FEEDBACK: read-only pass-through for reply release seed — P4-D18
+    internal bool PlaybackBoutActive => _animator.PlaybackBoutActive;
+
     internal event Action? PlaybackBoutStarted
     {
         add => _animator.PlaybackBoutStarted += value;
