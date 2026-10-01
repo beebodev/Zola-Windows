@@ -105,4 +105,4 @@ Applied four edits verbatim (CRLF preserved; OQ bare_LF=0, RM bare_LF=0). Nothin
 
 - Implementation commit: `41585cfdff5f00ee6845fe12753bad8390573ebd`
 - Merge SHA on main: `9b2ca57f94d42ea5a4a7388c8fddb5d649b1d7b1`
-- Final main tip: *(pending 4h)*
+- Final main tip: `701046b0d7ec45d796787f42a29d5d4538d4b5c1`
