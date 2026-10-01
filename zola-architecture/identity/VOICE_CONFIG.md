@@ -13,6 +13,10 @@ tts:
   edge:
     voice: en-GB-SoniaNeural
     speed: 0.95
+agent:
+  clarify_timeout: 300
+approvals:
+  mode: manual
 voice:
   silence_duration: 1.5
   barge_in: false
@@ -41,7 +45,7 @@ wake_word:
 - `tts.edge.voice`: `en-GB-SoniaNeural` at speed 0.95 (`P4-D19` + speed A/B; was Aria, then provisional Sonia 1.1).
 - `tts.edge.speed` / command `--rate` (if command provider is re-enabled): **literal duplicate.** Hermes does **not** sync them — both must change together.
 - `voice.silence_duration`: `1.5` seconds of quiet after speech ends a capture. The Hermes default of 3.0 is too slow for a conversation (`P2-D09`).
-- `voice.barge_in`: `false` (P4-ASK Option A / `P4-D25`). Was `true` under `P2-D09`; talking over her no longer interrupts (Cancel / "Hey Zola" after she finishes still work).
+- `voice.barge_in`: `false` (`P4-D28`, applied under `P4-D25` / P4-ASK Option A). Was `true` under `P2-D09`; talking over her no longer interrupts (Cancel / "Hey Zola" after she finishes still work).
 - `voice.stop_phrases`: `["stop"]` ends the voice exchange when that is the whole utterance (`P2-D09`).
 - `voice.thinking_sound`: `true` plays Hermes's thinking sound during a Voice-mode turn (`P2-D09`).
 - `security.allow_lazy_installs`: `false` stops Hermes from installing packages during a probe or a turn. A missing dependency shows up as a requirement hint (`P2-D10`).
@@ -71,7 +75,7 @@ P4-REQUEST: profile clarify wait before Hermes skips — P4-D10
 
 Applied under `agent:` beside `reasoning_effort`. No serve restart required; Hermes reloads this on each clarify. No other profile key was changed in that edit.
 
-## Voice: Sonia at 1.1 (P4-VOICE Round 1)
+## Voice: Sonia at 0.95 (P4-VOICE Round 1)
 
 P4-VOICE: provisional spoken voice until live trial verdict — P4-D19
 
@@ -107,14 +111,14 @@ P4-VOICE: command-provider Edge for pitch control — P4-D21
 
 ## Barge-in off (P4-ASK Option A)
 
-P4-ASK: disable Hermes full-duplex barge listener so clarify answers use the client capture — P4-D25 / Option A
+P4-ASK: disable Hermes full-duplex barge listener so clarify answers use the client capture — P4-D28 (applied under P4-D25) / Option A
 
 | Field | Value |
 |---|---|
 | Key | `voice.barge_in` |
 | Value | `false` |
 | Date | 2026-09-30 |
-| Decision | `P4-D25` / Option A |
+| Decision | `P4-D28` (applied under `P4-D25`) / Option A |
 | Backup | `config.yaml.bak-P4-ASK-20260930-102716` (same folder as live `config.yaml`) |
 | Approval | developer-approved (`apply barge-in off`) |
 

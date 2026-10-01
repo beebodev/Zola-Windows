@@ -48,17 +48,14 @@ synthesis document.
   started: no Google Cloud project, OAuth client, consent screen, test
   user, or token exists for this profile.
 - **S17 — Audio-driven lip sync and precise speaking end.**
-  Partially resolved by `P3-D23`: mouth onset and release now follow real
-  Hermes TTS playback presence (`TtsPlaybackMonitor`). Still open: the mouth
-  cannot see pauses inside a sentence, and motion continues about 1 s after
-  audible speech ends (suspected trailing silence in the sentence MP3; seen
-  in two developer screen recordings; not yet measured). Shapes
-  remain synthetic. The post-reply follow-up capture still uses the
-  `P2-D15` estimate and Hermes's 15 s no-speech timeout (`P2-D06`). Future
-  paths: a client-side scan of the MP3 ffplay is playing (envelope and
-  silences); Hermes playback lifecycle events (optionally with a
-  precomputed envelope). The peak meter returns 0 on this machine. Evidence: `P3-LIFE_Progress.md` Phase 5b and Phase 6;
-  `P2-D14` / `P2-D15`.
+  Partially resolved by `P3-D23` (mouth follows TTS playback presence) and
+  Phase 4 monitor-driven follow-up / question release (`P4-D18`, `P4-D13`).
+  Trailing silence on Sonia 0.95: median **~0.50 s** per sentence (bout stop
+  minus last segment stop; n=9; `P4-VOICE` Phase 7). `P2-D15` refit values:
+  WPS 2.5, FSL 3.3, OV 0.5, margin 5.0; startup window 5.3 s (separate).
+  Still open: no true end-of-playback signal from Hermes; mouth still cannot
+  see mid-sentence pauses; shapes remain synthetic. Peak meter still 0 on
+  this machine.
 
 - **S18 — Global push-to-talk hotkey.** `Ctrl+Space` works only while
   the window is focused. A system-wide hotkey is deferred.
@@ -66,22 +63,14 @@ synthesis document.
   the primary trigger. Detecting speech meant for Zola without it,
   with addressee confidence tiers, is the long-term target. Hermes
   has no implementation (WINH09-AUD-14/15).
-- **S20 — Client cannot answer Hermes clarify-tool requests.** Turns
-  in which Zola asks a clarifying question stall until timeout.
-  Phase 1 gap, observed in P2-VOICE: a running turn sat inside
-  `clarify` for 115 s and only took a late steer, then ended
-  `interrupted_by_user` with no reply text.
+
 - **S21 — Typed Send and Cancel during speech are recorded as spoken
-  interruptions.** Hermes latches "user interrupted you" for both
-  (`SPEECH_INTERRUPTED_NOTE`), so Zola's next reply may act as if she
-  was talked over. Confirmed in P2-SPEAK against Hermes source; no
-  client handling was added.
-- **S22 — Voice naturalness (pacing and inflection).** Brian wants
-  Zola to sound less robotic. Options, cheapest first: a different
-  Edge voice or rate (config only); reply-style shaping for speech
-  (identity/prompt); an ElevenLabs streaming voice (revisits `P2`,
-  and requires re-fitting `P2-D15`). Raised by Brian after the
-  P2-SPEAK smoke test (2026-09-23).
+  interruptions.** Hermes still latches `SPEECH_INTERRUPTED_NOTE` for typed
+  Cancel during speech. Phase 4 lock gate and Stop speaking (`P4-D02`,
+  `P4-D29`) use the no-latch `voice.toggle off` path and avoid the latch.
+  Still open for typed Cancel (and any other latching interrupt path).
+
+
 - **S23 — First-utterance speech-to-text delay.** About 7 s for the
   first transcription after launch (model load), then about 1.7 s
   (P2-VOICE). A warm-up could hide it.
@@ -97,8 +86,11 @@ synthesis document.
   (`P3-D06`). `ALERT` has no Windows trigger; its Track 5 values are
   placeholder-safe until one exists.
 - **S26 — A missing `message.complete` leaves the turn "Thinking".**
-  `_streaming` never clears (Audit 04 §1b), and the presence stays in
-  `THINKING`. Phase 1 behaviour made more visible by Phase 3.
+  `_streaming` never clears (Audit 04 §1b); presence can stay `THINKING`.
+  Phase 4 activity line (`P4-D16`) improves visibility during tools. Related
+  gap (K7 / A11): resuming a still-running turn can leave `_streaming=false`
+  ("resumed-running"). Still open.
+
 - **S27 — Mic-input meter in the identity block.** Track 5 did not fill
   the reserved waveform space: the client has no mic level (`P2-D01`), so
   a meter needs a new source (`P3-D07`).
@@ -122,14 +114,76 @@ synthesis document.
   of native memory inside Helix's texture registration; managed memory stays
   flat (~160 MB after the first real reload). Ordinary lock, sleep and
   minimize reuse the scene. No product fix in Phase 3; F10 stays debug-only.
+- **S33 — Non-interactive Windows states beyond lock/sleep.** UAC / secure
+  desktop, screen-off, remote disconnect, user switch — no existing client
+  signal (`P4-D04`). Also: **Modern Standby gap** on the Latitude 7430 —
+  sleep did not deliver WTS lock or APM suspend (`suspended=true` never
+  fired); Track 1 ⚠️ PARTIAL; mitigated/verified via sign-in-on-wake
+  (`P4-REQUEST` B16). Fix candidates include
+  `RegisterPowerSettingNotification` and related power APIs. Priority:
+  raised vs Phase 3 S32 residual.
 
-- **S32 — Voice active while Windows is locked (security/privacy).**
-  Observed by the developer during the P3-LIFE smoke test (lock/unlock):
-  Zola responds to voice while Windows is at the lock screen. Pre-existing
-  P2 behaviour — the voice pipeline runs in Hermes; not caused by Track 5.
-  Options: pause the wake word on lock; restrict replies while locked; keep
-  deliberately. **Priority: high.** The mantra says "I protect", and a
-  locked PC should not answer.
-*S13 and S16 remain open. S17 updated at Phase 3 closeout; S18–S23 unchanged.
-S24–S32 were added at Phase 3 closeout. Resolved items stay in
-DESIGN_DECISIONS.md.*
+- **S34 — Hermes per-sentence chunking and voice-only reply shaping.**
+  Whole-line / paragraph synthesis is blocked while Hermes hardcodes
+  `SentenceChunker` (`P4-D24`). Related: a `voice-live` / `VOICE_LIVE_TURN_NOTE`
+  path exists in Hermes for GPT-Live delegation but is unused by Windows;
+  wording assumes paraphrase (inaccurate for Edge reading exact text) (B40).
+  Also: markdown / em-dash in replies can collapse spoken pauses on Edge
+  (`P4-VOICE` Phase 6 notes). Best path is upstream note or careful adopt of
+  `voice-live` after tracing surface effects.
+
+- **S35 — Approval scopes beyond "once"; revisit `approvals.mode`.**
+  Phase 4 forces `manual` (`P4-D27`) because Hermes's default `smart` can
+  auto-approve. Session/always scopes and whether `manual` remains required
+  need their own decision.
+
+- **S36 — Bring back talk-over barge-in without breaking Phase 4.**
+  **Developer-requested; Phase 5 stub lists this first.** Reframe: detecting
+  speech and interrupting her are separate — state-aware policy: speech
+  during her reply → interrupt; during open clarify → answer; her echo →
+  ignore. Acceptance (all): (a) talk-over stops a long reply; (b) spoken
+  clarify answer works with no "Interrupted"; (c) no `P2-D13` loop; (d)
+  Track 1 gate still fails closed; (e) an instant answer given as soon as she
+  stops speaking (before the beep) keeps its first word (needs ~1.2 s
+  pre-roll; `voice.record` has none — Probe 2 / AUD-37 residual ~1 s clip).
+  Blocked by one process-global Hermes listener. Candidates: upstream
+  pause-barge / clarify-aware listener / discard-capable record stop /
+  pre-roll on `voice.record`; echo cancel or headset; least preferred
+  client detector (`P2-D01`). Keep `P4-D13`/`D14`/`D15`/`D18`. Echo filter
+  still only drops ≥3-word / ≥60% tail runs (A32).
+
+- **S37 — Re-anchor speech estimate on first reply text.**
+  `FirstSentenceLatencySeconds` is seeded at turn start; late first text
+  leaves real TTS start delay uncounted, so short/medium fallback estimates
+  can lead the bout (up to ~4.33 s before margin 5.0). Reply `forced_estimate`
+  uses **no** `FollowUpMarginSeconds`. Monitor path is primary; this is
+  fallback-only (`P4-D22` / B45).
+
+- **S38 — Listen-to-think latency.** Too long between the user finishing
+  and Zola starting to think. Measure before tuning: `voice.silence_duration`
+  1.5 s and local Whisper `base` CPU time (capture stop → transcript →
+  `prompt.submit`). Shorter silence risks cutting mid-thought (B44).
+
+- **S39 — Voice timbre (husky / breathiness).** Developer wants her huskier
+  or deeper. Edge exposes rate/pitch/volume only; texture needs a premium
+  provider (`P4-D23`). Also: Edge "Yeah" inflection noted live (`P4-VOICE`).
+  Revisit by listening.
+
+- **S40 — UI polish after Phase 4.** Esc priority vs open clarify panel
+  (F7); hold important request notices before the next status line replaces
+  them; activity line can show a finished tool during a concurrent Hermes
+  batch (A31 / A34).
+
+- **S41 — Wake/mic not restored after the clarify path until a Text↔Voice
+  toggle.** Observed in `P4-VOICE` Phase 6 (~2026-10-01): after a clarify
+  tool turn, HUD can stay `IDLE` / `MIC: OFF`; `follow_up_release` fires but
+  no `wake.resume` in the log tail (contrast earlier `wake.resume
+  reason=follow-up-end`). Fails quiet (mic off). Open: exact repro; whether
+  the `P2-D12` wake-reconcile fix should cover it, or the clarify path never
+  requests resume. Source: `P4-VOICE_Progress.md` Phase 6 developer notes.
+*S13 and S16 remain open. S17, S21, S26 updated at Phase 4 lore closeout.
+S20, S22, S32 resolved (see DESIGN_DECISIONS Phase 4). S33–S41 added at
+Phase 4 lore closeout. Not open questions (one line): question quiet window
+withdrawn (B38); gap "no Stop" closed by P4-D29; AUD-37 closed by P4-D18
+(residual in S36); external dictation tool is test hygiene (A20). Resolved
+items stay in DESIGN_DECISIONS.md.*

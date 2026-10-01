@@ -218,6 +218,8 @@ six independent ones.
 - **A3 — Trust/Permission layer: Hermes's existing gate is enough for
   now.** No separate Zola-owned permission-checking layer added in
   front of Hermes's `approvals.mode`/danger-command overlay.
+  Phase 4 (`P4-D07`): Hermes approvals are surfaced in the Windows client
+  (cards); mode forced `manual` (`P4-D27`).
 - **A4 — Truth/speech separation: accepted for v1.** No verification/
   formatting layer splitting fact from phrasing. Model output treated
   as both, matching Hermes's native behavior.
@@ -259,6 +261,8 @@ corrections and final tuned values.
   en-US-AriaNeural`. The client reads `voice.toggle status` and sends
   `tts` only when speech is off, because the action flips. Hermes
   speaks; the client plays no audio.
+  Phase 4 (`P4-D19`): spoken voice superseded — `en-GB-SoniaNeural` at
+  speed 0.95 (was Aria / provisional Sonia 1.1).
 - **P2-D04 — Starting a voice turn: "Hey Zola" first; mic button and
   `Ctrl+Space` as fallback.** Sherpa, `phrase: "hey zola"`,
   `capture: local`, `start_new_session: false`,
@@ -272,6 +276,8 @@ corrections and final tuned values.
 - **P2-D05 — Every voice transcript is sent immediately.** Non-empty
   `voice.transcript` without a stop phrase is a user bubble and
   `prompt.submit` on the current session. No draft-and-edit.
+  Phase 4 (`P4-D14`): clarify answers are routed to the open request, not
+  submitted as a normal user turn.
 - **P2-D06 — Follow-up listening uses Hermes as-is.** Barge-in while
   she speaks; after that, one estimated-delay `voice.record`. The
   clock is provisional; final constants are `P2-D15`. A precise
@@ -295,6 +301,7 @@ corrections and final tuned values.
   `security.allow_lazy_installs: false`. Installed set is `P2-D17`.
   Hermes packaging gap: `wake.sherpa` omits `pypinyin`, which
   `sherpa_onnx.text2token` needs even for English phrases (`P2-WAKE`).
+  Phase 4 (`P4-D28`): `voice.barge_in` is now `false` on the live profile.
 - **P2-D11 — No separate pre-build audit for Phase 2.** WINH09 already
   covered this pinned tag's voice surface.
 - **P2-D12 — One owner for voice state; one listener per state; one
@@ -304,6 +311,9 @@ corrections and final tuned values.
   `prompt.submit` is accepted (redirect or queue); the client submits
   once and never holds.
 Phase 1 client defects fixed in Phase 2 (`P2-VOICE`):
+  Phase 4 execution correction: `ReconcileWakeRestingAsync` is single-flight
+  and re-checks after await (≤ 3 passes, logged) so an in-flight pause cannot
+  strand wake paused (`P4-FEEDBACK` F5b / A29).
 - Each new turn overwrote the previous assistant bubble.
 - Interjection/submit handling was tied to that overwrite; the
   event-driven bubble lifecycle now keeps earlier replies on screen.
@@ -313,6 +323,8 @@ Phase 1 client defects fixed in Phase 2 (`P2-VOICE`):
   switch the client to Text mode with a lid/mic/speaker notice. Added
   because a closed laptop lid caused an endless self-interruption
   loop (`P2-SPEAK`).
+  Phase 4 (`P4-D28`): with barge-in off, the `P2-D13` self-interrupt trip
+  loop no longer fires in normal Voice use.
 - **P2-D14 — Echo guard (final, position-anchored rule).** Follow-up
   captures only. Transcripts under 3 words are never dropped. Digit
   tokens and list markers are stripped on both sides. Drop when an
@@ -339,6 +351,9 @@ Phase 1 client defects fixed in Phase 2 (`P2-VOICE`):
   per letter. `FollowUpMarginSeconds = 3.0`. Fitted from six
   measured replies. The per-sentence cost is ffplay starting once
   per sentence (`P2-SPEAK`, `P2-WAKE`).
+  Phase 4 (`P4-D22`): estimate is fallback-only; refit left WPS/FSL/OV
+  unchanged; `FollowUpMarginSeconds` 5.0; see also `StartupWindowSeconds`
+  and `S37`.
 - **P2-D16 — Machine setup is a hard requirement for spoken
   replies.** Required: lid **open**, mic input 100, Windows audio
   enhancements **ON** (echo cancellation), speakers ~15, and FFmpeg
@@ -399,6 +414,8 @@ section is the lore pointer plus final values and execution corrections.
   Phase 2 order (streaming before Speaking). `ALERT` is defined but never
   produced this phase (`S25`). Final Dormant look: `Blink both` held at 0.30,
   brightness ×0.50, no blinks at rest.
+  Phase 4 (`P4-D15`): awaiting-answer / waiting-for-user maps into presence
+  and HUD while a clarify is open.
 
 - **P3-D05 — Model gaps: approximate what the asset supports, defer the rest.**
   Built: blink, expression morphs, speaking mouth, brightness per mode.
@@ -562,6 +579,9 @@ section is the lore pointer plus final values and execution corrections.
   level always 0 — dropped. Cross-reference: `P2-D01` display-only
   amendment.
 
+  Phase 4 (`P4-ASK` / `P4-FEEDBACK`): monitor bout start/stop is also a
+  **control input** for clarify-answer capture and reply follow-up release
+  (via `PresenceAnimator` pass-through). Forced releases are flagged (A18).
 - **P3-D24 — The background is composited by the tone-map pass.**
   (New; Track 5 amendment.) Brightness multipliers made the old
   clear-colour invert compensation unworkable in 8 bits. The approved
@@ -584,3 +604,155 @@ section is the lore pointer plus final values and execution corrections.
 - Dormant GPU (60 s): avg **0.0005%**.
 - Cold resting memory (LOOK, 2048²): WS **809 MB** / private 742 MB; peak
   during load **1004 MB**; import 906 ms / wall 2388 ms.
+
+## Phase 4 — Conversation Safety and Voice
+Recorded from `PHASE4_BUILD_PLAN.md` v1.1 (`P4-D01`–`P4-D26`) and from the five
+track progress docs, plus execution corrections and new decisions `P4-D27`–
+`P4-D29` (Appendices A/B). Full plan wording stays in the build plan; this
+section is the lore pointer, final values, and corrections. Evidence:
+`P4-LOCK_Progress.md`, `P4-REQUEST_Progress.md`, `P4-ASK_Progress.md`,
+`P4-FEEDBACK_Progress.md`, `P4-VOICE_Progress.md`.
+
+- **P4-D01 — One gate fact: "voice is gated" = Windows locked OR system
+  suspending.** Exactly one `SessionLockWatcher`, hoisted from `PresenceView`
+  to `MainWindow`. `VoiceController` holds queryable gate state; presence pause
+  reasons unchanged (`locked`, `suspended`).
+
+- **P4-D02 — On gate: pause, stop, cancel, refuse. Fail closed.** Cancel
+  follow-up/echo; stop capture; stop speech without cancelling the turn or
+  latching `SPEECH_INTERRUPTED_NOTE` (`voice.toggle off`); refuse wake/capture/
+  submit while gated. **Execution corrections:** disarm with **`wake.stop`**,
+  not `wake.pause`; reopen with **`wake.start` only** (no `wake.resume`) (A1);
+  never use `voice.toggle tts` for gating (A3).
+
+- **P4-D03 — On ungate: restore exactly the pre-gate state; never resume a
+  cut-off reply.** "Pre-gate state" means *availability*, not activity:
+  whether speech output was enabled and whether wake was armed — never what
+  was playing. Subsequent turns may speak again if speech was on before the
+  gate; Text mode stays Text; audio from the interrupted turn is never
+  resumed, replayed, or re-synthesized (text stays in the conversation).
+  Resume-from-sleep at the lock screen (`Resumed` with `Locked` still set)
+  keeps the gate closed until `Unlocked`.
+
+- **P4-D04 — Scope is lock and sleep only.** UAC, screen-off, remote, and
+  user-switch stay deferred (`S33`). Residual: Modern Standby on the Latitude
+  7430 never sets `suspended=true` (⚠️ PARTIAL; sign-in-on-wake mitigation in
+  `P4-REQUEST` B16). See `S33`.
+
+- **P4-D05 — Honest HUD while gated.** Mic line shows paused for Windows
+  locked/suspended ahead of other mic states.
+
+- **P4-D06 — One server-request handler for every method.** `ServerRequestBroker`
+  owns open `srq-*` requests. Clarify and approval handled; every other method
+  declined visibly with a JSON-RPC error.
+
+- **P4-D07 — Approval card: Approve once / Deny. Typed or clicked only.**
+  Two buttons only (no session/permanent scopes in Phase 4). Never by voice;
+  never while gated. Wire facts (A8): `all` never sent; `once` persists nothing;
+  error = withdrawn; builders emit only once/deny; `pending_approval` never
+  rendered; approvals coalesce. Surfaced Hermes's gate (`A3`). Command text
+  uses a **Cascadia Mono** constant (token later).
+
+- **P4-D08 — Clarify card.** Panel opens with the question; one button per
+  choice if present (Hermes "(Recommended)" is a **label only**, not sent
+  back); free-text field; **Skip** sends `{"answer":""}`. Multi-select:
+  checkboxes + Send. Batch (`questions[]`): one card with a row per `qid`,
+  one final `{"answers":{…}}`. After send, card collapses to read-only
+  "You answered: …".
+
+- **P4-D09 — Typing while a question is open answers it.** Composer stays
+  **enabled while the turn is streaming**; placeholder "Answer Zola's
+  question…"; Send answers the **newest open clarify** for the current
+  session (not `prompt.submit`). Unchanged when no clarify is open.
+
+- **P4-D10 — Clarify timeout 300 s.** Profile `agent.clarify_timeout: 300`
+  under `P4-D25`.
+
+- **P4-D11 — Stale, duplicate and foreign answers are impossible by
+  construction.** Answers name `srq-*`; at most one response per open id;
+  foreign-session requests park and re-show. **Amendments:** restart test in
+  attach mode (A5); session switch stays locked while streaming with
+  park/re-show (A6); reconciliation, tombstones, `_replaceMark` (A7).
+  **Note:** B11 ⚠️ PARTIAL — second Send after `message.complete` starts a new
+  turn; drop path walkthrough-covered only (`P4-REQUEST`).
+
+- **P4-D12 — Server requests are logged.** `%LOCALAPPDATA%\ZolaClient\logs\
+  server-requests.log`: received/shown/answered/declined/cancelled/dropped.
+  **Answer text never logged — length only.** Secret, vault, and sudo params
+  never logged beyond the method name.
+
+- **P4-D13 — In Voice mode she says the question, then listens.** Amendment
+  (2026-09-30): she speaks the **question only**, never the choice list;
+  buttons stay on the card; spoken answers are free text. Release: natural
+  bout stop authoritative; startup window then estimate; monitor unavailable
+  → estimate; forced releases flagged. Mid-smoke: stale forced-release flag
+  fixed (C1). Question quiet window considered and **withdrawn** (single-file
+  `voice.tts` / single bout; B38).
+
+- **P4-D14 — One transcript consumer routes answers.** `TranscriptReady`
+  branch: open clarify → answer that request; else unchanged submit. Binding
+  clear on C5b; closed-clarify id cleared on turn start (`P4-FEEDBACK` K2).
+
+- **P4-D15 — Presence and HUD while waiting for an answer.** HUD
+  "Waiting for your answer"; `LISTENING` if capturing else `IDLE` (not
+  `THINKING`); stale-thinking clock does not run.
+
+- **P4-D16 — Tool activity line.** Id-aware set; provisional `tool.generating`
+  hint. Hermes may delay batch tool completions until the whole batch ends;
+  the line shows the newest-started tool until then (A31).
+
+- **P4-D17 — Notices are visible with the conversation panel open.** Choice:
+  **panel-header mirror** (not raising Z above the panel). Execution
+  correction: `ShowRequestNotice` → `StatusText` (A30).
+
+- **P4-D18 — Lost spoken answer: reproduce first, then fix or close.**
+  AUD-37 reproduced; root cause capture **timing**, not VAD (`vad: false`
+  rejected). Fix: monitor natural bout stop; seed bout; quiet **0.5 s** with
+  `quiet_restart`; startup window. Residual ~1 s clip on instant answers →
+  `S36`. Quiet window required (F1).
+
+- **P4-D19 — Voice: `en-GB-SoniaNeural` at speed 1.1, provisional until a live
+  trial.** Live trial rejected 1.1; blind speed A/B picked **0.95**. Mirrored under
+  `P4-D25`.
+
+- **P4-D20 — Speech-shaped replies in `SOUL.md`.** Heading: `## How I talk
+  out loud` (canonical file; live byte-identical). Do not copy the full text
+  here.
+
+- **P4-D21 — Pitch: blind A/B through the command provider, kept only if it
+  wins.** Pitch **dropped**; built-in Edge kept (command-provider first-audio
+  failed the +300 ms gate). Offline A/B heard; 0 Hz kept (B43).
+
+- **P4-D22 — Refit `P2-D15` for the final voice.** WPS/FSL/OV unchanged;
+  `FollowUpMarginSeconds` 3.0 → **5.0**; new `StartupWindowSeconds` **5.3**
+  (decoupled). Estimates **fallback-only**. See `S37`.
+
+- **P4-D23 — No premium or local neural providers in Phase 4.**
+
+- **P4-D24 — Whole-line synthesis is not in Phase 4.** Filed as `S34`.
+
+- **P4-D25 — Live profile edits are developer-approved, exact, and
+  mirrored.**
+
+- **P4-D26 — Track order: Lock → Request → Ask → Feedback → Voice.** Held.
+
+- **P4-D27 — `approvals.mode: manual`.** (New.) Hermes default `smart` can
+  auto-approve. Revisit with `S35`.
+
+- **P4-D28 — `voice.barge_in: false`.** (New; `P4-ASK` Option A.) Stops the
+  full-duplex barge listener from latching spoken clarify answers. Cost:
+  talk-over no longer stops her (`P4-D29`). Side benefit: no `P2-D13` trips.
+  Applied under `P4-D25`.
+
+- **P4-D29 — Stop speaking.** (New.) On-screen Stop + Esc; `voice.toggle off`
+  → `on` (no latch). Hidden while `QuestionSpeaking`. No follow-up after Stop.
+  Known edges noted in `P4-FEEDBACK`; future with `S36`.
+
+### Phase 4 execution notes
+- Effective config = profile + `hermes_cli/config_defaults.py` (A10).
+- Verify user-facing notices **on screen**, not only in logs (A30).
+- Confirm voice parameters **live and blind** (B41).
+- Check per-case estimate error **signs**, not averages (B46).
+- Fix the **authority**, not every caller — wake reconcile single-flight
+  (A29 / `P2-D12`).
+- Measure before tuning capture timing (A27 / Probe 2).
