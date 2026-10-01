@@ -11,7 +11,8 @@ stt:
 tts:
   provider: edge
   edge:
-    voice: en-US-AriaNeural
+    voice: en-GB-SoniaNeural
+    speed: 0.95
 voice:
   silence_duration: 1.5
   barge_in: false
@@ -36,8 +37,9 @@ wake_word:
 
 - `stt.provider`: `local` selects faster-whisper and disables the cloud fallback (`P2-D02`).
 - `stt.local.model`: `base` is the starting on-device model. This machine has no CUDA, so it runs on CPU (`P2-D02`, `P2-D09`).
-- `tts.provider`: `edge` is the free spoken-reply engine. Track 1 writes the key; Track 2 is what turns speech on (`P2-D03`, `P2-D09`).
-- `tts.edge.voice`: `en-US-AriaNeural` is the default Edge voice (`P2-D03`, `P2-D09`).
+- `tts.provider`: `edge` (built-in). Phase 6 command provider `sonia_cmd` was tried at `--pitch=+0Hz` then **restored** — first-audio median ~855–1030 ms worse than built-in (gate +300 ms); pitch dropped. Command block kept in progress notes / failed snapshot only.
+- `tts.edge.voice`: `en-GB-SoniaNeural` at speed 0.95 (`P4-D19` + speed A/B; was Aria, then provisional Sonia 1.1).
+- `tts.edge.speed` / command `--rate` (if command provider is re-enabled): **literal duplicate.** Hermes does **not** sync them — both must change together.
 - `voice.silence_duration`: `1.5` seconds of quiet after speech ends a capture. The Hermes default of 3.0 is too slow for a conversation (`P2-D09`).
 - `voice.barge_in`: `false` (P4-ASK Option A / `P4-D25`). Was `true` under `P2-D09`; talking over her no longer interrupts (Cancel / "Hey Zola" after she finishes still work).
 - `voice.stop_phrases`: `["stop"]` ends the voice exchange when that is the whole utterance (`P2-D09`).
@@ -68,6 +70,40 @@ P4-REQUEST: profile clarify wait before Hermes skips — P4-D10
 | Approval | developer-approved |
 
 Applied under `agent:` beside `reasoning_effort`. No serve restart required; Hermes reloads this on each clarify. No other profile key was changed in that edit.
+
+## Voice: Sonia at 1.1 (P4-VOICE Round 1)
+
+P4-VOICE: provisional spoken voice until live trial verdict — P4-D19
+
+| Field | Value |
+|---|---|
+| Key | `tts.edge.voice` / `tts.edge.speed` |
+| Value | `en-GB-SoniaNeural` / `0.95` (Edge `rate=-5%`; was provisional `1.1`) |
+| Date | 2026-10-01 |
+| Decision | `P4-D19` + speed A/B (pick C) |
+| Backup | `config.yaml.bak-P4-VOICE-20261001-075403` (voice); `config.yaml.bak-P4-VOICE-speed-20261001-084653` (speed 1.1→0.95) |
+| Approval | developer-approved (`apply voice`; speed A/B **pick C**) |
+
+Diff vs first backup: Sonia + speed. Speed A/B: `1.1` → `0.95` only. Serve restarted after speed apply (`127.0.0.1:52894`).
+
+**Live-trial verdict (2026-10-01):** Keep Sonia. 1.1 too fast. Speed A/B labels A=1.0, B=1.05, C=0.95 — **picked C (0.95)**. Deeper via Phase 6 pitch A/B (`0 / −2 / −4 / −6 Hz`). Husky texture (breathiness) not possible with Edge — future premium-voice item. Phase 6 command `--rate` must be `-5%` (literal duplicate of `tts.edge.speed` — both must change together).
+
+## Command provider pitch baseline (P4-VOICE Round 3)
+
+P4-VOICE: command-provider Edge for pitch control — P4-D21
+
+| Field | Value |
+|---|---|
+| Key | `tts.provider` / `tts.providers.sonia_cmd` |
+| Value | Tried `sonia_cmd` @ `--pitch=+0Hz`; **restored `edge`** (pitch dropped) |
+| Date | 2026-10-01 |
+| Decision | `P4-D21` — latency gate fail (median first-audio ~+0.85–1.0 s vs built-in; limit +300 ms) |
+| Backup | `config.yaml.bak-P4-VOICE-cmd-20261001-094400` (pre-cmd); failed snapshot `config.yaml.bak-P4-VOICE-cmd-failed-20261001-122800` |
+| Approval | developer-approved apply; auto-restore per Phase 6 latency rule |
+
+**Rate sync note:** `--rate` in the command string is a **literal duplicate** of `tts.edge.speed` (0.95 → `-5%`). Hermes does not derive one from the other; both must be edited together.
+
+**Outcome:** Pitch A/B **not run**. Final provider remains built-in Edge (Sonia 0.95). Developer may override (re-apply command provider) if they accept the latency.
 
 ## Barge-in off (P4-ASK Option A)
 
@@ -135,11 +171,19 @@ The keyword model is not a pip package. `_ensure_sherpa_model` downloads it with
 |---|---|---|---|
 | `stt.local.model` | `base` | 2026-09-23 | passed |
 | `tts.edge.voice` | `en-US-AriaNeural` | 2026-09-23 | passed |
+| `tts.edge.voice` | `en-GB-SoniaNeural` | 2026-10-01 | P4-D19 kept; speed set via A/B |
+| `tts.edge.speed` | `0.95` | 2026-10-01 | Speed A/B pick C (was 1.1 too fast; Edge rate=-5%) |
+| `tts.provider` | `edge` | 2026-10-01 | P4-D21: `sonia_cmd` tried then restored — latency gate fail; pitch dropped |
 | `voice.silence_duration` | `1.5` | 2026-09-23 | passed |
 | `EstimatedWordsPerSecond` | `2.5` | 2026-09-23 | passed. Unchanged. Word rate from the six silent replies. |
+| `EstimatedWordsPerSecond` | `2.5` | 2026-10-01 | P4-D22 refit on Sonia 0.95 — constants unchanged; the 2.5 wps estimate is conservative vs measured ~3.3–3.5 wps; fallback never early on bout-duration. |
 | `FirstSentenceLatencySeconds` | `3.3` | 2026-09-23 | passed. Was 1.0. Fixed startup cost. |
+| `FirstSentenceLatencySeconds` | `3.3` | 2026-10-01 | P4-D22 refit — unchanged (onset 3300 ms). |
 | `PerSentenceOverheadSeconds` | `0.5` | 2026-09-23 | passed. Was 3.0; that first fit predicted +23 s gaps. |
+| `PerSentenceOverheadSeconds` | `0.5` | 2026-10-01 | P4-D22 refit — unchanged. |
 | `FollowUpMarginSeconds` | `3.0` | 2026-09-23 | passed. Raised 2.0 → 3.0 after a long-reply tail was still captured at 2.0 s, so the reopened listen window does not time out before the user can reply. |
+| `FollowUpMarginSeconds` | `5.0` | 2026-10-01 | P4-D22: 3.0 → 5.0. Covers worst estimatedEnd lead **4.33 s** (M2) on Sonia 0.95 six-pack; fails late, not early. Lead table: S1 2.21, S2 2.59, M1 0.31, M2 **4.33**, L1 −1.73, L2 −42.46 (seconds; positive = estimate leads bout). Note: reply `forced_estimate` path still uses remaining only (no margin) — lore flag. |
+| `StartupWindowSeconds` | `5.3` | 2026-10-01 | P4-D22 / K2: was 4.3; raised to ≥1.5× worst Edge first-audio (~3.49 s). |
 | `EchoContainmentRatio` | `0.60` | 2026-09-23 | Removed (P3-STATE) |
 | `EchoLookbackWords` | `20` | 2026-09-23 | last 20 spoken words across completed replies (rolling haystack kept). |
 | `EchoMinWords` | `3` | 2026-09-23 | Removed (P3-STATE) |

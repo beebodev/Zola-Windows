@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "voice": "en-GB-SoniaNeural",
+    "rate": "-5%",
+    "pitches": [
+      "+0Hz",
+      "-2Hz",
+      "-4Hz",
+      "-6Hz"
+    ],
+    "texts": "B1-B3 official before-set (markdown stripped)",
+    "profile_changed": false
+  },
+  "B1": {
+    "C": "+0Hz",
+    "B": "-4Hz",
+    "D": "-2Hz",
+    "A": "-6Hz"
+  },
+  "B2": {
+    "A": "+0Hz",
+    "D": "-4Hz",
+    "C": "-6Hz",
+    "B": "-2Hz"
+  },
+  "B3": {
+    "D": "-2Hz",
+    "B": "-6Hz",
+    "C": "-4Hz",
+    "A": "+0Hz"
+  }
+}
