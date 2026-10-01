@@ -20,7 +20,9 @@ public sealed record ZolaDisplayState(
     bool MicButtonEnabled,
     string MicButtonContent,
     PresenceMode PresenceMode,
-    string LinkLabel);
+    string LinkLabel,
+    // P4-FEEDBACK: separate activity string; never replaces Waiting — P4-D16
+    string ActivityLine);
 
 // P3-STATE: one model owns the voice label, the mic line, and presence mode — P3-D03
 public sealed class ZolaDisplayStateModel : IDisposable
@@ -55,7 +57,7 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private const string LinkConnectedLabel = "LOCAL LINK • CONNECTED";
     private const string LinkConnectingLabel = "LOCAL LINK • CONNECTING";
     private const string DisplayStateLogFile = "display-state.log";
-    private const string DisplayStateLineFormat = "P3-STATE: display state voice=\"{0}\" mic=\"{1}\" mode={2} link=\"{3}\"";
+    private const string DisplayStateLineFormat = "P3-STATE: display state voice=\"{0}\" mic=\"{1}\" mode={2} link=\"{3}\" activity=\"{4}\"";
     private const string FactLineFormat = "P3-STATE: fact {0}={1}";
     private const string FactUnreachable = "unreachable";
     private const string FactSwitchInFlight = "switchInFlight";
@@ -66,6 +68,30 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private const int StaleThinkingCheckSeconds = 10;
     private const int StaleThinkingWarnSeconds = 120;
     private const long MillisecondsPerSecond = 1000;
+    // P4-FEEDBACK: friendly-name table for the tool activity line — P4-D16
+    private const string ToolNameWebSearch = "web_search";
+    private const string ToolNameTerminal = "terminal";
+    private const string ToolNameSkillView = "skill_view";
+    private const string ToolNameSkillsList = "skills_list";
+    private const string ToolNameSkillManage = "skill_manage";
+    private const string ToolNameClarify = "clarify";
+    private const string ActivityWebSearch = "Searching the web…";
+    private const string ActivityTerminal = "Running a command…";
+    private const string ActivitySkillView = "Checking a skill…";
+    private const string ActivitySkillsList = "Checking skills…";
+    private const string ActivitySkillManage = "Managing a skill…";
+    private const string ActivityUnknown = "Working…";
+
+    // P4-FEEDBACK: named friendly-name map (clarify → null / no line) — P4-D16
+    private static readonly Dictionary<string, string?> ToolActivityNames = new(StringComparer.Ordinal)
+    {
+        [ToolNameWebSearch] = ActivityWebSearch,
+        [ToolNameTerminal] = ActivityTerminal,
+        [ToolNameSkillView] = ActivitySkillView,
+        [ToolNameSkillsList] = ActivitySkillsList,
+        [ToolNameSkillManage] = ActivitySkillManage,
+        [ToolNameClarify] = null,
+    };
 
     // P3-STATE: XAML defaults until the window pushes facts; construction does not invent them — P3-D03
     private static readonly ZolaDisplayState InitialState = new(
@@ -76,7 +102,8 @@ public sealed class ZolaDisplayStateModel : IDisposable
         false,
         MicContentMic,
         PresenceMode.Dormant,
-        LinkOfflineLabel);
+        LinkOfflineLabel,
+        "");
 
     private readonly VoiceController _voice;
     private readonly DispatcherQueueTimer _staleTimer;
@@ -94,6 +121,10 @@ public sealed class ZolaDisplayStateModel : IDisposable
     private long _lastActivityTicks;
     // P4-LOCK: keep the last gated mic string while VoiceGated is hold-only after unlock — P4-D05
     private string? _lastGatedMicLine;
+    // P4-FEEDBACK: id-aware active tools (order = newest last); provisional has no id — P4-D16
+    private readonly List<(string Id, string Name)> _activeTools = new();
+    private string? _provisionalToolName;
+    private bool _suppressActivityForReply;
 
     internal ZolaDisplayStateModel(VoiceController voice, DispatcherQueue dispatcher)
     {
@@ -139,6 +170,101 @@ public sealed class ZolaDisplayStateModel : IDisposable
     public void NoteTurnActivity()
     {
         _lastActivityTicks = Environment.TickCount64;
+    }
+
+    // P4-FEEDBACK: tool.start keyed by tool_id; clarify stays out of the set — P4-D16
+    public void OnToolStarted(string? toolId, string name)
+    {
+        NoteTurnActivity();
+        _provisionalToolName = null;
+        if (string.IsNullOrEmpty(toolId))
+        {
+            // P4-FEEDBACK: no id → provisional hint only (no synthetic ids) — P4-D16
+            if (!string.IsNullOrEmpty(name))
+            {
+                _provisionalToolName = name;
+            }
+
+            Recompute();
+            return;
+        }
+
+        for (var i = _activeTools.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(_activeTools[i].Id, toolId, StringComparison.Ordinal))
+            {
+                _activeTools.RemoveAt(i);
+            }
+        }
+
+        _activeTools.Add((toolId, name ?? ""));
+        Recompute();
+    }
+
+    // P4-FEEDBACK: complete removes only that tool_id; older still-active reappears — P4-D16
+    public void OnToolCompleted(string? toolId, string name)
+    {
+        NoteTurnActivity();
+        _provisionalToolName = null;
+        if (!string.IsNullOrEmpty(toolId))
+        {
+            for (var i = _activeTools.Count - 1; i >= 0; i--)
+            {
+                if (string.Equals(_activeTools[i].Id, toolId, StringComparison.Ordinal))
+                {
+                    _activeTools.RemoveAt(i);
+                }
+            }
+        }
+
+        Recompute();
+    }
+
+    // P4-FEEDBACK: generating is provisional and never enters the id-aware set — P4-D16
+    public void OnToolGenerating(string name)
+    {
+        NoteTurnActivity();
+        _provisionalToolName = string.IsNullOrEmpty(name) ? null : name;
+        Recompute();
+    }
+
+    // P4-FEEDBACK: first reply text hides the activity line without dropping the set — P4-D16
+    public void NoteReplyTextStarted()
+    {
+        if (_suppressActivityForReply)
+        {
+            return;
+        }
+
+        _suppressActivityForReply = true;
+        _provisionalToolName = null;
+        Recompute();
+    }
+
+    // P4-FEEDBACK: a new empty live bubble can show tools again until text arrives — P4-D16
+    public void NoteLiveBubbleReset()
+    {
+        if (!_suppressActivityForReply)
+        {
+            return;
+        }
+
+        _suppressActivityForReply = false;
+        Recompute();
+    }
+
+    // P4-FEEDBACK: clear-all safety net for missed tool.complete — P4-D16
+    public void ClearToolActivity()
+    {
+        if (_activeTools.Count == 0 && _provisionalToolName is null && !_suppressActivityForReply)
+        {
+            return;
+        }
+
+        _activeTools.Clear();
+        _provisionalToolName = null;
+        _suppressActivityForReply = false;
+        Recompute();
     }
 
     // P3-STATE: window close stops the one stale-thinking timer — P3-D04
@@ -211,6 +337,7 @@ public sealed class ZolaDisplayStateModel : IDisposable
 
         // P3-STATE: voice-label priority stays the P2 order from Audit 01 §3 — P3-D03
         // P4-ASK: Waiting inserts after Text/unavailable and before Thinking — P4-D15
+        // Priority: unavailable(+details) → Text mode → Waiting for your answer → Thinking → Speaking → Transcribing → Listening → Idle
         string voiceLabel;
         if (!_voice.IsAvailable && _voice.Mode == VoiceController.ModeText)
         {
@@ -364,6 +491,9 @@ public sealed class ZolaDisplayStateModel : IDisposable
             linkLabel = LinkConnectingLabel;
         }
 
+        // P4-FEEDBACK: Waiting wins; else newest real tool; else provisional; else empty — P4-D16
+        var activityLine = BuildActivityLine();
+
         var next = new ZolaDisplayState(
             voiceLabel,
             micLine,
@@ -372,7 +502,8 @@ public sealed class ZolaDisplayStateModel : IDisposable
             micButtonEnabled,
             micButtonContent,
             presenceMode,
-            linkLabel);
+            linkLabel,
+            activityLine);
         var first = !_hasWindowFacts;
         var differs = next != Current;
         _hasWindowFacts = true;
@@ -384,13 +515,54 @@ public sealed class ZolaDisplayStateModel : IDisposable
         Current = next;
         if (first || differs)
         {
-            WriteDisplayLog(string.Format(DisplayStateLineFormat, next.VoiceLabel, next.MicLine, next.PresenceMode, next.LinkLabel));
+            WriteDisplayLog(string.Format(
+                DisplayStateLineFormat,
+                next.VoiceLabel,
+                next.MicLine,
+                next.PresenceMode,
+                next.LinkLabel,
+                next.ActivityLine));
         }
 
         if (differs)
         {
             Changed?.Invoke();
         }
+    }
+
+    private string BuildActivityLine()
+    {
+        // P4-FEEDBACK: activity must not override Waiting (K7) — P4-D16
+        if (_voice.AwaitingAnswer || _suppressActivityForReply)
+        {
+            return "";
+        }
+
+        for (var i = _activeTools.Count - 1; i >= 0; i--)
+        {
+            var mapped = MapToolActivity(_activeTools[i].Name);
+            if (mapped is not null)
+            {
+                return mapped;
+            }
+        }
+
+        if (_provisionalToolName is not null)
+        {
+            return MapToolActivity(_provisionalToolName) ?? "";
+        }
+
+        return "";
+    }
+
+    private static string? MapToolActivity(string name)
+    {
+        if (ToolActivityNames.TryGetValue(name, out var mapped))
+        {
+            return mapped;
+        }
+
+        return ActivityUnknown;
     }
 
     private void LogFactChange(string name, bool previous, bool current)

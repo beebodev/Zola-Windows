@@ -91,6 +91,9 @@ internal sealed class PresenceAnimator
     // P4-ASK: thin pass-through of monitor bout signals for question speech release — P4-D13
     internal bool PlaybackMonitorAvailable => _playback is { IsAvailable: true };
 
+    // P4-FEEDBACK: read-only — seed reply release when a bout is already playing at complete — P4-D18
+    internal bool PlaybackBoutActive => _playback is { IsAvailable: true, IsBoutActive: true };
+
     internal event Action? PlaybackBoutStarted;
 
     // P4-ASK: true when BoutStopped came from ForceInactive (never a rule-1 release) — P4-D13

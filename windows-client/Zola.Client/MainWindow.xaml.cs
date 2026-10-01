@@ -189,7 +189,8 @@ public sealed partial class MainWindow : Window
                 var sessionId = _requests.TryGetSessionId(id);
                 return !string.IsNullOrEmpty(sessionId)
                     && string.Equals(sessionId, _chat.SessionId, StringComparison.Ordinal);
-            });
+            },
+            () => _presence?.PlaybackBoutActive == true);
         _presence.SetReducedMotion(!_uiSettings.AnimationsEnabled);
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
         {
@@ -209,11 +210,16 @@ public sealed partial class MainWindow : Window
         _chat.InterruptAcknowledged += status => Dispatch(() => OnInterruptAcknowledged(status));
         _chat.Routed += note => Dispatch(() => OnRouted(note));
         _chat.Unreachable += reason => Dispatch(() => ShowUnreachable(reason));
+        // P4-FEEDBACK: tool lifecycle → display activity line — P4-D16
+        _chat.ToolStarted += (id, name, _) => Dispatch(() => OnToolStarted(id, name));
+        _chat.ToolCompleted += (id, name, _) => Dispatch(() => OnToolCompleted(id, name));
+        _chat.ToolGenerating += (name, _) => Dispatch(() => OnToolGenerating(name));
         // P4-REQUEST: socket hand-off into the broker; notices use the existing route — P4-D06
         _chat.Replacing += () => _requests.MarkSocketReplacing();
         _chat.ServerRequestReceived += (id, method, parameters) => _requests.OnRequest(id, method, parameters);
         _chat.ServerRequestCancelled += (id, method, reason) => _requests.OnCancel(id, method, reason);
-        _requests.Notice += text => Dispatch(() => OnRouted(text));
+        // P4-FEEDBACK: broker notices use StatusText so NoticeHost / panel mirror show them — P4-D17
+        _requests.Notice += text => Dispatch(() => ShowRequestNotice(text));
         // P4-REQUEST: card UI listens for open/close; render only while still Open — P4-D07 / P4-D08
         _requests.ClarifyOpened += (id, view) => Dispatch(() => OnClarifyOpened(id, view));
         _requests.ApprovalOpened += (id, view) => Dispatch(() => OnApprovalOpened(id, view));
@@ -572,7 +578,7 @@ public sealed partial class MainWindow : Window
 
             _voice.NoteLateAnswerDropped(boundClarifyId, text.Length);
             _requests.NoteLateAnswerDropped(boundClarifyId, text.Length);
-            OnRouted(NoticeLateAnswer);
+            ShowRequestNotice(NoticeLateAnswer);
             return;
         }
 
@@ -598,7 +604,7 @@ public sealed partial class MainWindow : Window
             // P4-ASK: missing view for an id is a late/stale drop, never silent — P4-D14
             _voice.NoteLateAnswerDropped(id, text.Length);
             _requests.NoteLateAnswerDropped(id, text.Length);
-            OnRouted(NoticeLateAnswer);
+            ShowRequestNotice(NoticeLateAnswer);
             return;
         }
 
@@ -633,6 +639,23 @@ public sealed partial class MainWindow : Window
         UpdateChrome();
     }
 
+    // P4-FEEDBACK: request notices share StatusText with voice so the panel-header mirror sees them — P4-D17
+    private void ShowRequestNotice(string text)
+    {
+        if (_unreachable || string.IsNullOrWhiteSpace(text))
+        {
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                WriteDockLog("request_notice_skipped_unreachable text_len=" + text.Length);
+            }
+
+            return;
+        }
+
+        StatusText.Text = text;
+        UpdateChrome();
+    }
+
     private void ApplyVoiceChrome()
     {
         // P3-STATE: the window assigns chrome from the display record — P3-D03
@@ -648,6 +671,18 @@ public sealed partial class MainWindow : Window
         var s = _display.Current;
         // P3-SHELL: HUD and dock labels are presentation-only upper-case; the model strings stay as they are — P3-D06
         VoiceStateText.Text = VoiceBulletPrefix + s.VoiceLabel.ToUpperInvariant();
+        // P4-FEEDBACK: activity line under VOICE; empty when Waiting or reply text — P4-D16
+        if (string.IsNullOrEmpty(s.ActivityLine))
+        {
+            ActivityText.Text = "";
+            ActivityText.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            ActivityText.Text = s.ActivityLine;
+            ActivityText.Visibility = Visibility.Visible;
+        }
+
         MicIndicatorText.Text = s.MicLine.ToUpperInvariant();
         ModeButtonLabel.Text = s.ModeWord.ToUpperInvariant();
         MicButtonLabel.Text = s.MicButtonContent.ToUpperInvariant();
@@ -656,6 +691,54 @@ public sealed partial class MainWindow : Window
         MicButton.IsEnabled = s.MicButtonEnabled;
         // P4-REQUEST: approval buttons follow VoiceGated on every chrome refresh — P4-D07
         RefreshApprovalGateButtons();
+        SyncLiveBubbleActivity(s.ActivityLine);
+    }
+
+    // P4-FEEDBACK: tool events feed the display model and refresh chrome — P4-D16
+    private void OnToolStarted(string? toolId, string name)
+    {
+        _display.OnToolStarted(toolId, name);
+        ApplyVoiceChrome();
+        UpdateDockVisibility();
+    }
+
+    private void OnToolCompleted(string? toolId, string name)
+    {
+        _display.OnToolCompleted(toolId, name);
+        ApplyVoiceChrome();
+    }
+
+    private void OnToolGenerating(string name)
+    {
+        _display.OnToolGenerating(name);
+        ApplyVoiceChrome();
+        UpdateDockVisibility();
+    }
+
+    // P4-FEEDBACK: empty live bubble shows the activity line until reply text arrives — P4-D16
+    private void SyncLiveBubbleActivity(string activityLine)
+    {
+        if (_live is null || _turnFinalized)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(_live.Body.Text))
+        {
+            _live.Activity.Visibility = Visibility.Collapsed;
+            _live.Activity.Text = "";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(activityLine))
+        {
+            _live.Activity.Visibility = Visibility.Collapsed;
+            _live.Activity.Text = "";
+            return;
+        }
+
+        _live.Activity.Text = activityLine;
+        _live.Activity.Visibility = Visibility.Visible;
     }
 
     private void OnSubmitAcknowledged(string status)
@@ -711,6 +794,35 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // P4-FEEDBACK: Stop speaking — voice only; turn and text keep going — P4-FB-STOP
+    private async void OnStopSpeakingClick(object sender, RoutedEventArgs e)
+    {
+        if (!_voice.CanStopSpeaking || _unreachable)
+        {
+            return;
+        }
+
+        StopSpeakingButton.IsEnabled = false;
+        try
+        {
+            await _voice.StopSpeakingAsync().ConfigureAwait(false);
+        }
+        catch (ChatUnreachableException ex)
+        {
+            Dispatch(() => ShowUnreachable(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Dispatch(() =>
+            {
+                StatusText.Text = ex.Message;
+                UpdateChrome();
+            });
+        }
+
+        Dispatch(UpdateChrome);
+    }
+
     private void OnInterruptAcknowledged(string status)
     {
         if (!string.Equals(status, "interrupted", StringComparison.Ordinal))
@@ -739,6 +851,8 @@ public sealed partial class MainWindow : Window
             _live.Body.Text = "";
             _live.Badge.Visibility = Visibility.Collapsed;
             ApplyBubbleChrome(_live.Border, mine: false, "complete");
+            // P4-FEEDBACK: cleared bubble can show tools again until text arrives — P4-D16
+            _display.NoteLiveBubbleReset();
         }
         else
         {
@@ -765,7 +879,15 @@ public sealed partial class MainWindow : Window
 
         // P1-CLIENT: each message.delta appends one chunk into the prepared response — P1-D01
         _live ??= AddLiveBubble();
+        var hadText = _live.Body.Text.Length > 0;
         _live.Body.Text += chunk;
+        // P4-FEEDBACK: first reply text clears the activity line — P4-D16
+        if (!hadText && _live.Body.Text.Length > 0)
+        {
+            _display.NoteReplyTextStarted();
+            ApplyVoiceChrome();
+        }
+
         // P2-SPEAK: the controller counts the accumulated reply, not this chunk alone — P2-D12
         _voice.OnTurnDelta(chunk);
         ScrollToEnd();
@@ -805,6 +927,8 @@ public sealed partial class MainWindow : Window
                 _orphanInterruptedCompletes++;
             }
 
+            // P4-FEEDBACK: interrupt clears the activity set — P4-D16
+            _display.ClearToolActivity();
             StyleLive("interrupted", text, replaceText: fromComplete && text.Length > 0);
             // P2-VOICE: the styled bubble stays in the transcript; the next message.start opens a new one — P2-D12
             _live = null;
@@ -829,6 +953,8 @@ public sealed partial class MainWindow : Window
             _lastTurnErrored = true;
         }
 
+        // P4-FEEDBACK: turn end clears the activity set — P4-D16
+        _display.ClearToolActivity();
         StyleLive(outcome, text, replaceText: text.Length > 0);
         // P2-VOICE: the styled bubble stays in the transcript; the next message.start opens a new one — P2-D12
         _live = null;
@@ -866,6 +992,8 @@ public sealed partial class MainWindow : Window
         _sessionReady = false;
         // P4-ASK: disconnect abandons pending question speech/capture — P4-D13
         _voice.AbandonPendingQuestion("unreachable");
+        // P4-FEEDBACK: disconnect clears the activity set — P4-D16
+        _display.ClearToolActivity();
         StatusText.Text = reason.StartsWith("Backend unreachable", StringComparison.Ordinal)
             ? reason
             : "Backend unreachable. " + reason;
@@ -918,9 +1046,17 @@ public sealed partial class MainWindow : Window
     {
         // P1-CLIENT: a fresh assistant bubble is the response area for this turn — P1-D01
         var badge = new TextBlock { Style = Token<Style>(TokenBubbleHeadingStyle), Visibility = Visibility.Collapsed };
+        // P4-FEEDBACK: activity sits above the body while the reply is still empty — P4-D16
+        var activity = new TextBlock
+        {
+            Style = Token<Style>(TokenBubbleHeadingStyle),
+            TextWrapping = TextWrapping.WrapWholeWords,
+            Visibility = Visibility.Collapsed,
+        };
         var body = new TextBlock { Style = Token<Style>(TokenBodyStyle), TextWrapping = TextWrapping.WrapWholeWords, IsTextSelectionEnabled = true };
         var stack = new StackPanel { Spacing = Token<double>(TokenSpace4) };
         stack.Children.Add(badge);
+        stack.Children.Add(activity);
         stack.Children.Add(body);
         var border = new Border
         {
@@ -932,7 +1068,7 @@ public sealed partial class MainWindow : Window
         };
         ApplyBubbleChrome(border, mine: false, "complete");
         Transcript.Children.Add(border);
-        return new LiveResponse(border, badge, body);
+        return new LiveResponse(border, badge, activity, body);
     }
 
     private void AddBubble(string title, string text, bool mine)
@@ -1544,6 +1680,10 @@ public sealed partial class MainWindow : Window
         CancelButton.IsEnabled = _streaming && !_unreachable;
         // P3-SHELL: Cancel is in the dock only while a turn is live — P3-D11
         CancelButton.Visibility = _streaming && !_unreachable ? Visibility.Visible : Visibility.Collapsed;
+        // P4-FEEDBACK: Stop is separate from Cancel; visibility from VC facts — P4-FB-STOP
+        var canStop = _voice.CanStopSpeaking && !_unreachable;
+        StopSpeakingButton.IsEnabled = canStop;
+        StopSpeakingButton.Visibility = canStop ? Visibility.Visible : Visibility.Collapsed;
         // P1-SESSION: the list can open beside a live chat; create and resume wait until the turn is idle — P1-D04
         var backendUp = _backend.WebSocketPermitted && !_unreachable && !_switchInFlight;
         SessionsButton.IsEnabled = backendUp;
@@ -1763,6 +1903,8 @@ public sealed partial class MainWindow : Window
         // P1-SESSION: new and resumed sessions do not keep the previous transcript on screen — P1-D04
         // P4-ASK: session change abandons pending question; spoken-id set kept so re-shows stay silent — P4-D13
         _voice.AbandonPendingQuestion("session_change");
+        // P4-FEEDBACK: session switch clears the activity set — P4-D16
+        _display.ClearToolActivity();
         Transcript.Children.Clear();
         // P4-REQUEST: card visuals drop with the transcript; broker keeps parked entries — P4-D08
         _requestCards.Clear();
@@ -2247,6 +2389,26 @@ public sealed partial class MainWindow : Window
         {
             args.Handled = true;
             HideSessions();
+            return;
+        }
+
+        // P4-FEEDBACK: Esc → Stop when panels are closed; QuestionSpeaking = no-op + log — P4-FB-STOP
+        if (_unreachable)
+        {
+            return;
+        }
+
+        if (_voice.QuestionSpeaking)
+        {
+            args.Handled = true;
+            _ = _voice.StopSpeakingAsync();
+            return;
+        }
+
+        if (_voice.CanStopSpeaking)
+        {
+            args.Handled = true;
+            OnStopSpeakingClick(StopSpeakingButton, new RoutedEventArgs());
         }
     }
 
@@ -2292,11 +2454,13 @@ public sealed partial class MainWindow : Window
     private void UpdateDockVisibility()
     {
         var inReveal = PointerInDockReveal();
+        // P4-FEEDBACK: keep the dock visible while Stop is available — P4-FB-STOP
         var wanted = inReveal
             || FocusInsideDock()
             || ConversationOverlay.Visibility == Visibility.Visible
             || _sessionsOpen
-            || _streaming;
+            || _streaming
+            || _voice.CanStopSpeaking;
         if (wanted)
         {
             _dockHideTimer.Stop();
@@ -2321,7 +2485,7 @@ public sealed partial class MainWindow : Window
     private void OnDockHideTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
         sender.Stop();
-        if (PointerInDockReveal() || FocusInsideDock() || ConversationOverlay.Visibility == Visibility.Visible || _sessionsOpen || _streaming)
+        if (PointerInDockReveal() || FocusInsideDock() || ConversationOverlay.Visibility == Visibility.Visible || _sessionsOpen || _streaming || _voice.CanStopSpeaking)
         {
             return;
         }
@@ -2491,13 +2655,16 @@ public sealed partial class MainWindow : Window
     }
 
     // P3-LOOK: one method decides notice opacity, DetailText, and overlay placement — P3-D18
+    // P4-FEEDBACK: when the panel is open, mirror notices into the panel header — P4-D17
     private void UpdateNoticeVisibility()
     {
         var sticky = _unreachable || _switchInFlight || _historyPending || _lastTurnErrored;
         var text = StatusText.Text ?? "";
         var textChanged = text != _noticeSeenText;
         _noticeSeenText = text;
-        DetailText.Visibility = sticky && !string.IsNullOrEmpty(DetailText.Text) ? Visibility.Visible : Visibility.Collapsed;
+        var detailVisible = sticky && !string.IsNullOrEmpty(DetailText.Text);
+        DetailText.Visibility = detailVisible ? Visibility.Visible : Visibility.Collapsed;
+        SyncPanelNoticeMirror(text, detailVisible);
         PlaceNotice();
         if (sticky)
         {
@@ -2521,6 +2688,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // P4-FEEDBACK: panel header shows the same status/detail the bottom host would — P4-D17
+    private void SyncPanelNoticeMirror(string statusText, bool detailVisible)
+    {
+        var panelOpen = ConversationOverlay.Visibility == Visibility.Visible;
+        var hasStatus = !string.IsNullOrWhiteSpace(statusText);
+        PanelNoticeStatus.Text = hasStatus ? statusText : "";
+        PanelNoticeDetail.Text = detailVisible ? (DetailText.Text ?? "") : "";
+        PanelNoticeDetail.Visibility = detailVisible && panelOpen ? Visibility.Visible : Visibility.Collapsed;
+        PanelNoticeHost.Visibility = panelOpen && (hasStatus || detailVisible) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void OnNoticeTextChanged(DependencyObject sender, DependencyProperty dp)
     {
         UpdateNoticeVisibility();
@@ -2539,6 +2717,20 @@ public sealed partial class MainWindow : Window
 
     private void SetNoticeShown(bool show)
     {
+        var sticky = _unreachable || _switchInFlight || _historyPending || _lastTurnErrored;
+        var panelOpen = ConversationOverlay.Visibility == Visibility.Visible;
+        // P4-FEEDBACK: bottom host stays hidden while the panel mirrors notices — P4-D17
+        if (panelOpen)
+        {
+            var hasStatus = !string.IsNullOrWhiteSpace(PanelNoticeStatus.Text);
+            var hasDetail = PanelNoticeDetail.Visibility == Visibility.Visible
+                && !string.IsNullOrEmpty(PanelNoticeDetail.Text);
+            PanelNoticeHost.Visibility = (show || sticky) && (hasStatus || hasDetail)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            show = false;
+        }
+
         var target = show ? DockShownOpacity : DockHiddenOpacity;
         _noticeStoryboard?.Stop();
         if (!_uiSettings.AnimationsEnabled)
@@ -2565,7 +2757,8 @@ public sealed partial class MainWindow : Window
     {
         var overlayOpen = ConversationOverlay.Visibility == Visibility.Visible;
         var windowWidth = RootGrid.ActualWidth > 0 ? RootGrid.ActualWidth : AppWindow.Size.Width;
-        if (!overlayOpen)
+        // P4-FEEDBACK: panel open → notices live in the header; keep bottom host collapsed — P4-D17
+        if (overlayOpen)
         {
             NoticeHost.ClearValue(FrameworkElement.WidthProperty);
             NoticeHost.HorizontalAlignment = HorizontalAlignment.Center;
@@ -2574,13 +2767,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var overlayWidth = ConversationOverlay.ActualWidth > 0 ? ConversationOverlay.ActualWidth : ConversationOverlay.Width;
-        var remaining = Math.Max(0, windowWidth - overlayWidth);
-        var margin = Token<Thickness>(TokenNoticeMargin);
-        NoticeHost.HorizontalAlignment = HorizontalAlignment.Left;
-        NoticeHost.Width = remaining;
-        NoticeHost.MaxWidth = remaining;
-        NoticeHost.Margin = new Thickness(0, margin.Top, 0, margin.Bottom);
+        NoticeHost.ClearValue(FrameworkElement.WidthProperty);
+        NoticeHost.HorizontalAlignment = HorizontalAlignment.Center;
+        NoticeHost.Margin = Token<Thickness>(TokenNoticeMargin);
+        NoticeHost.MaxWidth = windowWidth * Token<double>(TokenNoticeMaxFraction);
     }
 
     [DllImport("user32.dll")]
@@ -2598,16 +2788,20 @@ public sealed partial class MainWindow : Window
 
     private sealed class LiveResponse
     {
-        public LiveResponse(Border border, TextBlock badge, TextBlock body)
+        public LiveResponse(Border border, TextBlock badge, TextBlock activity, TextBlock body)
         {
             Border = border;
             Badge = badge;
+            Activity = activity;
             Body = body;
         }
 
         public Border Border { get; }
 
         public TextBlock Badge { get; }
+
+        // P4-FEEDBACK: activity line inside the empty live bubble — P4-D16
+        public TextBlock Activity { get; }
 
         public TextBlock Body { get; }
     }
