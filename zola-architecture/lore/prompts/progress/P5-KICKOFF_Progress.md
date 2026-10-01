@@ -103,6 +103,6 @@ Applied four edits verbatim (CRLF preserved; OQ bare_LF=0, RM bare_LF=0). Nothin
 
 ### Closeout SHAs
 
-- Implementation commit: *(pending 4d)*
+- Implementation commit: `41585cfdff5f00ee6845fe12753bad8390573ebd`
 - Merge SHA on main: *(pending 4g)*
 - Final main tip: *(pending 4h)*
