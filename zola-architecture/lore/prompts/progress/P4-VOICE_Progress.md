@@ -24,7 +24,7 @@
 
 ## Closeout SHAs
 
-- Implementation commit: *(pending 9d)*
+- Implementation commit: `81652ca7442dd96aace777ff21914f9c9256ab42`
 - Merge SHA on main: *(pending 9g)*
 - Final main tip: *(pending 9i)*
 
