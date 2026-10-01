@@ -894,4 +894,4 @@ Applied approved Phase 3 draft (revised) to lore files. No source/profile/plan e
 ### Closeout SHAs
 - Lore commit: `0fba13dc95e95780312a42febbf0a0538c5b898e`
 - Merge SHA on main: `5a43c3698ebc4796992f2709c1bfd2e1d96a8e05`
-- Final main tip: *(filled after tip-record commit; see closeout final message)*
+- Final main tip: `43e0df5ea8678df23c375fd5eba64d62f7206a84`
