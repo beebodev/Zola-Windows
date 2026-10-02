@@ -52,6 +52,17 @@ P5PRE G-LIVE). The external dictation tool must be confirmed off before any voic
   `"voice.transcript"`. The reply's silent follow-up then skips `CancelFollowUp` (around L1873),
   `Resting` never returns, and `wake.resume` is never sent (AUD-01). This was reproduced live on L1
   try 2 and matches the 2026-10-01 09:58–09:59 log.
+- `CancelFollowUp` (around L2117–2145) is the single place a follow-up window ends. It clears
+  `_followUpArmed` and `_followUpCaptureStarted`, but not `_followUpTranscriptSeen`. Every
+  non-empty transcript sets `seen = true` (around L1954) and then calls `CancelFollowUp` (around
+  L1963).
+- The **only** reader of `_followUpTranscriptSeen` is the idle check
+  `_followUpCaptureStarted && !_followUpTranscriptSeen` (around L1873). The only reader of
+  `_cancelReason` gates one timeline line in `CancelFollowUp` (around L2123).
+- **P5-WAKE Phase 2 (v1.1 plan):** a clarify-answer capture can still be live when
+  `OnTurnCompleted("complete")` runs. `MainWindow.OnRequestClosed` → `AbandonPendingQuestionIfId`
+  clears the capture ids on a card Cancel or a timeout, without ending the capture. A reset at
+  window open would clobber that live capture. That's why P5-D01 was revised in v1.2.
 - Several `ReconcileWakeRestingAsync` exits are silent, and no line snapshots the `Resting` inputs
   (AUD-02).
 
@@ -74,29 +85,32 @@ P5PRE G-LIVE). The external dictation tool must be confirmed off before any voic
 
 ### Wake (Track 1)
 
-**P5-D01 — Each reply follow-up window starts clean, at the point the window opens.**
-In `OnTurnCompleted`'s "complete" path, at the point that sets `_followUpArmed = true`, reset the
-per-window follow-up fields to the values `OnTurnStarted` gives them:
-- `_followUpCaptureStarted = false`
-- `_followUpTranscriptSeen = false`
-- `_followUpEchoPending = false`
-- `_echoIgnoreCount = 0`
-- `_cancelReason = ""`
+**P5-D01 — A follow-up window that closes clears all of its own flags (revised in v1.2).**
+`CancelFollowUp`, the single place a follow-up window ends, sets `_followUpTranscriptSeen = false`
+together with the `_followUpArmed = false` and `_followUpCaptureStarted = false` it already sets. A
+closed window then leaves nothing behind for the next one. That includes the reply window after a
+clarify answer, which is not a new turn and so never reaches `OnTurnStarted`'s reset.
 
-In a normal turn these already hold those values when the reply completes, so the reset is a no-op
-on the ordinary path. After a clarify answer, it clears the leftover state that makes the silent
-follow-up skip `CancelFollowUp`.
+**Why this has no effect on the ordinary path:**
+- The only reader of `seen` is the idle check, which also requires `_followUpCaptureStarted`.
+- `CancelFollowUp` clears `started` in the same step, so the cleared `seen` is never read until a
+  **new** window sets `started = true` again.
+- That new window is exactly the case S41 needs fixed.
 
-**Invariant:** window initialization is one step. All five fields are reset before
-`_followUpArmed` becomes `true`, so no observer, callback or reconcile pass can ever see an armed
-window holding the previous window's state.
+**Why this is safe with a live capture:** nothing runs when the reply window opens. A clarify
+capture still live after a card Cancel or timeout (the v1.1 plan's Phase 2 finding) is never
+touched. Its own idle or transcript ending runs the existing paths.
 
-This fixes the owner of the window's state (fix the authority, not the caller). Rejected
-alternatives:
+**v1.1 approach, superseded:** resetting five fields where the reply window opens
+(`OnTurnCompleted`). P5-WAKE Phase 2 proved it could clobber a live clarify capture.
+
+**Rejected alternatives:**
 - clearing the flag in the clarify-answer routing (a caller-side patch that the next non-turn path
   would miss);
 - letting the idle path always cancel (changes ordinary follow-up semantics);
-- adding a second resume path (violates P2-D12).
+- adding a second resume path (violates P2-D12);
+- deferring window initialization until an orphaned capture ends (adds a second initialization
+  moment for no gain over this fix).
 
 Resolves `S41`.
 
@@ -105,7 +119,11 @@ Resolves `S41`.
   sending `wake.pause` / `wake.resume`;
 - a line on each early return that is silent today (`!WakeArmed`, generation mismatch, `!Resting`
   inside `ResumeWakeAsync`, the converged-no-op return);
-- `seen=` on the existing `follow_up_release` line.
+- `seen=` on the existing `follow_up_release` line;
+- `_cancelReason = ""` at the point `OnTurnCompleted`'s "complete" path arms the reply window. This
+  field only latches one timeline line per window. Left stale after a clarify answer, it would
+  suppress the reply window's `fireOrCancel=` line. Clearing it can't affect a live capture, because
+  nothing but that log line reads it.
 
 These are logging changes only, with no behavior change. They let this fix, and any future stuck
 pause, be confirmed from `voice-timeline.log` alone.
@@ -253,10 +271,10 @@ Brian's verdicts are recorded in his own words.
 ### Problem
 After Brian answers a spoken clarify question by voice, the reply's follow-up window ends silently,
 and wake is never resumed: HUD Idle, `MIC: OFF`, and "Hey Zola" does nothing until a Text↔Voice
-toggle (P5PRE-AUD-01, L1 try 2; 2026-10-01 09:58–09:59 log). The window inherits
-`_followUpTranscriptSeen = true` and a stale `_cancelReason` from the answer capture, because only
-`OnTurnStarted` and the clarify arm reset them. The failure is invisible in the client log
-(AUD-02).
+toggle (P5PRE-AUD-01, L1 try 2; 2026-10-01 09:58–09:59 log). `CancelFollowUp` ends the answer
+capture's window but leaves `_followUpTranscriptSeen = true`. A clarify answer starts no turn, so
+`OnTurnStarted` never clears it, and the reply window inherits it. A stale `_cancelReason` also hides
+that window's cancel line. The failure is invisible in the client log (AUD-02).
 
 ### Files to read
 - `windows-client/Zola.Client/VoiceController.cs`. Focus on:
@@ -274,14 +292,20 @@ toggle (P5PRE-AUD-01, L1 try 2; 2026-10-01 09:58–09:59 log). The window inheri
 ### Changes
 
 **`VoiceController.cs`:**
-1. **`OnTurnCompleted`, "complete" path:** immediately before `_followUpArmed = true;` (~L1648),
-   reset the five per-window fields to the `OnTurnStarted` values (P5-D01). All five assignments
-   come before `_followUpArmed = true`, with nothing that can raise events or await in between
-   (the P5-D01 invariant). One block comment:
-   `// P5-WAKE: a reply follow-up window starts clean; a clarify answer is not a turn — P5-D01`.
-   **Pre-check (Phase 2 of the track prompt):** confirm that no capture can be active when this
-   path runs. That includes a clarify-answer capture still open at turn completion, for example
-   after a clarify timeout. If one can, stop G-ARCH. Don't adapt the fix.
+1. **`CancelFollowUp` (P5-D01):** add `_followUpTranscriptSeen = false;` beside the existing
+   `_followUpCaptureStarted = false;` (~L2131). One comment:
+   `// P5-WAKE: a closed window clears all its flags; a clarify answer starts no turn to reset seen — P5-D01`.
+   **Pre-check (Phase 2 of the track prompt):**
+   - confirm, by listing every read site, that the idle check is the only reader of
+     `_followUpTranscriptSeen`, and that every path setting `_followUpCaptureStarted = true` is a
+     new capture start;
+   - confirm that `CancelFollowUp` is the only window-closing path that leaves `seen` stale.
+
+   If any other reader exists, stop G-ARCH.
+1b. **`OnTurnCompleted`, "complete" path (P5-D02, logging):** set `_cancelReason = "";` immediately
+   before `_followUpArmed = true;` (~L1650). One comment:
+   `// P5-WAKE: fresh window gets its own cancel log line — P5-D02`. Confirm in Phase 2 that its
+   only reader is the timeline-line gate in `CancelFollowUp`.
 2. **`ReconcileWakeRestingAsync` and `ResumeWakeAsync`:** add the P5-D02 diagnostic lines to
    `voice-timeline.log`:
    - a compact `Resting` input snapshot in one line (for example
@@ -317,9 +341,11 @@ Hermes RPC usage.
 - [ ] Build passes (0 warnings introduced).
 
 **Complexity:** Small
-**Primary risk:** The reset clobbers a window that is legitimately in use. That would be a
-clarify-answer capture still open when the turn completes (clarify timeout), so a real answer gets
-treated as a fresh window. The Phase 2 pre-check and the clarify-timeout regression exist for this.
+**Primary risk:** An orphaned clarify capture is still live when the reply window arms, after a card
+Cancel or a timeout. The fix itself doesn't touch it, but the existing late-drop and idle paths must
+end it cleanly and still resume wake. Smoke steps B4 (Cancel during the answer capture) and B6
+(timeout) are the proof. A failure there is pre-existing behavior to report, not to patch inside
+this track.
 
 ---
 
@@ -433,7 +459,7 @@ After both tracks are merged to `main`:
 - Annotate:
   - `C8`: **superseded** by P5-D10 (forget covers both memory files; `state.db` is not redacted);
   - `P4-D28` (stands, per P5-D08);
-  - `P2-D12` (window-state rule, per P5-D01);
+  - `P2-D12` (window-state rule: a closing window clears all its flags, per P5-D01);
   - `P1-MEMORY` / `P1-D05` (budget 4400/4000; tags now in the live soul);
   - `P4` (to be revisited in Phase 6 as "local only", per P5-D11; not revised here).
 
@@ -506,7 +532,7 @@ After both tracks are merged to `main`:
 
 ---
 
-*Phase 5 Build Plan version 1.1 (v1.1: ChatGPT review: atomic window init, clarify-timeout smoke, identity-voiced save wording with a fallback, correction pair, routing tie-breaker, search ≠ memory, blind test with per-candidate data, D09 wording, D10 supersedes C8, skills privacy)*
+*Phase 5 Build Plan version 1.2 (v1.2: P5-D01 revised. The window close (`CancelFollowUp`) clears `seen`, after P5-WAKE Phase 2 found that a window-open reset could clobber a live clarify capture; `_cancelReason` moves to P5-D02 logging. v1.1: ChatGPT review: atomic window init, clarify-timeout smoke, identity-voiced save wording with a fallback, correction pair, routing tie-breaker, search ≠ memory, blind test with per-candidate data, D09 wording, D10 supersedes C8, skills privacy)*
 *Created 2026-10-01*
 *Base SHA: `9523422d7db3c208b66fb078bcbd4c8f1c8d3f30` (record the actual tip at plan commit)*
 *Prerequisite audit: P5PRE — merge `c5be52e47ef8686d3643f5c57cf262cfd3991b8b`*
