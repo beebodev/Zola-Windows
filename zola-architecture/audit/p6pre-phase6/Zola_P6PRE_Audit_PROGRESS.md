@@ -228,8 +228,8 @@ Note: default `approvals.mode` is `smart`; live profile forces `manual`.
 | 10e Push branch | done |
 | 10f Merge main | done (`--no-ff`) |
 | 10g Merge SHA | `92dc707ac047d2808b9f1848bb0e31f96689065a` |
-| 10h Delete branch | pending |
-| 10i Delete scratch | pending |
+| 10h Delete branch | done (local + origin) |
+| 10i Delete scratch | done — `C:\Users\test\Dev\zola-spikes\p6pre\` gone |
 
 ## Notes
 
