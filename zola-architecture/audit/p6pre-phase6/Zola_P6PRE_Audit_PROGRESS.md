@@ -63,9 +63,9 @@
 | 5 | Time Awareness (S43) | COMPLETE |
 | 6 | Forget / Privacy | COMPLETE |
 | 7 | Approvals (S35) | COMPLETE |
-| 8 | Live Probes | COMPLETE (P-1/P-2 done; P-3 skipped; P-4 done; hashes match) |
+| 8 | Live Probes | COMPLETE |
 | 9 | Synthesis | COMPLETE |
-| 10 | Closeout | IN PROGRESS |
+| 10 | Closeout | COMPLETE |
 
 ---
 
@@ -224,10 +224,10 @@ Note: default `approvals.mode` is `smart`; live profile forces `manual`.
 | 10a Verify | PASS — changes only under `p6pre-phase6/`; hermes clean; live hashes match Phase 1 |
 | 10b Progress | done — 38 findings |
 | 10c Audit commit | `84f14d83db8efd7e495acbfa078a8da66b415683` |
-| 10d Tip SHA | this commit |
-| 10e Push branch | pending |
-| 10f Merge main | pending |
-| 10g Merge SHA | pending |
+| 10d Tip SHA | `f5fe97d99ac0953dc85137563649577c7b6a9147` |
+| 10e Push branch | done |
+| 10f Merge main | done (`--no-ff`) |
+| 10g Merge SHA | `92dc707ac047d2808b9f1848bb0e31f96689065a` |
 | 10h Delete branch | pending |
 | 10i Delete scratch | pending |
 
