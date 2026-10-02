@@ -25,7 +25,7 @@
 | 6 | Back Up, Capture Baseline, Deploy, Activate, Verify | COMPLETE |
 | 7 | Smoke Test | COMPLETE — smoke test passed |
 | 7b | Skill investigation (read-only) | COMPLETE — Brian accepted |
-| 8 | Closeout | IN PROGRESS |
+| 8 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -751,4 +751,5 @@ All Track 2 exit criteria: **YES** (orphan-reap session_end ⚠️ observed-not-
 
 ### Closeout SHAs
 
-*(filled after 8f / 8i)*
+- Implementation commit (8f): `a1da9c82e377caf158b192f21f15f0fc59f65ff4`
+- Merge SHA on main (8i): *(filled after merge)*
