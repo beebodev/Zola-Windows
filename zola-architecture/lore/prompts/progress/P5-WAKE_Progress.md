@@ -28,7 +28,7 @@
 | 2 | Read, Understand, and Pre-Check (re-run v1.2) | COMPLETE |
 | 3 | Build | COMPLETE |
 | 4 | Smoke Test | COMPLETE |
-| 5 | Closeout | IN PROGRESS |
+| 5 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -147,5 +147,5 @@ All Track 1 criteria met: **YES**
 ## Closeout SHAs
 
 - Implementation commit: `fdfe3bf255e7c0847a90f241d9e03e6293434727`
-- Merge SHA on main: *(pending 5g)*
-- Final main tip: *(pending 5h)*
+- Merge SHA on main: `d20fbe96fc4af4bf78d48b753b2e3acfa2615418`
+- Final main tip: *(this docs commit after 5h)*
