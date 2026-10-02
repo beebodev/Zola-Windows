@@ -11,13 +11,22 @@ That set is the whole convention. It is not a taxonomy and it is not a schema.
 
 Hermes does not parse or require the brackets. `MemoryStore` and the memory tool accept any text, and nothing in this track checks the prefix. The convention is an instruction for how entries should be written. It is not code-enforced.
 
+Routing (P5-D04): facts about Brian as a person — identity, preferences, people in his life — go in `USER.md` (`user`). Facts about his world — projects, vehicles, decisions, conventions, how things are set up — go in `MEMORY.md` (`memory`). Tie-breaker: if a fact could fit both, store it once in the file for what it is primarily about; never duplicate it to satisfy both.
+
+Brief mention (P5-D03): when Zola saves something on her own (not after "remember this"), she mentions it in a few natural words and continues.
+
+Conversation search (P5-D06): she searches past conversations only when Brian asks about something from an earlier conversation that is not already in her notes, and she says roughly when it was. She does not search on her own for ordinary turns. Search results are evidence for the current answer, not memory — nothing found by `session_search` is saved just because it was found.
+
+P5-MEMORY note (P5-D03–D06): lasting-fact saving, routing, brief mention, and explicit-only conversation search are governed by the live `SOUL.md` "What I remember" section and this file; they override the memory tool's general "save less" guidance.
+
 The live profile config that raises the budgets is outside this repo, at `%LOCALAPPDATA%\hermes\profiles\zola\config.yaml`. Reapply this block to restore it:
 
 ```yaml
 # P1-MEMORY: 2x Hermes defaults (2200/1375) on the existing flat-file store — P1-D05
 memory:
   memory_char_limit: 4400
-  user_char_limit: 2750
+  # P5-MEMORY: USER.md budget raised for lasting-fact saves — P5-D05
+  user_char_limit: 4000
 ```
 
-Hermes deep-merges that section over its defaults, so the other `memory` keys stay at their defaults. A fresh `MemoryStore` built from the profile config should report `memory_char_limit` 4400 and `user_char_limit` 2750. `hermes serve` reads the file on launch.
+Hermes deep-merges that section over its defaults, so the other `memory` keys stay at their defaults. A fresh `MemoryStore` built from the profile config should report `memory_char_limit` 4400 and `user_char_limit` 4000. `hermes serve` reads the file on launch.
