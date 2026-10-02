@@ -59,6 +59,16 @@ sealed class VoiceController
     private const string FollowUpRuleNoBoutEstimate = "no_bout_estimate";
     private const string FollowUpRuleForcedEstimate = "forced_estimate";
     private const string FollowUpRuleMonitorUnavailable = "monitor_unavailable";
+    // P5-WAKE: one structured record per silent wake reconcile / resume exit — P5-D02
+    private const string LogWakeReconcileNoopPrefix = "wake reconcile noop reason=";
+    private const string LogWakeResumeSkippedPrefix = "wake.resume skipped reason=";
+    private const string WakeNoopReasonCoalesce = "coalesce";
+    private const string WakeNoopReasonNotArmed = "!WakeArmed";
+    private const string WakeNoopReasonGenerationMismatch = "generation-mismatch";
+    private const string WakeNoopReasonConverged = "converged";
+    private const string WakeResumeSkippedNotResting = "!Resting";
+    private const string WakeResumeSkippedNotArmed = "!WakeArmed";
+    private const string WakeResumeSkippedNotPaused = "!WakePaused";
     private const string MethodTts = "voice.tts";
     private const string ParamText = "text";
     private const string SpokenBatchMoreSuffix = " …and there are more on screen.";
@@ -1647,6 +1657,8 @@ sealed class VoiceController
             }
 
             var generation = _followUpGeneration;
+            // P5-WAKE: fresh window gets its own cancel log line — P5-D02
+            _cancelReason = "";
             _followUpArmed = true;
             DisposeFollowUpTimer();
             // P4-FEEDBACK: arm reply release (monitor + quiet, or estimate fallback) — P4-D18
@@ -2129,6 +2141,8 @@ sealed class VoiceController
         _followUpArmed = false;
         // P2-WAKE: Resting also requires this flag off; leaving it true ignores later detections as follow-up — P2-D12
         _followUpCaptureStarted = false;
+        // P5-WAKE: a closed window clears all its flags; a clarify answer starts no turn to reset seen — P5-D01
+        _followUpTranscriptSeen = false;
         // P4-ASK: stash closed id only on interrupt-like cancel (not idle/silence — that stole the next wake turn) — P4-D14
         if (ShouldStashClosedClarify(reason))
         {
@@ -2281,7 +2295,8 @@ sealed class VoiceController
                     LogFollowUpReleasePrefix + rule
                     + " complete=" + completeAt.ToString("o")
                     + " estimatedEnd=" + estimatedEnd.ToString("o")
-                    + " delay_s=" + delay.ToString("0.###"));
+                    + " delay_s=" + delay.ToString("0.###")
+                    + " seen=" + (_followUpTranscriptSeen ? GateBoolTrue : GateBoolFalse));
                 await Task.Delay(TimeSpan.FromSeconds(delay)).ConfigureAwait(false);
                 if (!IsReplyReleaseCurrent(generation))
                 {
@@ -2317,7 +2332,8 @@ sealed class VoiceController
                 + " complete=" + completeAt.ToString("o")
                 + " estimatedEnd=" + estimatedEnd.ToString("o")
                 + " startup_s=" + ReplyBoutStartupWindowSeconds.ToString("0.###")
-                + " delay_s=" + estimateDelay.ToString("0.###"));
+                + " delay_s=" + estimateDelay.ToString("0.###")
+                + " seen=" + (_followUpTranscriptSeen ? GateBoolTrue : GateBoolFalse));
             var estimateTask = Task.Delay(TimeSpan.FromSeconds(estimateDelay));
             while (true)
             {
@@ -2406,7 +2422,8 @@ sealed class VoiceController
                     LogFollowUpReleasePrefix + FollowUpRuleForcedEstimate
                     + " complete=" + completeAt.ToString("o")
                     + " estimatedEnd=" + estimatedEnd.ToString("o")
-                    + " remaining_s=" + remaining.ToString("0.###"));
+                    + " remaining_s=" + remaining.ToString("0.###")
+                    + " seen=" + (_followUpTranscriptSeen ? GateBoolTrue : GateBoolFalse));
                 if (remaining > 0)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(remaining)).ConfigureAwait(false);
@@ -2465,7 +2482,8 @@ sealed class VoiceController
                     + " estimatedEnd=" + estimatedEnd.ToString("o")
                     + " bout_stop=" + DateTimeOffset.Now.ToString("o")
                     + " quiet_s=" + FollowUpPostBoutQuietSeconds.ToString("0.###")
-                    + " fire=" + DateTimeOffset.Now.ToString("o"));
+                    + " fire=" + DateTimeOffset.Now.ToString("o")
+                    + " seen=" + (_followUpTranscriptSeen ? GateBoolTrue : GateBoolFalse));
                 ClearReplyFollowUpRelease();
                 await OnFollowUpTimerAsync(generation).ConfigureAwait(false);
                 return;
@@ -2766,6 +2784,33 @@ sealed class VoiceController
         }
     }
 
+    // P5-WAKE: one Resting-input snapshot per silent reconcile / resume exit — P5-D02
+    private string FormatWakeRestingSnapshot()
+    {
+        return " mode=" + Mode
+            + " avail=" + (IsAvailable ? GateBoolTrue : GateBoolFalse)
+            + " session=" + (SessionReady ? GateBoolTrue : GateBoolFalse)
+            + " backend=" + (BackendReachable ? GateBoolTrue : GateBoolFalse)
+            + " turn=" + (TurnRunning ? GateBoolTrue : GateBoolFalse)
+            + " speaking=" + (Speaking ? GateBoolTrue : GateBoolFalse)
+            + " capture=" + (CaptureActive ? GateBoolTrue : GateBoolFalse)
+            + " armed=" + (_followUpArmed ? GateBoolTrue : GateBoolFalse)
+            + " started=" + (_followUpCaptureStarted ? GateBoolTrue : GateBoolFalse)
+            + " seen=" + (_followUpTranscriptSeen ? GateBoolTrue : GateBoolFalse)
+            + " paused=" + (WakePaused ? GateBoolTrue : GateBoolFalse)
+            + " gated=" + (VoiceGated ? GateBoolTrue : GateBoolFalse);
+    }
+
+    private void WriteWakeReconcileNoop(string reason)
+    {
+        WriteTimeline(LogWakeReconcileNoopPrefix + reason + FormatWakeRestingSnapshot());
+    }
+
+    private void WriteWakeResumeSkipped(string reason)
+    {
+        WriteTimeline(LogWakeResumeSkippedPrefix + reason + FormatWakeRestingSnapshot());
+    }
+
     public async Task ArmWakeAsync(bool fromGateOpen = false)
     {
         // P4-LOCK: open-sequence arm passes fromGateOpen; still refuses if facts are gated — P4-D02 / P4-D03
@@ -2961,6 +3006,7 @@ sealed class VoiceController
         if (Interlocked.Exchange(ref _wakeReconcileBusy, 1) == 1)
         {
             Volatile.Write(ref _wakeReconcilePending, 1);
+            WriteWakeReconcileNoop(WakeNoopReasonCoalesce);
             return;
         }
 
@@ -2978,14 +3024,18 @@ sealed class VoiceController
                 var generation = Volatile.Read(ref _connectionGeneration);
                 if (!WakeArmed || generation != Volatile.Read(ref _connectionGeneration))
                 {
+                    WriteWakeReconcileNoop(!WakeArmed ? WakeNoopReasonNotArmed : WakeNoopReasonGenerationMismatch);
                     return;
                 }
 
                 try
                 {
+                    // P5-WAKE: noop record only when this pass sent neither pause nor resume — P5-D02
+                    var acted = false;
                     if (!Resting && !WakePaused)
                     {
                         await PauseWakeAsync(passReason, generation).ConfigureAwait(false);
+                        acted = true;
                     }
                     else if (Resting && WakePaused)
                     {
@@ -2996,11 +3046,13 @@ sealed class VoiceController
                         }
 
                         await ResumeWakeAsync(passReason, generation).ConfigureAwait(false);
+                        acted = true;
                     }
 
                     generation = Volatile.Read(ref _connectionGeneration);
                     if (!WakeArmed || generation != Volatile.Read(ref _connectionGeneration))
                     {
+                        WriteWakeReconcileNoop(!WakeArmed ? WakeNoopReasonNotArmed : WakeNoopReasonGenerationMismatch);
                         return;
                     }
 
@@ -3008,6 +3060,11 @@ sealed class VoiceController
                     var pending = Volatile.Read(ref _wakeReconcilePending) == 1;
                     if (converged && !pending)
                     {
+                        if (!acted)
+                        {
+                            WriteWakeReconcileNoop(WakeNoopReasonConverged);
+                        }
+
                         return;
                     }
                 }
@@ -3084,8 +3141,21 @@ sealed class VoiceController
         }
 
         // P2-WAKE: Resting is re-checked immediately before wake.resume so a stale resume cannot re-open — P2-D12
-        if (!Resting || !WakeArmed || !WakePaused)
+        if (!Resting)
         {
+            WriteWakeResumeSkipped(WakeResumeSkippedNotResting);
+            return;
+        }
+
+        if (!WakeArmed)
+        {
+            WriteWakeResumeSkipped(WakeResumeSkippedNotArmed);
+            return;
+        }
+
+        if (!WakePaused)
+        {
+            WriteWakeResumeSkipped(WakeResumeSkippedNotPaused);
             return;
         }
 
