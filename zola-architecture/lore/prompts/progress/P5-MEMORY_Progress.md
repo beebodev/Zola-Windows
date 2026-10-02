@@ -19,7 +19,7 @@
 | 3 | Propose the Exact Edits (STOP) | COMPLETE |
 | 4 | Back Up, Apply, Mirror, Verify | COMPLETE |
 | 5 | Smoke Test | COMPLETE |
-| 6 | Closeout | IN PROGRESS |
+| 6 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -268,5 +268,5 @@ All criteria met or developer-acknowledged PARTIAL: **YES**
 ## Closeout SHAs
 
 - Implementation commit: 9a0e45991d45a7e0d191db2e8df864399551bf48
-- Merge SHA on main: *(pending 6f)*
-- Final main tip: *(pending 6g)*
+- Merge SHA on main: 569d0d0f24414b3493586237d8039ae2866f93e8
+- Final main tip: *(this 6g docs commit)*
