@@ -1,0 +1,4 @@
+name: zola_tools
+version: 1.0.0
+description: "Side-effect-free arithmetic calculator for Zola (P6-D08)."
+author: Zola

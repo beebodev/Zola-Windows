@@ -1,0 +1,2 @@
+# P6-CALC: ignore plugin bytecode under hermes-plugins — P6-D08
+hermes-plugins/**/__pycache__/
