@@ -222,9 +222,9 @@ Note: default `approvals.mode` is `smart`; live profile forces `manual`.
 | Step | Status |
 |------|--------|
 | 10a Verify | PASS — changes only under `p6pre-phase6/`; hermes clean; live hashes match Phase 1 |
-| 10b Progress | this update |
-| 10c Audit commit | pending |
-| 10d Tip SHA | pending |
+| 10b Progress | done — 38 findings |
+| 10c Audit commit | `84f14d83db8efd7e495acbfa078a8da66b415683` |
+| 10d Tip SHA | this commit |
 | 10e Push branch | pending |
 | 10f Merge main | pending |
 | 10g Merge SHA | pending |
