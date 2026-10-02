@@ -30,3 +30,19 @@ memory:
 ```
 
 Hermes deep-merges that section over its defaults, so the other `memory` keys stay at their defaults. A fresh `MemoryStore` built from the profile config should report `memory_char_limit` 4400 and `user_char_limit` 4000. `hermes serve` reads the file on launch.
+
+## Structured store (P6)
+
+Two kinds of memory, one authority each. The flat files (`USER.md` / `MEMORY.md`) remain the
+authority for current durable facts — written only through the memory tool. A local Zola store
+keeps a structured index of those facts (stable IDs, lifecycle times) and will later hold
+episodes. The index is always rebuildable from the files. Episodes, when they exist, are the
+store's own authority; they may reference facts but never create or change them.
+
+Invariants in short: Zola authors facts through the memory tool; the store does not write the
+files and does not invent facts. Correction keeps a content history; forget erases every copy
+the memory system controls and leaves only a content-free tombstone. Ambiguous disappearances
+and unclear "replace vs forget" cases resolve toward erasure. Retrieval never becomes
+persistence.
+
+(P6-D01–D07)
