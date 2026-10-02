@@ -37,6 +37,8 @@ Remote: `https://github.com/beebodev/Zola-Windows`. Base branch `main` at the sa
 
 Findings at closeout: 19 — 4 HIGH, 3 MEDIUM, 2 LOW, 10 MATCH.
 
+Audit commit: `5629bc2ba04bbfe7a12489946623249b243fba62`
+
 ## Guardrails
 
 - **G-SCOPE:** Read-only diagnostic. Findings only under `zola-architecture/audit/p5pre-phase5/`.
