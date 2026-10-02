@@ -146,6 +146,6 @@ All Track 1 criteria met: **YES**
 
 ## Closeout SHAs
 
-- Implementation commit: *(pending 5d)*
+- Implementation commit: `fdfe3bf255e7c0847a90f241d9e03e6293434727`
 - Merge SHA on main: *(pending 5g)*
 - Final main tip: *(pending 5h)*
