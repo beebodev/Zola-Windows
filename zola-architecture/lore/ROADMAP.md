@@ -121,22 +121,48 @@ One-line track results:
 - **P4-VOICE** — Sonia 0.95; shaping; pitch dropped; P2-D15 refit/margin/
   startup window.
 
-## Current stage — Phase 5 scoped
-Scope locked by the developer 2026-10-01. Track order: `S41` → `S42` →
-`S36`. One read-only pre-audit (P5PRE) covers all four scoped items before
-decisions or a build plan.
-1. ⏳ **AUDIT** — P5PRE, not started.
-In scope:
-- `S41` — Wake/mic not restored after clarify. Track 1, so later voice
-  testing isn't fighting it.
-- `S42` — Cross-session memory. Main track.
-- `S36` — Barge-in return. **Feasibility gate:** the audit ranks candidate
-  paths against acceptance (a)–(e). It is built in Phase 5 only if one path
-  can pass all five; otherwise it moves to a later phase.
-- `S38` — Listen-to-think latency. **Measure only**, inside the audit; no
-  tuning in Phase 5.
-Not in Phase 5 (remain candidates): `S33`, `S34`, `S35`, `S37`, `S39`,
-`S40`, `S17`, `S21`, `S26`, `S12`, `S13`, `S16`, `S24`, `S25`, `S31`.
+## Phase 5 complete
+Phase 5 closed two tracks plus this lore pass. S41 fixed; S42 facts
+carried across sessions; S36 deferred (feasibility gate NO); S38
+measured (no tuning).
+
+1. ✅ **AUDIT** — P5PRE, merge `c5be52e47ef8686d3643f5c57cf262cfd3991b8b`.
+2. ✅ **DECISIONS LOCKED** — `P5-D01`–`P5-D11`.
+3. ✅ **BUILD PLAN WRITTEN** — v1.1 commit
+   `4c6c6439ec20e689a584d42b4c073920fb1afcd2`, merge
+   `198fb00a28ea7036624ff44d0d3e58fa228e474a`; v1.2 commit
+   `e2150607f24f9efa04098049dc0610f59d3c79bb`, merge
+   `97dd29b40ae16d4b79aff436cfed08b35c2d18ca`.
+4. ✅ **TRACKS EXECUTED** — two tracks.
+5. ✅ **VERIFICATION / SMOKE TEST**
+   - P5-WAKE B1–B8 PASS;
+   - P5-MEMORY save rate PASS, routing ⚠️ 9/10, bridge timing ⚠️ (both
+     developer-acknowledged).
+6. ✅ **TRACK MERGED**
+   - kickoff `41585cfdff5f00ee6845fe12753bad8390573ebd` /
+     `9b2ca57f94d42ea5a4a7388c8fddb5d649b1d7b1`;
+   - P5-WAKE impl `fdfe3bf255e7c0847a90f241d9e03e6293434727` / merge
+     `d20fbe96fc4af4bf78d48b753b2e3acfa2615418`;
+   - P5-MEMORY impl `9a0e45991d45a7e0d191db2e8df864399551bf48` / merge
+     `569d0d0f24414b3493586237d8039ae2866f93e8`.
+7. ✅ **LORE CLOSEOUT** — this pass.
+
+One-line track results:
+- **P5-WAKE** — wake after clarify answer; B1–B8 PASS; reconcile
+  diagnostics.
+- **P5-MEMORY** — lasting-fact saving + routing + explicit-only search;
+  save rate PASS; routing ⚠️ 9/10; bridge timing ⚠️.
+
+## Current stage — Phase 6 — Memory (not started)
+Primary: `S14` (structured local memory: entity facts, episodes at
+session end, relevance retrieval) + `S43` (time awareness). Starts with
+its own audit. `P4` is to be revisited as "local only".
+
+Then carry candidates forward (not a committed order):
+- `S44`, `S35`, `S40`, `S38`;
+- `S36` (upstream-gated);
+- `S33`, `S34`, `S37`, `S39`, `S17`, `S21`, `S26`, `S28`;
+- `S12`, `S13`, `S16`, `S24`, `S25`, `S31`.
 
 ## Source documents
 - Audit series: `zola-architecture/audit/winh-hermes-gap/`

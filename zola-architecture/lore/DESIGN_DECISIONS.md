@@ -34,6 +34,8 @@ at the end.
   `[person]`, `[car]`) so entries stay scannable — both cheap,
   config/prompt-level changes, not new engineering. MEMORY.md/USER.md
   remain the single live store for v1.
+  Phase 5 (`P5-D05` / P1-D05): budget now 4400 / 4000; the `[tag]`
+  convention is now in the live soul (`What I remember`).
 - **C5 — Identity assembly: Extend.** Zola edits `SOUL.md` content to be
   her own identity and extends `system_prompt.py`'s assembly logic
   wherever stock Hermes doesn't support what Zola needs (e.g. dynamic
@@ -51,6 +53,9 @@ at the end.
   transcripts) is not redacted. Weaker than P-CASCADE — an accepted
   posture for v1, to be stated explicitly (not left as a silent gap)
   wherever the product documents what "forget" does.
+  Phase 5 (`P5-D10`): superseded — forget removes the entry from whichever
+  memory file holds it (`MEMORY.md` or `USER.md`); `state.db` is not
+  redacted.
 - **C9/C10 — Both architecture docs written.** `Zola_Capability_Acquisition_Architecture.md`
   and `Zola_Tool_Authorization_Architecture.md` are written, covering
   the WINH06 and WINH08 domains that had no Document of Truth during
@@ -124,6 +129,10 @@ at the end.
   becomes the real source of truth and projects a curated summary down
   into MEMORY.md's flat entries so Hermes's existing prompt-injection
   mechanism keeps working unchanged.
+  Phase 5 (`P5-D11`): Phase 6 primary. Adds the `S42` episodes remainder,
+  P5-MEMORY capacity data (~53 chars/fact), the routing-miss pattern
+  (#12), and the skills finding (no personal facts in agent-managed
+  skills). `P4` to be revisited as "local only".
 - **S15 — Gmail OAuth (Google API), replacing the app-password
   adapter: deferred, stated long-term target.** *(Newly clarified
   while scoping Track 5 for the Build Plan — not in the original
@@ -172,6 +181,8 @@ at the end.
   Consistent with `C4` (Zola extends her own MEMORY.md store). Closes
   off the `P-3P` (provider retention/stranding) risk category before
   it becomes a build concern.
+  Phase 5 (`P5-D11`): to be revisited in Phase 6 as "local only". Not
+  revised here.
 ## Security / hardening
 **Standing trigger for this whole bucket:** every item below is
 deferred on the same basis — accepted as-is for personal, single-user
@@ -314,6 +325,8 @@ Phase 1 client defects fixed in Phase 2 (`P2-VOICE`):
   Phase 4 execution correction: `ReconcileWakeRestingAsync` is single-flight
   and re-checks after await (≤ 3 passes, logged) so an in-flight pause cannot
   strand wake paused (`P4-FEEDBACK` F5b / A29).
+  Phase 5 (`P5-D01`): a closing follow-up window clears all of its own
+  flags.
 - Each new turn overwrote the previous assistant bubble.
 - Interjection/submit handling was tied to that overwrite; the
   event-driven bubble lifecycle now keeps earlier replies on screen.
@@ -743,6 +756,7 @@ section is the lore pointer, final values, and corrections. Evidence:
   full-duplex barge listener from latching spoken clarify answers. Cost:
   talk-over no longer stops her (`P4-D29`). Side benefit: no `P2-D13` trips.
   Applied under `P4-D25`.
+  Phase 5 (`P5-D08`): stands.
 
 - **P4-D29 — Stop speaking.** (New.) On-screen Stop + Esc; `voice.toggle off`
   → `on` (no latch). Hidden while `QuestionSpeaking`. No follow-up after Stop.
@@ -756,3 +770,92 @@ section is the lore pointer, final values, and corrections. Evidence:
 - Fix the **authority**, not every caller — wake reconcile single-flight
   (A29 / `P2-D12`).
 - Measure before tuning capture timing (A27 / Probe 2).
+
+## Phase 5 — Wake After Questions and Memory
+Recorded from `PHASE5_BUILD_PLAN.md` v1.2 (`P5-D01`–`P5-D11`), the P5PRE
+audit (merge `c5be52e47ef8686d3643f5c57cf262cfd3991b8b`), and the progress
+docs `P5-KICKOFF_Progress.md`, `P5-WAKE_Progress.md`, and
+`P5-MEMORY_Progress.md`. Full plan wording stays in the build plan; this
+section is the lore pointer, amendments, and measured results.
+
+- **P5-D01 — A follow-up window that closes clears all of its own flags.**
+  **As revised in plan v1.2.** `CancelFollowUp`, the single window-closing
+  path, also clears `_followUpTranscriptSeen`. **Amendment:** the v1.1
+  approach (reset five fields at window open in `OnTurnCompleted`) was
+  superseded after P5-WAKE Phase 2 found that a clarify capture can still
+  be live at turn completion (`AbandonPendingQuestionIfId` on card Cancel
+  or timeout). Resolves `S41`. Smoke B1–B8 PASS.
+
+- **P5-D02 — Make wake reconcile observable.** **As built.** One structured
+  `wake reconcile noop reason=…` record per silent exit, carrying the full
+  `Resting` snapshot, written only when the pass sent neither pause nor
+  resume. `wake.resume skipped reason=` names the first failing predicate.
+  `_cancelReason` is cleared at reply-window arm (logging latch). `seen=`
+  is on `follow_up_release`. Observed volume: 144 records in ~40 min of
+  smoke testing (watch it).
+
+- **P5-D03 — She saves lasting facts on her own.** **Amendment.** The "What
+  I remember" section is **identity-voiced** (not the plan paragraph's
+  "outranks" phrasing). Brian revised it at the P5-MEMORY Phase 3 STOP,
+  adding "I save what Brian tells me, what we clearly decide, and what I've
+  confirmed; I don't turn guesses or assumptions into facts" and "When Brian
+  corrects something or it changes, I update the existing fact instead of
+  keeping both versions." The pre-agreed fallback priority sentence was
+  **not needed**. Results: lasting 6/6, trivial 0/4, explicit 2/2, correction
+  PASS (add then replace), brief mention heard on every self-initiated
+  save. Canonical text: `identity/SOUL.md`.
+
+- **P5-D04 — Routing between the two files.** **As planned, result ⚠️
+  9/10.** #12 (registration) went to `user` as `[schedule]`, grouped by
+  kind of fact, not by subject. Developer-acknowledged. Recall is
+  unaffected (both files are injected every turn). An `S14` input.
+
+- **P5-D05 — Budget.** **As planned.** `user_char_limit` 2750 → 4000
+  (`memory_char_limit` stays 4400). Capacity data: ~53 characters per
+  saved fact; after the test, room for ~30 more in `USER.md` and ~74 in
+  `MEMORY.md`.
+
+- **P5-D06 — Episode bridge: search past conversations only when asked.**
+  **As planned, result ⚠️.** `session_search` ran only on the explicit
+  question, the answer was correct, and nothing was saved from it, but
+  there was **no timing** in the reply. Developer-acknowledged. Evidence
+  for `S43`. Amends the `S42` principle to: sessions never
+  **automatically** read each other's transcripts.
+
+- **P5-D07 — Proof is a scripted save-rate test, not a feel.** **As
+  planned.** Blind, scripted save-rate test; per-candidate table in
+  `P5-MEMORY_Progress.md`; skills check found 5 agent-managed skills, all
+  procedural, with no personal facts.
+
+- **P5-D08 — S36 deferred by the feasibility gate.** **As planned.**
+  Feasibility gate NO. `voice.barge_in: false` stands (`P4-D28`). Only
+  upstream O2 passes acceptance (a)–(e).
+
+- **P5-D09 — S38 stays open, with its measurements.** **As planned.**
+  Warm, after he stops talking: 1500 ms configured silence; 1562–1847 ms
+  WAV → transcript (Whisper `base` + delivery), roughly flat across
+  2.5–11 s clips; other stages under 15 ms. No tuning.
+
+- **P5-D10 — Forget scope (supersedes C8's `MEMORY.md`-only scope).**
+  Forget removes the entry from whichever memory file holds it,
+  `MEMORY.md` or `USER.md`. `state.db` (transcripts and stored prompts)
+  is not redacted (accepted v1 posture).
+
+- **P5-D11 — Phase 6 is memory.** **As planned.** Phase 6 = `S14`
+  (structured local store: entity facts, episodes, relevance retrieval) +
+  `S43` (time awareness), starting with its own audit. `P4` to be
+  revisited there as "local only".
+
+### Phase 5 execution notes
+- A G-ARCH pre-check stopped a fix that would have clobbered a live
+  capture. **Prove the overlap before building.**
+- A window's **close** owns its cleanup: the authority that ends a window
+  clears all of its flags.
+- The repo uses `core.autocrlf=true`. Verify the **staged blob** hash,
+  not "no normalization".
+- Prompts are also written to `zola-spikes\prompts\`, with SHA read-back.
+  Staged files get unique, versioned names (a cached write was caught by
+  read-back).
+- Blind behavioral tests (G-BLIND) plus per-candidate data beat feel.
+- Logging records must not claim "noop" after an action. Review
+  diagnostic placement.
