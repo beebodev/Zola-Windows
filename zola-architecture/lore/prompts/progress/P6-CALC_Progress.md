@@ -521,4 +521,4 @@ All Track 1 exit criteria: **YES**
 ### Closeout SHAs
 
 - Implementation commit (7f): `90f9dd0bcd4b9a40346b242eebf5a8c40c14d616`
-- Merge SHA on `main` (7i): *(pending)*
+- Merge SHA on `main` (7i): `5303e368969eaf60a68eb5950867ef302971119b`
