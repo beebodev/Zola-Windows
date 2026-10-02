@@ -752,4 +752,5 @@ All Track 2 exit criteria: **YES** (orphan-reap session_end ⚠️ observed-not-
 ### Closeout SHAs
 
 - Implementation commit (8f): `a1da9c82e377caf158b192f21f15f0fc59f65ff4`
-- Merge SHA on main (8i): *(filled after merge)*
+- Docs record implementation SHA (8g): `5350b16c9cf5449ae0990c73db1d962f3379443c`
+- Merge SHA on main (8i): `79a0e3e7504eea98083b2f66066428bc69a56570`
