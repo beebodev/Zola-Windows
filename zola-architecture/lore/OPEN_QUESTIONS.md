@@ -136,21 +136,29 @@ synthesis document.
   Phase 4 forces `manual` (`P4-D27`) because Hermes's default `smart` can
   auto-approve. Session/always scopes and whether `manual` remains required
   need their own decision.
+  Observation (P5-WAKE smoke B3): a plain arithmetic question produced
+  one approval card per math problem (developer: "she showed a card for
+  each math problem for approval."). Inputs: which tool she used;
+  whether harmless tools can be scoped out of manual approval without
+  weakening `P4-D07`.
 
 - **S36 — Bring back talk-over barge-in without breaking Phase 4.**
-  **Developer-requested; Phase 5 stub lists this first.** Reframe: detecting
-  speech and interrupting her are separate — state-aware policy: speech
-  during her reply → interrupt; during open clarify → answer; her echo →
-  ignore. Acceptance (all): (a) talk-over stops a long reply; (b) spoken
-  clarify answer works with no "Interrupted"; (c) no `P2-D13` loop; (d)
-  Track 1 gate still fails closed; (e) an instant answer given as soon as she
-  stops speaking (before the beep) keeps its first word (needs ~1.2 s
-  pre-roll; `voice.record` has none — Probe 2 / AUD-37 residual ~1 s clip).
-  Blocked by one process-global Hermes listener. Candidates: upstream
-  pause-barge / clarify-aware listener / discard-capable record stop /
-  pre-roll on `voice.record`; echo cancel or headset; least preferred
-  client detector (`P2-D01`). Keep `P4-D13`/`D14`/`D15`/`D18`. Echo filter
-  still only drops ≥3-word / ≥60% tail runs (A32).
+  **Developer-requested.** Reframe: detecting speech and interrupting her are
+  separate — state-aware policy: speech during her reply → interrupt; during
+  open clarify → answer; her echo → ignore. **Feasibility gate: NO** (P5PRE
+  AUD-14/15/16; `P5-D08`). Acceptance (all): (a) talk-over stops a long
+  reply; (b) spoken clarify answer works with no "Interrupted"; (c) no
+  `P2-D13` loop; (d) Track 1 gate still fails closed; (e) an instant answer
+  given as soon as she stops speaking (before the beep) keeps its first word
+  (needs ~1.2 s pre-roll; `voice.record` has none — Probe 2 / AUD-37 residual
+  ~1 s clip). Blocked by one process-global Hermes listener. Options matrix:
+  O1 fails (b) and (e); O3 has no hook that passes without turning barge-in
+  on; O4 fails (b); O5 conflicts with `P2-D01`; only upstream O2
+  (clarify-aware listener, discardable record stop, pre-roll on
+  `voice.record`) can pass (a)/(b)/(e), and it is not on this pin.
+  `voice.barge_in` stays `false` (`P4-D28`). Stays open, upstream-gated. Keep
+  `P4-D13`/`D14`/`D15`/`D18`. Echo filter still only drops ≥3-word / ≥60%
+  tail runs (A32).
 
 - **S37 — Re-anchor speech estimate on first reply text.**
   `FirstSentenceLatencySeconds` is seeded at turn start; late first text
@@ -159,10 +167,13 @@ synthesis document.
   uses **no** `FollowUpMarginSeconds`. Monitor path is primary; this is
   fallback-only (`P4-D22` / B45).
 
-- **S38 — Listen-to-think latency.** Too long between the user finishing
-  and Zola starting to think. Measure before tuning: `voice.silence_duration`
-  1.5 s and local Whisper `base` CPU time (capture stop → transcript →
-  `prompt.submit`). Shorter silence risks cutting mid-thought (B44).
+- **S38 — Listen-to-think latency.** Too long between the user finishing and
+  Zola starting to think. Measured in P5PRE / `P5-D09` (warm, after he stops
+  talking): 1500 ms configured silence; 1562–1847 ms WAV → transcript
+  (Whisper `base` + delivery), roughly flat across 2.5–11 s clips; other
+  stages under 15 ms. That is a substantial per-turn transcription component
+  worth isolating later. Shorter silence risks cutting mid-thought (B44). No
+  Phase 5 tuning. Stays open.
 
 - **S39 — Voice timbre (husky / breathiness).** Developer wants her huskier
   or deeper. Edge exposes rate/pitch/volume only; texture needs a premium
@@ -173,39 +184,52 @@ synthesis document.
   (F7); hold important request notices before the next status line replaces
   them; activity line can show a finished tool during a concurrent Hermes
   batch (A31 / A34).
-
-- **S41 — Wake/mic not restored after the clarify path until a Text↔Voice
-  toggle.** Observed in `P4-VOICE` Phase 6 (~2026-10-01): after a clarify
-  tool turn, HUD can stay `IDLE` / `MIC: OFF`; `follow_up_release` fires but
-  no `wake.resume` in the log tail (contrast earlier `wake.resume
-  reason=follow-up-end`). Fails quiet (mic off). Open: exact repro; whether
-  the `P2-D12` wake-reconcile fix should cover it, or the clarify path never
-  requests resume. Source: `P4-VOICE_Progress.md` Phase 6 developer notes.
+  Observation (P5-MEMORY cleanup): an "empty box while thinking" was
+  seen once before she said "forgotten"; watch for recurrence.
 
 - **S42 — Memory is not shared across sessions.** Developer-requested
-  2026-10-01; Phase 5 scope. A fact told to Zola in one Hermes session does
-  not reach her in another. Principle (developer): a Hermes session is a
+  2026-10-01; Phase 5 scope. Principle (developer): a Hermes session is a
   conversation boundary, not a Zola memory boundary. Durable facts, decisions
   and episodes belong to Zola and are retrieved by relevance in any session;
-  sessions produce and consume memories but never read each other's
-  transcripts. Zola-Windows has no entity store or session brief of its own
-  (those are Android-Zola designs, not present here); its memory today is
-  Hermes's. Hermes has a pluggable memory layer (`agent/memory_provider.py`,
-  `agent/memory_manager.py`): the builtin provider plus at most one external
-  provider (`memory.provider`, `plugins/memory/<name>/`), with hooks
-  `system_prompt_block`, per-turn `prefetch(query)`, `sync_turn`,
-  `on_session_end`, `on_pre_compress` and `on_memory_write`. Likely shape: a
-  Zola memory provider as the single owner of retrieval and injection, with
-  no parallel client-side injection path. Open before design (P5PRE): what
-  memory the `zola` profile actually uses; why a session-A fact misses
-  session B (storage, retrieval, injection or scoping); whether an external
-  provider loads without editing `hermes-agent`; what `session_search` does
-  and whether Zola uses it; a live repro capturing what was injected.
-  Related: S28 (session UI retirement).
+  sessions produce and consume memories but never **automatically** read each
+  other's transcripts (amended by `P5-D06`: explicit `session_search` when
+  asked is allowed; search results are not memory). P5PRE found that written
+  facts already cross sessions (each new session reloads `MEMORY.md` /
+  `USER.md`); the gap was that she rarely saved. **Facts half resolved** by
+  P5-MEMORY (`P5-D03`–`P5-D07`; save rate lasting 6/6, trivial 0/4, explicit
+  2/2; correction PASS). **Open remainder:** episodes ("what did we decide…"
+  without being asked), which moves to `S14` in Phase 6. Phase 6 input:
+  Hermes's pluggable memory layer (`agent/memory_provider.py`,
+  `agent/memory_manager.py`; one external provider via `memory.provider`,
+  loadable from the profile's `plugins/` without editing `hermes-agent`;
+  hooks `system_prompt_block`, per-turn `prefetch`, `sync_turn`,
+  `on_session_end`, `on_pre_compress`, `on_memory_write`). Related: `S28`,
+  `S43`.
+
+- **S43 — Time awareness in conversation.** She knows the current time,
+  but not when each message or session happened, so "5 minutes ago" and
+  "24 hours ago" look alike. Live evidence: the P5-MEMORY BR1 answer had
+  no timing, although `session_search` results carry session start dates.
+  Inputs: `Zola_Temporal_Reasoning_Architecture.md`, WINH12-02. Phase 6,
+  with `S14`.
+
+- **S44 — No clarify card in Voice mode.** Developer, 2026-10-02. In
+  Voice mode, clarify questions should be purely conversational: she
+  asks, he answers out loud, and no card appears; the conversation panel
+  is not forced open. Approvals keep cards (`P4-D07`, never by voice).
+  Text mode keeps the clarify card (`P4-D08`). Touches `P4-D08` and
+  `P4-D13`. Open: voice Cancel/Skip ("never mind", "skip", timeout);
+  multi-select; batch `questions[]`; late-answer drop (`P4-D14`) tied
+  today to card Cancel. Needs a short audit of card users before any
+  build. Not Phase 5; with `S40` or in Phase 6 (developer's call).
+
 *S13 and S16 remain open. S17, S21, S26 updated at Phase 4 lore closeout.
 S20, S22, S32 resolved (see DESIGN_DECISIONS Phase 4). S33–S41 added at
-Phase 4 lore closeout. S42 added at Phase 5 kickoff (2026-10-01). Not open
-questions (one line): question quiet window
-withdrawn (B38); gap "no Stop" closed by P4-D29; AUD-37 closed by P4-D18
-(residual in S36); external dictation tool is test hygiene (A20). Resolved
-items stay in DESIGN_DECISIONS.md.*
+Phase 4 lore closeout. S42 added at Phase 5 kickoff (2026-10-01). S41
+resolved (see DESIGN_DECISIONS Phase 5). S42 facts half resolved at Phase 5
+lore closeout; episodes remainder moves to S14. S35, S36, S38, and S40
+updated at Phase 5 lore closeout. S43 and S44 added at Phase 5 lore
+closeout. Not open questions (one line): question quiet window withdrawn
+(B38); gap "no Stop" closed by P4-D29; AUD-37 closed by P4-D18 (residual
+in S36); external dictation tool is test hygiene (A20). Resolved items stay
+in DESIGN_DECISIONS.md.*
