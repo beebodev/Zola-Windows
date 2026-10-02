@@ -267,6 +267,6 @@ All criteria met or developer-acknowledged PARTIAL: **YES**
 
 ## Closeout SHAs
 
-- Implementation commit: *(pending 6c)*
+- Implementation commit: 9a0e45991d45a7e0d191db2e8df864399551bf48
 - Merge SHA on main: *(pending 6f)*
 - Final main tip: *(pending 6g)*
