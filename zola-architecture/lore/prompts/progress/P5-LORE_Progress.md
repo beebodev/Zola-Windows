@@ -450,6 +450,6 @@ Then carry candidates forward (not a committed order):
 
 ## Closeout SHAs
 
-- Implementation commit: *(pending)*
+- Implementation commit: c2d738e5bf8cae2449f05711d33913244fd54587
 - Merge SHA on main: *(pending)*
 - Final main tip: *(pending)*
