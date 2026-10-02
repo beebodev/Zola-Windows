@@ -451,5 +451,5 @@ Then carry candidates forward (not a committed order):
 ## Closeout SHAs
 
 - Implementation commit: c2d738e5bf8cae2449f05711d33913244fd54587
-- Merge SHA on main: *(pending)*
-- Final main tip: *(pending)*
+- Merge SHA on main: 09e4f55d27a1d6bfb0a9baa0e5486e90c59f16c6
+- Final main tip: *(this docs commit)*
