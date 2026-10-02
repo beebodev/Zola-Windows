@@ -39,6 +39,8 @@ Findings at closeout: 19 — 4 HIGH, 3 MEDIUM, 2 LOW, 10 MATCH.
 
 Audit commit: `5629bc2ba04bbfe7a12489946623249b243fba62`
 
+Merge SHA: `c5be52e47ef8686d3643f5c57cf262cfd3991b8b`
+
 ## Guardrails
 
 - **G-SCOPE:** Read-only diagnostic. Findings only under `zola-architecture/audit/p5pre-phase5/`.
