@@ -24,7 +24,7 @@
 | 5 | Propose the Live Changes | COMPLETE |
 | 6 | Back Up, Deploy, Apply, Mirror, Verify | COMPLETE |
 | 7 | Smoke Test | COMPLETE — smoke test passed |
-| 8 | Closeout | IN PROGRESS |
+| 8 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -778,7 +778,7 @@ All Track 3 criteria met: **YES**. Unit tests: **PASS**.
 
 *(filled as commits land)*
 
-- Implementation commit (8f): *(pending)*
-- Docs record implementation SHA (8g): *(pending)*
+- Implementation commit (8f): `3fb1369df023e2a44a31cc9c857ff6a60450ae66`
+- Docs record implementation SHA (8g): *(this commit)*
 - Merge SHA on main (8i): *(pending)*
 - Docs record merge SHA (8j): *(pending)*
