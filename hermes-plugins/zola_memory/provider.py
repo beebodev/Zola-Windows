@@ -28,10 +28,29 @@ class ZolaMemoryProvider(MemoryProvider):
         self.llm_available = False
         self._conn = None
         self._hermes_home: Optional[Path] = None
+        self._session_id: Optional[str] = None
         self._current_user_message = ""
         self._initialized = False
         # P6-STORE: provider-level lock mirrors connection lock — P6-D03
         self._lock = threading.RLock()
+
+    @staticmethod
+    def _registry():
+        """Lazy import of session→provider registry helpers (avoid import cycle)."""
+        try:
+            from . import (
+                _registry_put,
+                _registry_rekey,
+                _registry_remove,
+            )
+        except ImportError:  # P6-TIME: flat unittest discover top — P6-D05
+            import importlib
+
+            mod = importlib.import_module("__init__")
+            _registry_put = mod._registry_put
+            _registry_rekey = mod._registry_rekey
+            _registry_remove = mod._registry_remove
+        return _registry_put, _registry_rekey, _registry_remove
 
     @property
     def name(self) -> str:
@@ -91,6 +110,11 @@ class ZolaMemoryProvider(MemoryProvider):
             self._conn = store.open_store(hermes_home)
             result = fact_index.run_file_check(self._conn, hermes_home, force=True)
             self._initialized = True
+            self._session_id = session_id or ""
+        # P6-TIME: registry only after store open + file check succeed — P6-D05
+        if self._session_id:
+            put, _, _ = self._registry()
+            put(self._session_id, self)
         memlog.write_event(
             memlog.LOG_EVENT_INITIALIZE,
             ok=True,
@@ -180,6 +204,12 @@ class ZolaMemoryProvider(MemoryProvider):
         rewound: bool = False,
         **kwargs,
     ) -> None:
+        old = self._session_id or ""
+        new = new_session_id or ""
+        # P6-TIME: re-key session→provider registry on switch — P6-D05
+        _, rekey, _ = self._registry()
+        rekey(old, new, self)
+        self._session_id = new
         memlog.write_event(
             memlog.LOG_EVENT_ON_SESSION_SWITCH,
             session_id=new_session_id or "-",
@@ -199,6 +229,9 @@ class ZolaMemoryProvider(MemoryProvider):
     def shutdown(self) -> None:
         ok = True
         try:
+            # P6-TIME: identity-checked registry remove before closing conn — P6-D05
+            _, _, remove = self._registry()
+            remove(self._session_id or "", self)
             with self._lock:
                 if self._conn is not None:
                     store.release_lock(self._conn)

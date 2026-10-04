@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import sys
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -15,12 +17,30 @@ _HERMES_ROOT = Path(r"C:\Users\test\Dev\hermes-agent")
 if str(_HERMES_ROOT) not in sys.path:
     sys.path.insert(0, str(_HERMES_ROOT))
 
+# P6-TIME: system Python may lack tzdata; hermes-agent venv has it — P6-D05
+_VENV_SITE = _HERMES_ROOT / ".venv" / "Lib" / "site-packages"
+if _VENV_SITE.is_dir() and str(_VENV_SITE) not in sys.path:
+    try:
+        from zoneinfo import ZoneInfo as _ZI
+
+        _ZI("America/Los_Angeles")
+    except Exception:
+        sys.path.insert(0, str(_VENV_SITE))
+
+from zoneinfo import ZoneInfo
+
 import fact_index
 import forget
 import log as memlog
 import store
+import time_context
 from forget import has_forget_intent
 from provider import ZolaMemoryProvider
+
+# P6-TIME: fixed Pacific offset for stamp/relative tests (no IANA dependency) — P6-D05
+_PDT = timezone(timedelta(hours=-7), name="PDT")
+_PST = timezone(timedelta(hours=-8), name="PST")
+_LA = ZoneInfo("America/Los_Angeles")
 
 # P6-STORE: synthetic strings for content scans — P6-D02
 SYN_A = "[project] Demo codename is Aurora Quill."
@@ -664,6 +684,550 @@ class TestPhase4bRemoveUnmatched(_TempHome):
         log = (self.home / "logs" / memlog.LOG_FILENAME).read_text(encoding="utf-8")
         self.assertIn("remove_unmatched", log)
         conn.close()
+
+
+class TestTimeContextStamp(unittest.TestCase):
+    def test_stamp_format_integers_and_english_names(self) -> None:
+        now = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
+        self.assertEqual(time_context.format_stamp(now), "[Time: Fri Oct 2, 3:45 PM PDT]")
+        self.assertEqual(
+            time_context.format_stamp_body(now), "Fri Oct 2, 3:45 PM PDT"
+        )
+
+    def test_stamp_midnight_and_noon(self) -> None:
+        midnight = datetime(2026, 10, 3, 0, 17, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.format_stamp(midnight), "[Time: Sat Oct 3, 12:17 AM PDT]"
+        )
+        noon = datetime(2026, 10, 3, 12, 5, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.format_stamp(noon), "[Time: Sat Oct 3, 12:05 PM PDT]"
+        )
+
+    def test_stamp_year_boundary(self) -> None:
+        now = datetime(2027, 1, 1, 0, 1, tzinfo=_PST)
+        self.assertEqual(
+            time_context.format_stamp(now), "[Time: Fri Jan 1, 12:01 AM PST]"
+        )
+
+    def test_stamp_locale_independent_dow_month(self) -> None:
+        # P6-TIME: fixed English constants — not strftime %a/%b — P6-D05
+        now = datetime(2026, 3, 15, 9, 5, tzinfo=_PDT)  # Sunday
+        body = time_context.format_stamp_body(now)
+        self.assertTrue(body.startswith("Sun Mar 15,"))
+        self.assertIn("9:05 AM", body)
+        for name in time_context.DOW_NAMES:
+            self.assertEqual(len(name), 3)
+        for name in time_context.MONTH_NAMES:
+            self.assertEqual(len(name), 3)
+
+    def test_windows_tz_abbrev_and_utc_fallback(self) -> None:
+        long_tz = timezone(timedelta(hours=-7), name="Pacific Daylight Time")
+        now = datetime(2026, 10, 2, 15, 45, tzinfo=long_tz)
+        self.assertEqual(time_context.short_zone_label(now), "PDT")
+        odd = timezone(timedelta(hours=5, minutes=30), name="Some Long Zone Name")
+        odd_now = datetime(2026, 10, 2, 15, 45, tzinfo=odd)
+        self.assertEqual(time_context.short_zone_label(odd_now), "UTC+05:30")
+
+
+class TestTimeContextRelative(unittest.TestCase):
+    def setUp(self) -> None:
+        # Pin fixed offset so calendar math does not depend on the host zone.
+        time_context.set_clock_for_tests(None, timezone=_PDT)
+
+    def tearDown(self) -> None:
+        time_context.set_clock_for_tests(None)
+
+    def test_brian_calendar_and_singular_cases(self) -> None:
+        mon = datetime(2026, 9, 28, 23, 0, tzinfo=_PDT)
+        wed = datetime(2026, 9, 30, 5, 0, tzinfo=_PDT)
+        self.assertEqual(time_context.format_relative(wed, mon), "2 days ago")
+
+        day = datetime(2026, 10, 2, 12, 0, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.format_relative(day + timedelta(minutes=61), day),
+            "about an hour ago",
+        )
+        self.assertEqual(
+            time_context.format_relative(day + timedelta(minutes=1), day),
+            "1 minute ago",
+        )
+        self.assertEqual(
+            time_context.format_relative(day + timedelta(days=15), day),
+            "2 weeks ago",
+        )
+
+    def test_relative_thresholds(self) -> None:
+        base = datetime(2026, 10, 2, 12, 0, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.format_relative(base + timedelta(seconds=30), base),
+            "less than a minute ago",
+        )
+        self.assertEqual(
+            time_context.format_relative(base + timedelta(minutes=45), base),
+            "45 minutes ago",
+        )
+        self.assertEqual(
+            time_context.format_relative(base + timedelta(hours=5), base),
+            "about 5 hours ago",
+        )
+        yesterday = datetime(2026, 10, 1, 20, 10, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.format_relative(base, yesterday), "yesterday"
+        )
+        self.assertEqual(
+            time_context.format_relative(base + timedelta(days=3), base),
+            "3 days ago",
+        )
+
+    def test_dst_spring_forward_and_fall_back(self) -> None:
+        # Synthetic fixed-offset labels (stamp body uses clock fields, not OS DST tables)
+        spring_before = datetime(2026, 3, 8, 1, 30, tzinfo=_PST)
+        spring_after = datetime(2026, 3, 8, 3, 30, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.format_stamp(spring_before),
+            "[Time: Sun Mar 8, 1:30 AM PST]",
+        )
+        self.assertEqual(
+            time_context.format_stamp(spring_after),
+            "[Time: Sun Mar 8, 3:30 AM PDT]",
+        )
+        fall = datetime(2026, 11, 1, 1, 30, tzinfo=_PST)
+        self.assertEqual(
+            time_context.format_stamp(fall), "[Time: Sun Nov 1, 1:30 AM PST]"
+        )
+
+
+class TestTimeContextBuildAndHook(_TempHome):
+    def setUp(self) -> None:
+        super().setUp()
+        # Fixed-offset path for non-ZoneInfo gap tests.
+        time_context.set_clock_for_tests(None, timezone=_PDT)
+
+    def tearDown(self) -> None:
+        time_context.set_clock_for_tests(None)
+        super().tearDown()
+
+    def _provider_with_conn(self):
+        p = ZolaMemoryProvider()
+        p._conn = self._open()
+        p._hermes_home = self.home
+        p._initialized = True
+        return p
+
+    def test_gap_threshold_29_30_31(self) -> None:
+        now = datetime(2026, 10, 2, 15, 0, tzinfo=_PDT)
+        last29 = (now - timedelta(minutes=29)).isoformat(timespec="seconds")
+        last30 = (now - timedelta(minutes=30)).isoformat(timespec="seconds")
+        last31 = (now - timedelta(minutes=31)).isoformat(timespec="seconds")
+        self.assertEqual(
+            time_context.build_turn_time_context(now, last29),
+            time_context.format_stamp(now),
+        )
+        block30 = time_context.build_turn_time_context(now, last30)
+        self.assertIn("\n[Gap:", block30)
+        self.assertIn("30 minutes ago", block30)
+        block31 = time_context.build_turn_time_context(now, last31)
+        self.assertIn("\n[Gap:", block31)
+        self.assertIn("31 minutes ago", block31)
+
+    def test_first_run_no_gap_line(self) -> None:
+        now = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.build_turn_time_context(now, None),
+            "[Time: Fri Oct 2, 3:45 PM PDT]",
+        )
+        self.assertEqual(
+            time_context.build_turn_time_context(now, ""),
+            "[Time: Fri Oct 2, 3:45 PM PDT]",
+        )
+        self.assertEqual(
+            time_context.build_turn_time_context(now, "not-a-timestamp"),
+            "[Time: Fri Oct 2, 3:45 PM PDT]",
+        )
+
+    def test_block_joined_with_newline(self) -> None:
+        now = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
+        last = datetime(2026, 9, 30, 21, 14, tzinfo=_PDT)
+        block = time_context.build_turn_time_context(
+            now, last.isoformat(timespec="seconds")
+        )
+        self.assertEqual(
+            block,
+            "[Time: Fri Oct 2, 3:45 PM PDT]\n"
+            "[Gap: Brian's last message to me was 2 days ago "
+            "(Wed Sep 30, 9:14 PM PDT).]",
+        )
+
+    def test_allow_list_predicate(self) -> None:
+        self.assertTrue(time_context.is_user_turn("tui", ""))
+        self.assertTrue(time_context.is_user_turn("TUI", None))  # type: ignore[arg-type]
+        self.assertFalse(time_context.is_user_turn("tui", "parent-1"))
+        for platform in (
+            "cron",
+            "subagent",
+            "curator",
+            "gateway_hygiene",
+            "some_new_platform",
+        ):
+            self.assertFalse(time_context.is_user_turn(platform, ""))
+
+    def test_hook_non_user_turn_no_marker_move(self) -> None:
+        provider = self._provider_with_conn()
+        now = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
+        time_context.set_clock_for_tests(lambda: now)
+        prior = "2026-10-01T12:00:00-07:00"
+        with store.locked(provider._conn):
+            provider._conn.execute("BEGIN IMMEDIATE")
+            store.meta_set(provider._conn, store.META_LAST_INTERACTION_AT, prior)
+            provider._conn.commit()
+        for kwargs in (
+            {"platform": "cron", "parent_session_id": "", "session_id": "s1"},
+            {"platform": "tui", "parent_session_id": "child", "session_id": "s1"},
+            {"platform": "subagent", "parent_session_id": "p", "session_id": "s1"},
+            {"platform": "curator", "parent_session_id": "", "session_id": "s1"},
+            {
+                "platform": "some_new_platform",
+                "parent_session_id": "",
+                "session_id": "s1",
+            },
+        ):
+            result = time_context.handle_pre_llm_call(provider, **kwargs)
+            self.assertIsNone(result)
+            self.assertEqual(
+                store.meta_get(provider._conn, store.META_LAST_INTERACTION_AT), prior
+            )
+        provider._conn.close()
+
+    def test_hook_success_updates_marker_to_captured_now(self) -> None:
+        provider = self._provider_with_conn()
+        now = datetime(2026, 10, 2, 15, 45, 30, tzinfo=_PDT)
+        time_context.set_clock_for_tests(lambda: now)
+        last = datetime(2026, 10, 2, 10, 0, tzinfo=_PDT)
+        with store.locked(provider._conn):
+            provider._conn.execute("BEGIN IMMEDIATE")
+            store.meta_set(
+                provider._conn,
+                store.META_LAST_INTERACTION_AT,
+                last.isoformat(timespec="seconds"),
+            )
+            provider._conn.commit()
+        result = time_context.handle_pre_llm_call(
+            provider,
+            platform="tui",
+            parent_session_id="",
+            session_id="sess-time",
+            user_message="hello from Brian synthetic",
+        )
+        self.assertIsInstance(result, dict)
+        self.assertIn("context", result)
+        self.assertTrue(result["context"].startswith("[Time: Fri Oct 2, 3:45 PM PDT]"))
+        self.assertIn("[Gap:", result["context"])
+        marker = store.meta_get(provider._conn, store.META_LAST_INTERACTION_AT)
+        self.assertEqual(marker, time_context.marker_iso(now))
+        self.assertEqual(marker, "2026-10-02T15:45:30-07:00")
+        # Marker is time-only (no gap wording)
+        self.assertNotIn("Gap", marker)
+        self.assertNotIn("ago", marker)
+        log = (self.home / "logs" / memlog.LOG_FILENAME).read_text(encoding="utf-8")
+        self.assertIn(memlog.LOG_EVENT_TIME_CONTEXT, log)
+        self.assertIn(memlog.LOG_EVENT_TIME_MARKER_UPDATE, log)
+        self.assertIn(memlog.LOG_EVENT_PRE_LLM_CALL, log)
+        self.assertNotIn("hello from Brian synthetic", log)
+        provider._conn.close()
+
+    def test_ordering_construction_failure_leaves_marker(self) -> None:
+        provider = self._provider_with_conn()
+        now = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
+        time_context.set_clock_for_tests(lambda: now)
+        prior = "2026-09-30T21:14:00-07:00"
+        with store.locked(provider._conn):
+            provider._conn.execute("BEGIN IMMEDIATE")
+            store.meta_set(provider._conn, store.META_LAST_INTERACTION_AT, prior)
+            provider._conn.commit()
+
+        def boom(*_a, **_k):
+            raise RuntimeError("simulated build failure")
+
+        with mock.patch.object(time_context, "build_turn_time_context", side_effect=boom):
+            result = time_context.handle_pre_llm_call(
+                provider,
+                platform="tui",
+                parent_session_id="",
+                session_id="sess-fail",
+            )
+        self.assertIsNone(result)
+        self.assertEqual(
+            store.meta_get(provider._conn, store.META_LAST_INTERACTION_AT), prior
+        )
+        log = (self.home / "logs" / memlog.LOG_FILENAME).read_text(encoding="utf-8")
+        self.assertIn(f"{memlog.LOG_EVENT_TIME_CONTEXT} ok=false", log)
+        provider._conn.close()
+
+    def test_capture_now_raising_leaves_marker(self) -> None:
+        provider = self._provider_with_conn()
+        prior = "2026-09-30T21:14:00-07:00"
+        with store.locked(provider._conn):
+            provider._conn.execute("BEGIN IMMEDIATE")
+            store.meta_set(provider._conn, store.META_LAST_INTERACTION_AT, prior)
+            provider._conn.commit()
+
+        def boom():
+            raise RuntimeError("simulated clock failure")
+
+        time_context.set_clock_for_tests(boom, timezone=_PDT)
+        result = time_context.handle_pre_llm_call(
+            provider,
+            platform="tui",
+            parent_session_id="",
+            session_id="sess-clock-fail",
+        )
+        self.assertIsNone(result)
+        self.assertEqual(
+            store.meta_get(provider._conn, store.META_LAST_INTERACTION_AT), prior
+        )
+        log = (self.home / "logs" / memlog.LOG_FILENAME).read_text(encoding="utf-8")
+        self.assertIn(f"{memlog.LOG_EVENT_TIME_CONTEXT} ok=false", log)
+        provider._conn.close()
+
+
+class TestTimeContextZoneInfoDst(_TempHome):
+    """Real America/Los_Angeles zoneinfo across DST (configured + system-local)."""
+
+    def tearDown(self) -> None:
+        time_context.set_clock_for_tests(None)
+        super().tearDown()
+
+    def _assert_fall_back_gap(self) -> None:
+        now = datetime(2026, 11, 2, 9, 0, tzinfo=_LA)
+        block = time_context.build_turn_time_context(now, "2026-10-31T21:00:00-07:00")
+        self.assertIn("(Sat Oct 31, 9:00 PM PDT)", block)
+        self.assertIn("2 days ago", block)
+        self.assertNotIn("UTC-07:00", block)
+        self.assertNotIn("8:00 PM", block)
+
+    def _assert_spring_forward_gap(self) -> None:
+        now = datetime(2026, 3, 8, 10, 0, tzinfo=_LA)
+        block = time_context.build_turn_time_context(now, "2026-03-07T22:00:00-08:00")
+        self.assertIn("(Sat Mar 7, 10:00 PM PST)", block)
+        self.assertIn("yesterday", block)
+        self.assertNotIn("UTC-08:00", block)
+
+    def test_fall_back_configured_zone(self) -> None:
+        time_context.set_clock_for_tests(
+            lambda: datetime(2026, 11, 2, 9, 0, tzinfo=_LA),
+            timezone=_LA,
+        )
+        self._assert_fall_back_gap()
+
+    def test_fall_back_system_local(self) -> None:
+        time_context.set_clock_for_tests(
+            lambda: datetime(2026, 11, 2, 9, 0, tzinfo=_LA),
+            timezone=None,
+        )
+        self._assert_fall_back_gap()
+
+    def test_spring_forward_configured_zone(self) -> None:
+        time_context.set_clock_for_tests(
+            lambda: datetime(2026, 3, 8, 10, 0, tzinfo=_LA),
+            timezone=_LA,
+        )
+        self._assert_spring_forward_gap()
+
+    def test_spring_forward_system_local(self) -> None:
+        time_context.set_clock_for_tests(
+            lambda: datetime(2026, 3, 8, 10, 0, tzinfo=_LA),
+            timezone=None,
+        )
+        self._assert_spring_forward_gap()
+
+
+class TestSessionRegistry(_TempHome):
+    """P6-TIME FIX-B: session_id → provider registry for pre_llm_call."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._zola = importlib.import_module("__init__")
+        self._zola.clear_registry_for_tests()
+        time_context.set_clock_for_tests(
+            lambda: datetime(2026, 10, 2, 15, 45, tzinfo=_PDT),
+            timezone=_PDT,
+        )
+        self._home_b = Path(tempfile.mkdtemp(prefix="zola_memory_test_b_"))
+        (self._home_b / "memories").mkdir(parents=True)
+        (self._home_b / "memories" / "USER.md").write_text("", encoding="utf-8")
+        (self._home_b / "memories" / "MEMORY.md").write_text("", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._zola.clear_registry_for_tests()
+        time_context.set_clock_for_tests(None)
+        shutil.rmtree(self._home_b, ignore_errors=True)
+        super().tearDown()
+
+    def _hook(self, session_id: str, **extra):
+        kwargs = {
+            "platform": "tui",
+            "parent_session_id": "",
+            "session_id": session_id,
+            "user_message": "synthetic registry probe",
+        }
+        kwargs.update(extra)
+        return self._zola._pre_llm_call_hook(**kwargs)
+
+    def _log(self) -> str:
+        path = self.home / "logs" / memlog.LOG_FILENAME
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def test_two_providers_hook_routes_by_session(self) -> None:
+        pa = ZolaMemoryProvider()
+        pb = ZolaMemoryProvider()
+        pa.initialize("sid-A", hermes_home=str(self.home))
+        pb.initialize("sid-B", hermes_home=str(self._home_b))
+        seen = []
+        real_handle = time_context.handle_pre_llm_call
+
+        def capture(provider, **kwargs):
+            seen.append(provider)
+            return real_handle(provider, **kwargs)
+
+        with mock.patch.object(
+            self._zola.time_context, "handle_pre_llm_call", side_effect=capture
+        ):
+            ra = self._hook("sid-A")
+            rb = self._hook("sid-B")
+        self.assertIsNotNone(ra)
+        self.assertIsNotNone(rb)
+        self.assertEqual(seen, [pa, pb])
+        self.assertIs(seen[0]._conn, pa._conn)
+        self.assertIs(seen[1]._conn, pb._conn)
+        pa.shutdown()
+        pb.shutdown()
+
+    def test_register_without_initialize_does_not_break_active_session(self) -> None:
+        pa = ZolaMemoryProvider()
+        pa.initialize("sid-A", hermes_home=str(self.home))
+
+        class _Ctx:
+            def __init__(self) -> None:
+                self.hooks = []
+                self.providers = []
+
+            def register_memory_provider(self, p) -> None:
+                self.providers.append(p)
+
+            def register_hook(self, name, fn) -> None:
+                self.hooks.append((name, fn))
+
+            def _plugin_context(self):
+                class _PC:
+                    llm = None
+
+                return _PC()
+
+        ctx = _Ctx()
+        self._zola.register(ctx)
+        self.assertEqual(len(ctx.providers), 1)
+        self.assertIsNot(ctx.providers[0], pa)
+        self.assertIs(self._zola._provider, ctx.providers[0])
+        self.assertIsNone(ctx.providers[0]._conn)
+        # Hook re-registered (no once-guard); skills_tool path left A intact.
+        self.assertIn(("pre_llm_call", self._zola._pre_llm_call_hook), ctx.hooks)
+        result = self._hook("sid-A")
+        self.assertIsNotNone(result)
+        self.assertIn("context", result)
+        pa.shutdown()
+
+    def test_shutdown_isolation_and_no_provider_leaves_marker(self) -> None:
+        pa = ZolaMemoryProvider()
+        pb = ZolaMemoryProvider()
+        pa.initialize("sid-A", hermes_home=str(self.home))
+        pb.initialize("sid-B", hermes_home=str(self._home_b))
+        self.assertIsNotNone(self._hook("sid-A"))
+        marker = store.meta_get(pa._conn, store.META_LAST_INTERACTION_AT)
+        self.assertTrue(marker)
+
+        pb.shutdown()
+        self.assertIsNotNone(self._hook("sid-A"))
+        self.assertEqual(
+            store.meta_get(pa._conn, store.META_LAST_INTERACTION_AT), marker
+        )
+
+        # Re-read after second hook (marker may advance); then A shutdown.
+        marker_after = store.meta_get(pa._conn, store.META_LAST_INTERACTION_AT)
+        # Keep a second read-conn open after pa.shutdown closes its conn.
+        observer = store.open_store(self.home)
+        try:
+            with store.locked(observer):
+                frozen = store.meta_get(observer, store.META_LAST_INTERACTION_AT)
+            self.assertEqual(frozen, marker_after)
+            pa.shutdown()
+            result = self._hook("sid-A")
+            self.assertIsNone(result)
+            self.assertIn(
+                f"{memlog.LOG_EVENT_TIME_CONTEXT} ok=false reason=no_provider",
+                self._log(),
+            )
+            with store.locked(observer):
+                self.assertEqual(
+                    store.meta_get(observer, store.META_LAST_INTERACTION_AT), frozen
+                )
+        finally:
+            observer.close()
+
+    def test_session_switch_rekeys(self) -> None:
+        pa = ZolaMemoryProvider()
+        pa.initialize("sid-A", hermes_home=str(self.home))
+        pa.on_session_switch("sid-A2")
+        self.assertIsNotNone(self._hook("sid-A2"))
+        self.assertIsNone(self._hook("sid-A"))
+        self.assertIn(
+            f"{memlog.LOG_EVENT_TIME_CONTEXT} ok=false reason=no_provider",
+            self._log(),
+        )
+        pa.shutdown()
+
+    def test_stale_shutdown_does_not_remove_newer(self) -> None:
+        stale = ZolaMemoryProvider()
+        newer = ZolaMemoryProvider()
+        stale.initialize("sid-S", hermes_home=str(self.home))
+        newer.initialize("sid-S", hermes_home=str(self._home_b))
+        self.assertIs(self._zola._registry_get("sid-S"), newer)
+        stale.shutdown()
+        self.assertIs(self._zola._registry_get("sid-S"), newer)
+        seen = []
+
+        def capture(provider, **kwargs):
+            seen.append(provider)
+            return None
+
+        with mock.patch.object(
+            self._zola.time_context, "handle_pre_llm_call", side_effect=capture
+        ):
+            self._hook("sid-S")
+        self.assertEqual(seen, [newer])
+        newer.shutdown()
+
+    def test_unknown_sid_no_provider(self) -> None:
+        result = self._hook("sid-unknown")
+        self.assertIsNone(result)
+        self.assertIn(
+            f"{memlog.LOG_EVENT_TIME_CONTEXT} ok=false reason=no_provider",
+            self._log(),
+        )
+
+    def test_uninitialized_switch_creates_no_ghost_entry(self) -> None:
+        owner = ZolaMemoryProvider()
+        owner.initialize("sid-owned", hermes_home=str(self.home))
+        ghost = ZolaMemoryProvider()
+        self.assertIsNone(ghost._session_id)
+        self.assertIsNone(ghost._conn)
+        ghost.on_session_switch("S-ghost")
+        self.assertIsNone(self._zola._registry_get("S-ghost"))
+        # Ghost must not overwrite an initialized provider's sid.
+        ghost.on_session_switch("sid-owned")
+        self.assertIs(self._zola._registry_get("sid-owned"), owner)
+        self.assertIsNone(self._zola._registry_get("S-ghost"))
+        owner.shutdown()
 
 
 if __name__ == "__main__":
