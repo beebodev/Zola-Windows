@@ -25,6 +25,8 @@ LOG_EVENT_ON_SESSION_SWITCH = "zola_memory.on_session_switch"
 LOG_EVENT_ON_PRE_COMPRESS = "zola_memory.on_pre_compress"
 LOG_EVENT_PREFETCH = "zola_memory.prefetch"
 LOG_EVENT_PRE_LLM_CALL = "zola_memory.pre_llm_call"
+LOG_EVENT_TIME_CONTEXT = "zola_memory.time_context"
+LOG_EVENT_TIME_MARKER_UPDATE = "zola_memory.time_marker_update"
 LOG_EVENT_SHUTDOWN = "zola_memory.shutdown"
 
 _logger = logging.getLogger("zola_memory")
