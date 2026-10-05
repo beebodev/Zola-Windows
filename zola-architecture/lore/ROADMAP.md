@@ -153,16 +153,63 @@ One-line track results:
 - **P5-MEMORY** — lasting-fact saving + routing + explicit-only search;
   save rate PASS; routing ⚠️ 9/10; bridge timing ⚠️.
 
-## Current stage — Phase 6 — Memory (not started)
-Primary: `S14` (structured local memory: entity facts, episodes at
-session end, relevance retrieval) + `S43` (time awareness). Starts with
-its own audit. `P4` is to be revisited as "local only".
+## Phase 6 — COMPLETE: Memory Foundation
+Phase 6 closed five tracks plus FIX-WHEN and FIX-2, then this lore pass.
+"Complete" means the planned phase shipped — not that Zola's memory work
+is done. Shipped: a local structured fact index (the flat files remain
+the fact authority); episodic memory with consolidation and retrieval;
+ambient temporal context; destructive forget with physical erasure; a
+bounded calculator; and measured limitations (associative recall 0/4;
+same-day "when" may still be omitted; notebook clarification is model
+judgment). `S43` and `S42` resolved; `S14` foundation complete, not
+resolved; `S35` arithmetic resolved (scopes remain).
 
-Then carry candidates forward (not a committed order):
-- `S44`, `S35`, `S40`, `S38`;
-- `S36` (upstream-gated);
-- `S33`, `S34`, `S37`, `S39`, `S17`, `S21`, `S26`, `S28`;
-- `S12`, `S13`, `S16`, `S24`, `S25`, `S31`.
+1. ✅ **AUDIT** — P6PRE, merge `92dc707ac047d2808b9f1848bb0e31f96689065a`
+   (audit commit `84f14d83db8efd7e495acbfa078a8da66b415683`).
+2. ✅ **DECISIONS LOCKED** — `P6-D01`–`P6-D08` (Appendix A); decisions
+   adopted during Phase 6: `P6-D09`–`P6-D11`.
+3. ✅ **BUILD PLAN WRITTEN** — `PHASE6_BUILD_PLAN.md` v1.1, commit
+   `187275981bdcbfcf3acd87a148bb0606a1c2d1e1`, merge
+   `aee0f0da2ce0382c117013dc57f2cc32f1cd8370`.
+4. ✅ **TRACKS EXECUTED** — five tracks + FIX-WHEN + FIX-2.
+5. ✅ **VERIFICATION / SMOKE TEST** — per-track; recorded ⚠️: associative
+   recall 0/4; forget_guard / deferred-sanitize not fired live;
+   paraphrase-forget via fact-ref; R6 kiln PASS used an approved
+   one-day seed (deviation).
+6. ✅ **TRACK MERGED**
+   - Plan: `aee0f0da2ce0382c117013dc57f2cc32f1cd8370`
+   - P6-CALC: `5303e368969eaf60a68eb5950867ef302971119b`
+   - P6-STORE: `79a0e3e7504eea98083b2f66066428bc69a56570`
+   - P6-TIME: `1c7357e1f9f7c3927fa6e70763d1582b60143979`
+   - P6-FORGET: `7b8f030b611372b5d2c35f0c460455916e781384`
+   - P6-EPISODES: `8e12ff0c8226db0cd0ec95a881eabad166f7c00b`
+   - P6-FIX-WHEN: `a2900eefae3b45222510962d5eb640e7641a0727`
+   - P6-FIX-2: `fa6c7f078ab988a5c07c992f53f4c77b34521f5f`
+7. ✅ **LORE CLOSEOUT** — this pass.
+
+One-line track results:
+- **P6-CALC** — bounded `calculate`; arithmetic cards gone; approvals stand.
+- **P6-STORE** — local SQLite fact index beside the files; import/sync.
+- **P6-TIME** — per-message stamps + cross-session gap; never read aloud.
+- **P6-FORGET** — cascade erase; `forget_memory`; G-AUTHORITY / G-LABELS.
+- **P6-EPISODES** — pending→consolidate→prefetch; G-ERASE; blind C2 PASS.
+- **P6-FIX-WHEN** — SOUL: mention roughly when on recall.
+- **P6-FIX-2** — "last weekend" interval + episodes-block say-when cue;
+  R6 PASS (seeded).
+
+## Current stage — Phase 7 (scope is Brian's call)
+Candidates (not a committed order):
+- **`S45` voice echo** (Brian: high priority) — TTS → mic → "User
+  correction during the turn"; related `S36` echo policy;
+- **`S46` semantic / associative episode retrieval** — minimum mechanism
+  that improves 0/4 associative recall without a second memory authority;
+- **`S44`** — no clarify card in Voice mode;
+- **`S40`** — UI polish after Phase 4;
+- **`S28`** — session UI retirement (episodes now exist; evaluate);
+- then carry: `S35` (session/always scopes), `S38`, `S36` (upstream-gated),
+  `S33`, `S34`, `S37`, `S39`, `S17`, `S21`, `S26`, `S14` (migration /
+  measurement), `S47`–`S50`, `S12`, `S13`, `S16`, `S24`, `S25`, `S31`.
+
 
 ## Source documents
 - Audit series: `zola-architecture/audit/winh-hermes-gap/`

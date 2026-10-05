@@ -16,6 +16,18 @@ synthesis document.
   independent of the Daily Brief pipeline) is the likely v1 shape once
   an access path is found — not the full five-stage intelligence
   analyzer, which is deferred with the rest of the Daily Brief per S12.
+- **S14 — Structured memory store (foundation complete, not resolved).**
+  Phase 6 built a local Zola store beside the flat files: structured fact
+  index (files remain fact authority), episodes with consolidation and
+  lexical/entity retrieval, ambient time, and forget with physical erasure
+  (`P6-D01`–`D11`). **Still open:** (1) long-term retrieval quality —
+  associative/paraphrased episode recall was 0/4 under fixed blind queries
+  (see `S46`); (2) evidence-based migration of fact authority to the store
+  (relevance, prompt cost, memory quality — not fill %); (3) measurement
+  plan — report fill %, prefetch relevance, and prompt cost before any
+  migration call. Tiers/confidence/decay and environmental facts remain
+  out of scope until that evidence exists.
+
 - **S16 — Google Workspace Integration (Gmail, Calendar, Drive,
   Contacts) — deferred from Phase 1.** Phase 1's email track
   (`P1-EMAIL`) was blocked in grounding. None of the paths already in
@@ -97,6 +109,10 @@ synthesis document.
 - **S28 — Session UI retirement.** The developer expects his memory system
   to make sessions unnecessary. When it does, remove the SESSION HUD line
   and the Sessions dock button together.
+  **Phase 6:** episodes now exist (P6-EPISODES) with cross-session
+  prefetch. Session UI retirement can be evaluated; no retirement decision
+  yet.
+
 - **S29 — Markdown rendering in chat bubbles.** Bubbles are plain text, so
   fenced code, lists and links show as raw markdown. Predates Phase 3.
 
@@ -138,9 +154,10 @@ synthesis document.
   need their own decision.
   Observation (P5-WAKE smoke B3): a plain arithmetic question produced
   one approval card per math problem (developer: "she showed a card for
-  each math problem for approval."). Inputs: which tool she used;
-  whether harmless tools can be scoped out of manual approval without
-  weakening `P4-D07`.
+  each math problem for approval.").
+  **Phase 6:** arithmetic case **RESOLVED** by `P6-CALC` / `P6-D08` —
+  bounded `calculate` tool; three arithmetic prompts, zero cards; control
+  still cards; `P4-D07`/`P4-D27` stand. **Session/always scopes stay open.**
 
 - **S36 — Bring back talk-over barge-in without breaking Phase 4.**
   **Developer-requested.** Reframe: detecting speech and interrupting her are
@@ -187,31 +204,7 @@ synthesis document.
   Observation (P5-MEMORY cleanup): an "empty box while thinking" was
   seen once before she said "forgotten"; watch for recurrence.
 
-- **S42 — Memory is not shared across sessions.** Developer-requested
-  2026-10-01; Phase 5 scope. Principle (developer): a Hermes session is a
-  conversation boundary, not a Zola memory boundary. Durable facts, decisions
-  and episodes belong to Zola and are retrieved by relevance in any session;
-  sessions produce and consume memories but never **automatically** read each
-  other's transcripts (amended by `P5-D06`: explicit `session_search` when
-  asked is allowed; search results are not memory). P5PRE found that written
-  facts already cross sessions (each new session reloads `MEMORY.md` /
-  `USER.md`); the gap was that she rarely saved. **Facts half resolved** by
-  P5-MEMORY (`P5-D03`–`P5-D07`; save rate lasting 6/6, trivial 0/4, explicit
-  2/2; correction PASS). **Open remainder:** episodes ("what did we decide…"
-  without being asked), which moves to `S14` in Phase 6. Phase 6 input:
-  Hermes's pluggable memory layer (`agent/memory_provider.py`,
-  `agent/memory_manager.py`; one external provider via `memory.provider`,
-  loadable from the profile's `plugins/` without editing `hermes-agent`;
-  hooks `system_prompt_block`, per-turn `prefetch`, `sync_turn`,
-  `on_session_end`, `on_pre_compress`, `on_memory_write`). Related: `S28`,
-  `S43`.
 
-- **S43 — Time awareness in conversation.** She knows the current time,
-  but not when each message or session happened, so "5 minutes ago" and
-  "24 hours ago" look alike. Live evidence: the P5-MEMORY BR1 answer had
-  no timing, although `session_search` results carry session start dates.
-  Inputs: `Zola_Temporal_Reasoning_Architecture.md`, WINH12-02. Phase 6,
-  with `S14`.
 
 - **S44 — No clarify card in Voice mode.** Developer, 2026-10-02. In
   Voice mode, clarify questions should be purely conversational: she
@@ -223,13 +216,66 @@ synthesis document.
   today to card Cancel. Needs a short audit of card users before any
   build. Not Phase 5; with `S40` or in Phase 6 (developer's call).
 
+- **S45 — Voice echo injected as "User correction during the turn".**
+  **High priority.** Zola's TTS was picked up by the mic and injected into
+  Brian's turn via Hermes's active-turn redirect (`User correction during
+  the turn: …`). This can put her words into his turns anywhere (forget
+  disposition, pending text, consolidator input). Brian (verbatim):
+  "Record it as an open question. We have to get this tightened."
+  Related: `S36` (state-aware policy "her echo → ignore"; echo filter
+  still only drops ≥3-word / ≥60% tail runs, A32). Observed path was
+  Hermes active-turn redirect (mid-turn submit), not barge-in
+  (`voice.barge_in` stays false, `P4-D28`). Next-phase candidate.
+
+- **S46 — Semantic / associative episode retrieval.**
+  Direct lexical episode recall passed in Track 5. Associative /
+  paraphrased retrieval found **0/4** under the fixed blind queries
+  (shared-word counts with stored summaries: Q2=0, Q3=1, Q4=0, Q5=0;
+  prefetch miss on all four). This is a **retrieval-quality** limitation,
+  not an episodic-memory persistence failure. Phase 6 intentionally did
+  not add embeddings or vector retrieval. Next-phase question: "What is
+  the minimum semantic retrieval mechanism that materially improves
+  associative recall without creating another memory authority?"
+
+- **S47 — Notebook-fact clarification is model judgment.**
+  For notebook facts, whether she asks before erasing is SOUL-guided
+  judgment, not code-enforced: with Mara (separate messages) she asked;
+  with two Rosas in one sentence she erased both, then restored the aunt
+  on correction (Brian accepted). The `forget_guard` / `ask_brian` path
+  enforces clarification for episode memory and after a forget lookup
+  flags `ask_brian`, not for ordinary notebook removes. Decide whether
+  notebook clarification needs a stronger gate.
+
+- **S48 — Consolidator honors "no need to save a note" as don't-remember.**
+  Observed in Track 5 (S1' and Fernhill leak-test): an explicit "no need
+  to save a note" / don’t-note request was treated as consent not to
+  write an episode. Not designed as a product rule. Decide whether that
+  is the intended consent behavior and document it if so.
+
+- **S49 — Background-review skill edits — is a policy needed?**
+  During Phase 6 smokes, background review created/patched procedural
+  skills (`communication/conversation-memory`,
+  `communication/everyday-assistance`; 0 personal facts). Brian
+  (verbatim): "Keep". Pattern: background review edits skills
+  autonomously. Decide whether that needs an explicit policy (what it may
+  write, review cadence, or a hold).
+
+- **S50 — Phase 6 memory tunables after real use.**
+  Named starting values shipped and smoke-checked:
+  `MEANINGFUL_GAP_MINUTES = 30`, `CONSOLIDATE_QUIET_MINUTES = 10`,
+  `EPISODE_MIN_SCORE = 0.15` (calibrated on synthetic related vs
+  single-common-word corpus). Retune only with measured over-mention,
+  missed consolidations, or prefetch false-positives/negatives — not by
+  feel.
+
 *S13 and S16 remain open. S17, S21, S26 updated at Phase 4 lore closeout.
 S20, S22, S32 resolved (see DESIGN_DECISIONS Phase 4). S33–S41 added at
 Phase 4 lore closeout. S42 added at Phase 5 kickoff (2026-10-01). S41
-resolved (see DESIGN_DECISIONS Phase 5). S42 facts half resolved at Phase 5
-lore closeout; episodes remainder moves to S14. S35, S36, S38, and S40
-updated at Phase 5 lore closeout. S43 and S44 added at Phase 5 lore
-closeout. Not open questions (one line): question quiet window withdrawn
-(B38); gap "no Stop" closed by P4-D29; AUD-37 closed by P4-D18 (residual
-in S36); external dictation tool is test hygiene (A20). Resolved items stay
-in DESIGN_DECISIONS.md.*
+resolved (see DESIGN_DECISIONS Phase 5). S42 and S43 resolved at Phase 6
+lore closeout (episodes + ambient time). S35 arithmetic resolved by
+P6-CALC; session/always scopes remain. S14 annotated (foundation
+complete, not resolved). S28 annotated (episodes exist; retirement
+evaluable). S45–S50 added at Phase 6 lore closeout. Not open questions
+(one line): question quiet window withdrawn (B38); gap "no Stop" closed
+by P4-D29; AUD-37 closed by P4-D18 (residual in S36); external dictation
+tool is test hygiene (A20). Resolved items stay in DESIGN_DECISIONS.md.*
