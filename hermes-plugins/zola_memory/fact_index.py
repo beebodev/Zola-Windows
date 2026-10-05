@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple  # Any used for optional provider
 
 try:
     from . import forget, log as memlog, store
@@ -54,6 +54,7 @@ def handle_memory_write(
     content: str,
     metadata: Optional[Dict[str, Any]],
     user_message: str,
+    provider: Any = None,
 ) -> None:
     """Mirror a notified memory-tool write."""
     with store.locked(conn):
@@ -65,10 +66,23 @@ def handle_memory_write(
             _notify_add(conn, hermes_home, tgt, content)
         elif action == "replace":
             _notify_replace(
-                conn, hermes_home, tgt, content, meta.get("old_text"), user_message
+                conn,
+                hermes_home,
+                tgt,
+                content,
+                meta.get("old_text"),
+                user_message,
+                provider=provider,
             )
         elif action == "remove":
-            _notify_remove(conn, hermes_home, tgt, content, meta.get("old_text"))
+            _notify_remove(
+                conn,
+                hermes_home,
+                tgt,
+                content,
+                meta.get("old_text"),
+                provider=provider,
+            )
 
 
 def _notify_add(conn: sqlite3.Connection, hermes_home: Path, target: str, content: str) -> None:
@@ -120,6 +134,8 @@ def _notify_replace(
     content: str,
     old_text: Optional[str],
     user_message: str,
+    *,
+    provider: Any = None,
 ) -> None:
     new_text = store.normalize_entry(content)
     old = store.normalize_entry(old_text or "")
@@ -133,7 +149,9 @@ def _notify_replace(
         return
 
     if forget.has_forget_intent(user_message):
-        forget.erase_fact(conn, fact_id, reason=REASON_FORGET_INTENT)
+        ok = forget.erase_fact(conn, fact_id, reason=REASON_FORGET_INTENT)
+        # P6-FORGET: D2 — notify forget path marks the turn; file-check does not — P6-D06
+        forget.mark_after_notify_cascade(provider, ok=ok)
         run_file_check(conn, hermes_home, force=True)
         return
 
@@ -183,6 +201,8 @@ def _notify_remove(
     target: str,
     content: str,
     old_text: Optional[str],
+    *,
+    provider: Any = None,
 ) -> None:
     needle = store.normalize_entry(old_text or content or "")
     if not needle:
@@ -194,11 +214,20 @@ def _notify_remove(
             "SELECT id FROM facts WHERE target = ? AND state = ? AND text = ?",
             (target, store.STATE_ACTIVE, needle),
         ).fetchall()
+        any_ok = False
         for row in rows:
-            forget.erase_fact(conn, row["id"], reason=REASON_REMOVE)
+            ok = forget.erase_fact(conn, row["id"], reason=REASON_REMOVE)
+            any_ok = any_ok or ok
+            if provider is not None:
+                forget.end_hold_if_candidate_removed(provider, row["id"])
+        # P6-FORGET: D2 — notification remove marks the turn (not file-check) — P6-D06
+        forget.mark_after_notify_cascade(provider, ok=any_ok)
         _unmatched_fallback(conn, hermes_home, event_note="remove_unmatched")
         return
-    forget.erase_fact(conn, fact_id, reason=REASON_REMOVE)
+    ok = forget.erase_fact(conn, fact_id, reason=REASON_REMOVE)
+    forget.mark_after_notify_cascade(provider, ok=ok)
+    if provider is not None:
+        forget.end_hold_if_candidate_removed(provider, fact_id)
 
 
 def _unmatched_fallback(

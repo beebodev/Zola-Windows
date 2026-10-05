@@ -3,60 +3,29 @@
 from __future__ import annotations
 
 import logging
-import threading
-import time as _time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 try:
     from . import log as memlog
     from . import llm_access
+    from . import registry
     from . import time_context
     from .provider import ZolaMemoryProvider
 except ImportError:  # P6-STORE: flat unittest discover top — P6-D03
     import log as memlog
     import llm_access
+    import registry
     import time_context
     from provider import ZolaMemoryProvider
 
 _provider: Optional[ZolaMemoryProvider] = None
 
-# P6-TIME: session→provider registry for pre_llm_call (never use _provider for time) — P6-D05
-_PROVIDER_BY_SESSION: Dict[str, ZolaMemoryProvider] = {}
-_REGISTRY_LOCK = threading.Lock()
-
-
-def _registry_put(sid: str, p: ZolaMemoryProvider) -> None:
-    if not sid:
-        return
-    with _REGISTRY_LOCK:
-        _PROVIDER_BY_SESSION[sid] = p
-
-
-def _registry_rekey(old: str, new: str, p: ZolaMemoryProvider) -> None:
-    # P6-TIME: only move an entry this provider currently owns; else no-op — P6-D05
-    with _REGISTRY_LOCK:
-        if not old or _PROVIDER_BY_SESSION.get(old) is not p:
-            return
-        del _PROVIDER_BY_SESSION[old]
-        if new:
-            _PROVIDER_BY_SESSION[new] = p
-
-
-def _registry_remove(sid: str, p: ZolaMemoryProvider) -> None:
-    with _REGISTRY_LOCK:
-        if sid and _PROVIDER_BY_SESSION.get(sid) is p:
-            del _PROVIDER_BY_SESSION[sid]
-
-
-def _registry_get(sid: str) -> Optional[ZolaMemoryProvider]:
-    with _REGISTRY_LOCK:
-        return _PROVIDER_BY_SESSION.get(sid or "")
-
-
-def clear_registry_for_tests() -> None:
-    """Test helper: drop all session→provider mappings."""
-    with _REGISTRY_LOCK:
-        _PROVIDER_BY_SESSION.clear()
+# P6-TIME: re-export registry helpers for older call sites / tests — P6-D05
+_registry_put = registry.put
+_registry_rekey = registry.rekey
+_registry_remove = registry.remove
+_registry_get = registry.get
+clear_registry_for_tests = registry.clear_for_tests
 
 
 def _get_plugin_llm() -> Any:
@@ -81,23 +50,8 @@ def _probe_llm(provider: ZolaMemoryProvider) -> None:
     )
 
 
-def _pre_llm_call_hook(**kwargs: Any) -> Any:
-    """Ambient time injection (P6-D05); returns ``{"context": ...}`` or None."""
-    # P6-TIME: resolve provider by session_id registry — never module _provider — P6-D05
-    t0 = _time.perf_counter()
-    sid = kwargs.get("session_id") or ""
-    provider = _registry_get(str(sid))
-    if provider is None:
-        memlog.write_event(
-            memlog.LOG_EVENT_TIME_CONTEXT,
-            ok=False,
-            reason="no_provider",
-            gap_minutes="-",
-            gap_line=False,
-            elapsed_ms=int((_time.perf_counter() - t0) * 1000),
-        )
-        return None
-    return time_context.handle_pre_llm_call(provider, **kwargs)
+# P6-TIME: stable alias for tests / register — P6-D05
+_pre_llm_call_hook = time_context.pre_llm_call_hook
 
 
 def register(ctx) -> None:
@@ -110,6 +64,6 @@ def register(ctx) -> None:
     ctx.register_memory_provider(provider)
 
     try:
-        ctx.register_hook("pre_llm_call", _pre_llm_call_hook)
+        ctx.register_hook("pre_llm_call", time_context.pre_llm_call_hook)
     except Exception:
         pass

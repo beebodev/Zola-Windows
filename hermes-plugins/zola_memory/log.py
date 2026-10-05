@@ -28,6 +28,10 @@ LOG_EVENT_PRE_LLM_CALL = "zola_memory.pre_llm_call"
 LOG_EVENT_TIME_CONTEXT = "zola_memory.time_context"
 LOG_EVENT_TIME_MARKER_UPDATE = "zola_memory.time_marker_update"
 LOG_EVENT_SHUTDOWN = "zola_memory.shutdown"
+LOG_EVENT_FORGET_CASCADE = "zola_memory.forget_cascade"
+LOG_EVENT_FORGET_TOOL = "zola_memory.forget_tool"
+LOG_EVENT_FORGET_HOLD = "zola_memory.forget_hold"
+LOG_EVENT_TURN_DISPOSITION = "zola_memory.turn_disposition"
 
 _logger = logging.getLogger("zola_memory")
 _file_handler_ready = False
