@@ -8,9 +8,11 @@ from typing import Any, Callable, Optional
 
 try:
     from . import log as memlog
+    from . import registry
     from . import store
 except ImportError:  # P6-TIME: flat unittest discover top — P6-D05
     import log as memlog
+    import registry
     import store
 
 # P6-TIME: only genuine Brian TUI turns update the marker — P6-D05
@@ -215,6 +217,25 @@ def marker_iso(now: datetime) -> str:
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc).astimezone()
     return now.isoformat(timespec="seconds")
+
+
+def pre_llm_call_hook(**kwargs: Any) -> Any:
+    """Ambient time injection entry (registry lookup); returns context dict or None."""
+    # P6-TIME: resolve provider by session_id registry — never module _provider — P6-D05
+    t0 = _time.perf_counter()
+    sid = kwargs.get("session_id") or ""
+    provider = registry.get(str(sid))
+    if provider is None:
+        memlog.write_event(
+            memlog.LOG_EVENT_TIME_CONTEXT,
+            ok=False,
+            reason="no_provider",
+            gap_minutes="-",
+            gap_line=False,
+            elapsed_ms=int((_time.perf_counter() - t0) * 1000),
+        )
+        return None
+    return handle_pre_llm_call(provider, **kwargs)
 
 
 def handle_pre_llm_call(provider: Any, **kwargs: Any) -> Optional[dict]:

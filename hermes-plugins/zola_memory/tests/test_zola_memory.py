@@ -32,6 +32,7 @@ from zoneinfo import ZoneInfo
 import fact_index
 import forget
 import log as memlog
+import registry
 import store
 import time_context
 from forget import has_forget_intent
@@ -1047,8 +1048,7 @@ class TestSessionRegistry(_TempHome):
 
     def setUp(self) -> None:
         super().setUp()
-        self._zola = importlib.import_module("__init__")
-        self._zola.clear_registry_for_tests()
+        registry.clear_for_tests()
         time_context.set_clock_for_tests(
             lambda: datetime(2026, 10, 2, 15, 45, tzinfo=_PDT),
             timezone=_PDT,
@@ -1059,7 +1059,7 @@ class TestSessionRegistry(_TempHome):
         (self._home_b / "memories" / "MEMORY.md").write_text("", encoding="utf-8")
 
     def tearDown(self) -> None:
-        self._zola.clear_registry_for_tests()
+        registry.clear_for_tests()
         time_context.set_clock_for_tests(None)
         shutil.rmtree(self._home_b, ignore_errors=True)
         super().tearDown()
@@ -1072,7 +1072,7 @@ class TestSessionRegistry(_TempHome):
             "user_message": "synthetic registry probe",
         }
         kwargs.update(extra)
-        return self._zola._pre_llm_call_hook(**kwargs)
+        return time_context.pre_llm_call_hook(**kwargs)
 
     def _log(self) -> str:
         path = self.home / "logs" / memlog.LOG_FILENAME
@@ -1091,7 +1091,7 @@ class TestSessionRegistry(_TempHome):
             return real_handle(provider, **kwargs)
 
         with mock.patch.object(
-            self._zola.time_context, "handle_pre_llm_call", side_effect=capture
+            time_context, "handle_pre_llm_call", side_effect=capture
         ):
             ra = self._hook("sid-A")
             rb = self._hook("sid-B")
@@ -1125,13 +1125,25 @@ class TestSessionRegistry(_TempHome):
                 return _PC()
 
         ctx = _Ctx()
-        self._zola.register(ctx)
+        import importlib.util
+
+        init_path = Path(__file__).resolve().parents[1] / "__init__.py"
+        spec = importlib.util.spec_from_file_location("_zola_memory_pkg_init", init_path)
+        zola = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        # Avoid double-exec if already loaded by a prior test
+        if "_zola_memory_pkg_init" in sys.modules:
+            zola = sys.modules["_zola_memory_pkg_init"]
+        else:
+            sys.modules["_zola_memory_pkg_init"] = zola
+            spec.loader.exec_module(zola)
+        zola.register(ctx)
         self.assertEqual(len(ctx.providers), 1)
         self.assertIsNot(ctx.providers[0], pa)
-        self.assertIs(self._zola._provider, ctx.providers[0])
+        self.assertIs(zola._provider, ctx.providers[0])
         self.assertIsNone(ctx.providers[0]._conn)
         # Hook re-registered (no once-guard); skills_tool path left A intact.
-        self.assertIn(("pre_llm_call", self._zola._pre_llm_call_hook), ctx.hooks)
+        self.assertIn(("pre_llm_call", zola._pre_llm_call_hook), ctx.hooks)
         result = self._hook("sid-A")
         self.assertIsNotNone(result)
         self.assertIn("context", result)
@@ -1191,9 +1203,9 @@ class TestSessionRegistry(_TempHome):
         newer = ZolaMemoryProvider()
         stale.initialize("sid-S", hermes_home=str(self.home))
         newer.initialize("sid-S", hermes_home=str(self._home_b))
-        self.assertIs(self._zola._registry_get("sid-S"), newer)
+        self.assertIs(registry.get("sid-S"), newer)
         stale.shutdown()
-        self.assertIs(self._zola._registry_get("sid-S"), newer)
+        self.assertIs(registry.get("sid-S"), newer)
         seen = []
 
         def capture(provider, **kwargs):
@@ -1201,7 +1213,7 @@ class TestSessionRegistry(_TempHome):
             return None
 
         with mock.patch.object(
-            self._zola.time_context, "handle_pre_llm_call", side_effect=capture
+            time_context, "handle_pre_llm_call", side_effect=capture
         ):
             self._hook("sid-S")
         self.assertEqual(seen, [newer])
@@ -1222,11 +1234,11 @@ class TestSessionRegistry(_TempHome):
         self.assertIsNone(ghost._session_id)
         self.assertIsNone(ghost._conn)
         ghost.on_session_switch("S-ghost")
-        self.assertIsNone(self._zola._registry_get("S-ghost"))
+        self.assertIsNone(registry.get("S-ghost"))
         # Ghost must not overwrite an initialized provider's sid.
         ghost.on_session_switch("sid-owned")
-        self.assertIs(self._zola._registry_get("sid-owned"), owner)
-        self.assertIsNone(self._zola._registry_get("S-ghost"))
+        self.assertIs(registry.get("sid-owned"), owner)
+        self.assertIsNone(registry.get("S-ghost"))
         owner.shutdown()
 
 

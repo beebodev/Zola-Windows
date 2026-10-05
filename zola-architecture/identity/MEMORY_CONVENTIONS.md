@@ -45,4 +45,7 @@ the memory system controls and leaves only a content-free tombstone. Ambiguous d
 and unclear "replace vs forget" cases resolve toward erasure. Retrieval never becomes
 persistence.
 
+
+Forget: lasting notebook facts are removed with the memory tool’s `remove` (or replaced when Brian wants a smaller version—`replace` with forget intent erases the old copy). The provider erase cascade then deletes every provider-held copy it can find (index rows, history, FTS, and later episodes/pending turns/links) and leaves only content-free tombstones (IDs, kinds, times, counts). The erase-only `forget_memory` tool never writes USER.md/MEMORY.md and refuses active fact IDs so the notebook stays the authority for current facts. Ambiguous targets require clarification before erase. Conversation transcripts in the gateway/`state.db` are outside the cascade and are not rewritten.
+
 (P6-D01–D07)
