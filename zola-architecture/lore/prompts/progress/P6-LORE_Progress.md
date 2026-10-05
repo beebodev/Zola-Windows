@@ -24,7 +24,7 @@
 | 6b | p5* memory-copy scan (read-only) | COMPLETE — DELETE/KEEP reported |
 | 6c | p5 DELETE (4 USER/MEMORY only) | COMPLETE — deleted 2026-10-05 13:31:30 -07:00 (4/4 gone) |
 | 7 | Apply, verify, STOP | COMPLETE — Phase 7 verified Brian+Claude |
-| 8 | Commit and merge | IN PROGRESS |
+| 8 | Commit and merge | COMPLETE � merge `84df45ffd3da11c968acfd6984563ccb6fe30b1a` |
 
 ## Guardrails (from prompt)
 
