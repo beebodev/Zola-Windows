@@ -544,6 +544,100 @@ class TestConsolidateCore(_TempHome):
         )
         # missing user_time path → unknown at validate (covered via NULL pending)
 
+    def test_last_weekend_interval_by_turn_day(self) -> None:
+        """P6-FIX-2: last weekend → Sat–Sun interval; Mon/Sat/Sun + month boundary + DST."""
+        # Mon Oct 5 2026 → Oct 3–4
+        mon = datetime(2026, 10, 5, 12, 0, tzinfo=_LA)
+        self.assertEqual(
+            consolidate.resolve_stated_time("last weekend", time_context.marker_iso(mon)),
+            "2026-10-03/2026-10-04",
+        )
+        # Sat Oct 3 2026 → Sep 26–27
+        sat = datetime(2026, 10, 3, 12, 0, tzinfo=_LA)
+        self.assertEqual(
+            consolidate.resolve_stated_time("last weekend", time_context.marker_iso(sat)),
+            "2026-09-26/2026-09-27",
+        )
+        # Sun Oct 4 2026 → Sep 26–27
+        sun = datetime(2026, 10, 4, 12, 0, tzinfo=_LA)
+        self.assertEqual(
+            consolidate.resolve_stated_time("last weekend", time_context.marker_iso(sun)),
+            "2026-09-26/2026-09-27",
+        )
+        # Month boundary: Mon Nov 2 2026 → Oct 31–Nov 1
+        mon_nov = datetime(2026, 11, 2, 12, 0, tzinfo=_LA)
+        self.assertEqual(
+            consolidate.resolve_stated_time(
+                "last weekend", time_context.marker_iso(mon_nov)
+            ),
+            "2026-10-31/2026-11-01",
+        )
+        # DST spring-forward weekend: Mon Mar 10 2025 → Mar 8–9
+        dst_mon = datetime(2025, 3, 10, 12, 0, tzinfo=_LA)
+        self.assertEqual(
+            consolidate.resolve_stated_time(
+                "last weekend", time_context.marker_iso(dst_mon)
+            ),
+            "2025-03-08/2025-03-09",
+        )
+        got, reason = consolidate.resolve_stated_time_with_reason(
+            "last weekend", time_context.marker_iso(mon)
+        )
+        self.assertEqual(got, "2026-10-03/2026-10-04")
+        self.assertIsNone(reason)
+
+    def test_last_weekend_display_wording(self) -> None:
+        """P6-FIX-2: retrieval wording at 1 day / 10 days / 3 weeks after the Sunday."""
+        interval = "2026-10-03/2026-10-04"
+        # +1 day (Mon Oct 5) → last weekend
+        now1 = datetime(2026, 10, 5, 12, 0, tzinfo=_LA)
+        line1 = retrieve.format_episode_line(
+            source_user_time="2026-10-05T12:00:00-07:00",
+            event_time=interval,
+            summary="Painted the Ashford shed trim.",
+            open_items=[],
+            now=now1,
+        )
+        self.assertIn(
+            "happened: the weekend of Oct 3–4 (last weekend)",
+            line1,
+        )
+        # +10 days (Oct 14) → by Sunday → 10 days ago
+        now10 = datetime(2026, 10, 14, 12, 0, tzinfo=_LA)
+        line10 = retrieve.format_episode_line(
+            source_user_time="2026-10-05T12:00:00-07:00",
+            event_time=interval,
+            summary="Painted the Ashford shed trim.",
+            open_items=[],
+            now=now10,
+        )
+        self.assertIn(
+            "happened: the weekend of Oct 3–4 (10 days ago)",
+            line10,
+        )
+        # +3 weeks from Sunday Oct 4 → Oct 25 = 21 days → 3 weeks ago
+        now21 = datetime(2026, 10, 25, 12, 0, tzinfo=_LA)
+        line21 = retrieve.format_episode_line(
+            source_user_time="2026-10-05T12:00:00-07:00",
+            event_time=interval,
+            summary="Painted the Ashford shed trim.",
+            open_items=[],
+            now=now21,
+        )
+        self.assertIn(
+            "happened: the weekend of Oct 3–4 (3 weeks ago)",
+            line21,
+        )
+        # Cross-month span wording
+        from datetime import date as _date
+
+        cross = retrieve.format_weekend_happened(
+            _date(2026, 10, 31),
+            _date(2026, 11, 1),
+            datetime(2026, 11, 2, 12, 0, tzinfo=_LA),
+        )
+        self.assertEqual(cross, "the weekend of Oct 31–Nov 1 (last weekend)")
+
     def test_single_consolidator_lock(self) -> None:
         p1 = self._provider("s1")
         p2 = ZolaMemoryProvider()
@@ -638,7 +732,12 @@ class TestRetrieve(_TempHome):
         src = "2026-10-03T15:00:00-07:00"  # yesterday
         self._seed_episode(p._conn, SYN_EP_SUMMARY, "Alpine Quill", src, "2026-10-02")
         text = p.prefetch("Tell me about Alpine Quill Cedar demo", session_id="sess-ep")
-        self.assertTrue(text.startswith("[Episodes]\n"))
+        self.assertTrue(text.startswith(retrieve.EPISODES_BLOCK_HEADER + "\n"))
+        self.assertEqual(
+            retrieve.EPISODES_BLOCK_HEADER,
+            '[Episodes — past conversations. If you use one, mention roughly when it was '
+            '(e.g. "yesterday", "last week").]',
+        )
         self.assertIn("talked about", text)
         self.assertIn("happened:", text)
         self.assertIn("still open: call Cedar", text)
@@ -704,10 +803,10 @@ class TestRetrieve(_TempHome):
             "",
         )
         hit_al = p.prefetch("Al called earlier", session_id="sess-ep")
-        self.assertTrue(hit_al.startswith("[Episodes]\n"))
+        self.assertTrue(hit_al.startswith(retrieve.EPISODES_BLOCK_HEADER + "\n"))
         self.assertIn("Al", hit_al)
         hit_phrase = p.prefetch("Project Larkspur status?", session_id="sess-ep")
-        self.assertTrue(hit_phrase.startswith("[Episodes]\n"))
+        self.assertTrue(hit_phrase.startswith(retrieve.EPISODES_BLOCK_HEADER + "\n"))
         self.assertIn("Larkspur", hit_phrase)
 
     def test_r2_per_candidate_gate_single_common_word(self) -> None:
@@ -808,7 +907,7 @@ class TestRetrieve(_TempHome):
             self.assertTrue(
                 retrieve.retrieve_episodes(
                     p._conn, q, platform="tui", parent_session_id=""
-                ).startswith("[Episodes]"),
+                ).startswith(retrieve.EPISODES_BLOCK_HEADER),
                 q,
             )
         for q in must_not:
