@@ -789,8 +789,8 @@ All Track 4 criteria met (with approved ⚠️): **YES**. Unit tests: **PASS**.
 
 - Implementation commit (8f): `31cca800d526bfbfaa37751a099ef47140bc6bf9`
 - Docs record implementation SHA (8g): `70106fb47c434dcb6548bbd95bd13be276490d78`
-- Merge SHA on main (8i): *(pending)*
-- Docs record merge SHA (8j): *(pending)*
+- Merge SHA on main (8i): `7b8f030b611372b5d2c35f0c460455916e781384`
+- Docs record merge SHA (8j): *(this commit)*
 
 ## Unit test summary
 
