@@ -137,4 +137,4 @@ Not a natural cross-day result. Client closed; no Hermes held the store; DB back
 ### Merge
 
 - Implementation commit: `baedcc00f556e5343a873f5059236606c5d2b373`
-- Merge SHA on main: *(filled at merge)*
+- Merge SHA on main: `fa6c7f078ab988a5c07c992f53f4c77b34521f5f`
