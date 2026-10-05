@@ -66,6 +66,18 @@ HOLD_MAX_TURNS = 3
 USER_TURN_PLATFORMS = frozenset({"tui"})
 
 TOOL_NAME = "forget_memory"
+MEMORY_TOOL_NAME = "memory"
+
+# P6-EPISODES: G3 confirm=false / ask_brian=true + confirm=true guard block — P6-D04
+MSG_ASK_BRIAN_MULTI = (
+    "These look like different things. Ask Brian which one he means before calling "
+    "confirm=true. Do not use the memory tool to remove or replace anything until he "
+    "answers — those calls are blocked until then."
+)
+# P6-EPISODES: G2 memory remove/replace block while ask pending — P6-D04
+MSG_ASK_BRIAN_MEMORY_BLOCK = (
+    "Brian hasn't said which one yet — ask him which he means before removing anything."
+)
 
 TOOL_DESCRIPTION = (
     "Erase provider-held memory copies (index facts, episodes, pending turns) after Brian asks "
@@ -518,6 +530,7 @@ def forget_cascade(
                 source_texts.append(terms_source)
 
             counts = dict(zero)
+            fts_tables_touched: List[str] = []
             for fact_id in list(fact_ids):
                 row = conn.execute(
                     "SELECT id, text FROM facts WHERE id = ?",
@@ -540,6 +553,8 @@ def forget_cascade(
                 counts["fact_rows"] += 1
                 counts["history_rows"] += int(hist)
                 counts["fts_rows"] += int(fts)
+                if int(fts) > 0 and "facts_fts" not in fts_tables_touched:
+                    fts_tables_touched.append("facts_fts")
                 _remove_pending_erasure(conn, fact_id)
 
             if _erase_failure_hook is not None and counts["fact_rows"]:
@@ -583,11 +598,25 @@ def forget_cascade(
                     "SELECT COUNT(*) FROM episode_fact_refs WHERE episode_id = ?",
                     (eid,),
                 ).fetchone()[0]
+                fts_n = 0
+                try:
+                    fts_n = conn.execute(
+                        "SELECT COUNT(*) FROM episodes_fts WHERE episode_id = ?",
+                        (eid,),
+                    ).fetchone()[0]
+                    conn.execute(
+                        "DELETE FROM episodes_fts WHERE episode_id = ?", (eid,)
+                    )
+                    if int(fts_n) > 0 and "episodes_fts" not in fts_tables_touched:
+                        fts_tables_touched.append("episodes_fts")
+                except Exception:
+                    pass
                 conn.execute("DELETE FROM episode_entities WHERE episode_id = ?", (eid,))
                 conn.execute("DELETE FROM episode_fact_refs WHERE episode_id = ?", (eid,))
                 conn.execute("DELETE FROM episodes WHERE id = ?", (eid,))
                 counts["episode_rows"] += 1
                 counts["link_rows"] += int(links) + int(refs_n)
+                counts["fts_rows"] += int(fts_n)
 
             for r in conn.execute("SELECT * FROM pending_turns"):
                 if r["id"] in pending_ids or row_matches_terms(
@@ -610,6 +639,20 @@ def forget_cascade(
                     (ent["id"],),
                 ).fetchone()[0]
                 if n == 0:
+                    try:
+                        fts_n = conn.execute(
+                            "SELECT COUNT(*) FROM entities_fts WHERE entity_id = ?",
+                            (ent["id"],),
+                        ).fetchone()[0]
+                        conn.execute(
+                            "DELETE FROM entities_fts WHERE entity_id = ?",
+                            (ent["id"],),
+                        )
+                        counts["fts_rows"] += int(fts_n)
+                        if int(fts_n) > 0 and "entities_fts" not in fts_tables_touched:
+                            fts_tables_touched.append("entities_fts")
+                    except Exception:
+                        pass
                     conn.execute(
                         "DELETE FROM entity_aliases WHERE entity_id = ?",
                         (ent["id"],),
@@ -645,6 +688,13 @@ def forget_cascade(
                     history_rows=counts["history_rows"],
                     ok=True,
                 )
+            # P6-EPISODES: G-ERASE sanitize after commit, outside txn — P6-D04
+            try:
+                _store.sanitize_after_erase(
+                    conn, fts_tables_touched=fts_tables_touched or list(_store.FTS_TABLES)
+                )
+            except Exception:
+                pass
             return True, counts
         except Exception:
             try:
@@ -706,6 +756,8 @@ class ForgetSessionState:
     hold_turn_count: int = 0
     candidate_ids: Set[str] = field(default_factory=set)
     candidate_meta: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # P6-EPISODES: multi-group ask unresolved — gates memory remove/replace + confirm=true — P6-D04
+    ask_brian_pending: bool = False
 
     def clear_hold_process(self) -> None:
         self.hold_user_texts.clear()
@@ -713,6 +765,7 @@ class ForgetSessionState:
         self.hold_turn_count = 0
         self.candidate_ids.clear()
         self.candidate_meta.clear()
+        self.ask_brian_pending = False
 
     def clear_on_shutdown(self) -> None:
         self.disposition_drops.clear()
@@ -1012,15 +1065,21 @@ def handle_forget_memory(
                 held_count=len(state.hold_user_texts),
                 ok=True,
             )
-        msg = (
-            "These look like different things. Ask Brian which one he means before calling confirm=true."
-            if len(groups) > 1
-            else (
-                "One match. Ask Brian to confirm before erasing."
-                if cands
-                else "No matches."
-            )
-        )
+        ask_brian = bool(groups) and any(g.get("ask_brian") for g in groups)
+        if ask_brian:
+            state.ask_brian_pending = True
+            msg = MSG_ASK_BRIAN_MULTI
+        elif cands:
+            state.ask_brian_pending = False
+            msg = "One match. Ask Brian to confirm before erasing."
+        else:
+            state.ask_brian_pending = False
+            msg = "No matches."
+        # P6-EPISODES: sanitize on every confirm=false (incl. no matches) — Phase 7-WAL
+        try:
+            _store.sanitize_after_erase(conn)
+        except Exception:
+            pass
         # Strip private _text before return
         for g in groups:
             for c in g["candidates"]:
@@ -1128,6 +1187,9 @@ def end_hold_if_candidate_removed(
 ) -> None:
     """E3: memory-tool remove of a candidate-set fact ends the hold."""
     state: ForgetSessionState = provider._forget_state
+    # P6-EPISODES: never clear hold/ask via memory remove while ask_brian pending — P6-D04
+    if state.ask_brian_pending:
+        return
     if fact_id not in state.candidate_ids:
         return
     held_n = len(state.hold_user_texts)
@@ -1194,6 +1256,10 @@ def on_turn_start_forget_hooks(provider: Any, message: str) -> None:
     expire_disposition_drops(state)
     expire_orphan_hold_on_restart(provider)
 
+    # P6-EPISODES: next Brian turn ends ask_brian_pending (turn boundary; no content parse) — P6-D04
+    if state.ask_brian_pending:
+        state.ask_brian_pending = False
+
     if has_forget_intent(message or ""):
         mark_drop(state, message or "")
 
@@ -1214,12 +1280,8 @@ def on_turn_start_forget_hooks(provider: Any, message: str) -> None:
 def _expire_hold(provider: Any, *, reason: str) -> None:
     state: ForgetSessionState = provider._forget_state
     held_n = len(state.hold_user_texts)
-    # Marks stay; only clear hold process + meta
-    state.hold_started_at = None
-    state.hold_turn_count = 0
-    state.candidate_ids.clear()
-    state.candidate_meta.clear()
-    state.hold_user_texts.clear()
+    # Marks stay; only clear hold process + meta (+ ask_brian_pending)
+    state.clear_hold_process()
     conn = provider._conn
     if conn is not None:
         try:
@@ -1249,6 +1311,91 @@ def on_session_switch_forget_hooks(provider: Any) -> None:
     """E3: hold ends on switch; E1: disposition drops are NOT cleared."""
     if hold_active(provider._forget_state) or load_hold_meta_safe(provider):
         _expire_hold(provider, reason="switch")
+
+
+def _memory_args_are_remove_or_replace(args: Any) -> bool:
+    if not isinstance(args, dict):
+        return False
+    action = str(args.get("action") or "").strip().lower()
+    if action in ("remove", "replace"):
+        return True
+    ops = args.get("operations")
+    if isinstance(ops, list):
+        for op in ops:
+            if not isinstance(op, dict):
+                continue
+            if str(op.get("action") or "").strip().lower() in ("remove", "replace"):
+                return True
+    return False
+
+
+def pre_tool_call_hook(
+    tool_name: str = "",
+    args: Any = None,
+    **kwargs: Any,
+) -> Optional[Dict[str, str]]:
+    """G2: while ask_brian_pending, block memory remove/replace and forget_memory confirm=true.
+
+    Resolves provider via session registry only (``session_id`` kwarg from
+    ``tool_hook_ids`` / ``inline_tool_executors.py`` L18–26). Never reads module ``_provider``.
+    """
+    try:
+        from . import registry as _registry
+    except ImportError:
+        import registry as _registry
+
+    sid = str(kwargs.get("session_id") or "")
+    provider = _registry.get(sid)
+    if provider is None:
+        return None
+    if not is_brian_conversation(
+        getattr(provider, "_platform", "") or "",
+        getattr(provider, "_parent_session_id", "") or "",
+    ):
+        return None
+
+    state: ForgetSessionState = provider._forget_state
+    name = str(tool_name or "")
+
+    if name == MEMORY_TOOL_NAME:
+        if not _memory_args_are_remove_or_replace(args):
+            return None
+        if state.ask_brian_pending:
+            memlog.write_event(
+                memlog.LOG_EVENT_FORGET_GUARD,
+                action="blocked",
+                tool=MEMORY_TOOL_NAME,
+                ok=False,
+            )
+            return {"action": "block", "message": MSG_ASK_BRIAN_MEMORY_BLOCK}
+        memlog.write_event(
+            memlog.LOG_EVENT_FORGET_GUARD,
+            action="allowed",
+            tool=MEMORY_TOOL_NAME,
+            ok=True,
+        )
+        return None
+
+    if name == TOOL_NAME:
+        if not isinstance(args, dict) or not bool(args.get("confirm")):
+            return None
+        if state.ask_brian_pending:
+            memlog.write_event(
+                memlog.LOG_EVENT_FORGET_GUARD,
+                action="blocked",
+                tool=TOOL_NAME,
+                ok=False,
+            )
+            return {"action": "block", "message": MSG_ASK_BRIAN_MULTI}
+        memlog.write_event(
+            memlog.LOG_EVENT_FORGET_GUARD,
+            action="allowed",
+            tool=TOOL_NAME,
+            ok=True,
+        )
+        return None
+
+    return None
 
 
 def load_hold_meta_safe(provider: Any) -> bool:

@@ -8,12 +8,14 @@ from typing import Any, Optional
 try:
     from . import log as memlog
     from . import llm_access
+    from . import forget
     from . import registry
     from . import time_context
     from .provider import ZolaMemoryProvider
 except ImportError:  # P6-STORE: flat unittest discover top — P6-D03
     import log as memlog
     import llm_access
+    import forget
     import registry
     import time_context
     from provider import ZolaMemoryProvider
@@ -65,5 +67,10 @@ def register(ctx) -> None:
 
     try:
         ctx.register_hook("pre_llm_call", time_context.pre_llm_call_hook)
+    except Exception:
+        pass
+    try:
+        # P6-EPISODES: G2 forget guard — block memory remove/replace + confirm=true while ask pending — P6-D04
+        ctx.register_hook("pre_tool_call", forget.pre_tool_call_hook)
     except Exception:
         pass

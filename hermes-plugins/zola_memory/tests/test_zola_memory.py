@@ -29,6 +29,7 @@ if _VENV_SITE.is_dir() and str(_VENV_SITE) not in sys.path:
 
 from zoneinfo import ZoneInfo
 
+import consolidate
 import fact_index
 import forget
 import log as memlog
@@ -65,9 +66,12 @@ class _TempHome(unittest.TestCase):
         os.environ["HERMES_HOME"] = str(self.home)
         memlog.reset_log_handler_for_tests()
         forget.set_erase_failure_hook(None)
+        consolidate.reset_for_tests()
+        consolidate.set_background_enabled_for_tests(False)
 
     def tearDown(self) -> None:
         forget.set_erase_failure_hook(None)
+        consolidate.reset_for_tests()
         memlog.reset_log_handler_for_tests()
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
@@ -152,6 +156,8 @@ class TestSchemaAndAuthority(_TempHome):
             "episode_fact_refs",
             "pending_turns",
             "facts_fts",
+            "episodes_fts",
+            "entities_fts",
         ):
             self.assertIn(name, tables)
         idx_sql = "\n".join(

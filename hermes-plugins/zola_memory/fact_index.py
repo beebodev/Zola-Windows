@@ -223,6 +223,12 @@ def _notify_remove(
         # P6-FORGET: D2 — notification remove marks the turn (not file-check) — P6-D06
         forget.mark_after_notify_cascade(provider, ok=any_ok)
         _unmatched_fallback(conn, hermes_home, event_note="remove_unmatched")
+        # P6-EPISODES: sanitize even when remove matched nothing — Phase 7-WAL
+        if not any_ok:
+            try:
+                store.sanitize_after_erase(conn)
+            except Exception:
+                pass
         return
     ok = forget.erase_fact(conn, fact_id, reason=REASON_REMOVE)
     forget.mark_after_notify_cascade(provider, ok=ok)
@@ -268,6 +274,11 @@ def run_file_check(
 
     with store.locked(conn):
         t0 = time.perf_counter()
+        # P6-EPISODES: retry deferred G-ERASE WAL TRUNCATE — P6-D04
+        try:
+            store.try_pending_sanitize(conn, trigger="file_check")
+        except Exception:
+            pass
 
         # P6-STORE: abort on unreadable existing file — no erases/adds/hash — P6-D01
         file_entries, read_ok = _load_file_entry_set(hermes_home)

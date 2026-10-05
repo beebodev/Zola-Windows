@@ -9,12 +9,24 @@ from typing import Any, Dict, List, Optional
 from agent.memory_provider import MemoryProvider
 
 try:
-    from . import fact_index, forget, log as memlog, registry, store
+    from . import (
+        consolidate,
+        fact_index,
+        forget,
+        log as memlog,
+        pending,
+        registry,
+        retrieve,
+        store,
+    )
 except ImportError:  # P6-STORE: flat unittest discover top — P6-D03
+    import consolidate
     import fact_index
     import forget
     import log as memlog
+    import pending
     import registry
+    import retrieve
     import store
 
 # P6-STORE: provider identity — P6-D03
@@ -39,6 +51,8 @@ class ZolaMemoryProvider(MemoryProvider):
         self._lock = threading.RLock()
         # P6-FORGET: disposition / hold / candidates (process memory) — P6-D06
         self._forget_state = forget.ForgetSessionState()
+        # P6-EPISODES: per-session turn index (ordering metadata only; not dedupe) — P6-D04
+        self._turn_index = 0
 
     @staticmethod
     def _get_plugin_llm():
@@ -122,6 +136,15 @@ class ZolaMemoryProvider(MemoryProvider):
         # P6-TIME: registry only after store open + file check succeed — P6-D05
         if self._session_id:
             registry.put(self._session_id, self)
+        # P6-EPISODES: quiet timer + initialize backlog consolidate signal — P6-D04
+        consolidate.start_quiet_timer(self)
+        try:
+            with store.locked(self._conn):
+                backlog = pending.count_pending(self._conn)
+        except Exception:
+            backlog = 0
+        if backlog:
+            consolidate.request_consolidate(self, "initialize")
         memlog.write_event(
             memlog.LOG_EVENT_INITIALIZE,
             ok=True,
@@ -150,12 +173,22 @@ class ZolaMemoryProvider(MemoryProvider):
             return forget.handle_forget_memory(self, args if isinstance(args, dict) else {})
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
+        text = ""
+        if self._conn is not None:
+            with self._lock:
+                with store.locked(self._conn):
+                    text = retrieve.retrieve_episodes(
+                        self._conn,
+                        query or "",
+                        platform=self._platform,
+                        parent_session_id=self._parent_session_id,
+                    )
         memlog.write_event(
             memlog.LOG_EVENT_PREFETCH,
-            session_id=session_id or "-",
-            returned_len=0,
+            session_id=session_id or self._session_id or "-",
+            returned_len=len(text),
         )
-        return ""
+        return text
 
     def on_memory_write(
         self,
@@ -191,6 +224,14 @@ class ZolaMemoryProvider(MemoryProvider):
             )
             forget.on_turn_start_forget_hooks(self, self._current_user_message)
             if self._conn is not None and self._hermes_home is not None:
+                # P6-EPISODES: retry deferred G-ERASE WAL TRUNCATE — P6-D04
+                try:
+                    with store.locked(self._conn):
+                        store.try_pending_sanitize(
+                            self._conn, trigger="on_turn_start"
+                        )
+                except Exception:
+                    pass
                 fact_index.run_file_check(self._conn, self._hermes_home, force=False)
 
     def sync_turn(
@@ -203,7 +244,10 @@ class ZolaMemoryProvider(MemoryProvider):
         turn_author: Optional[Dict[str, Any]] = None,
     ) -> None:
         with self._lock:
-            decision, reason = forget.turn_disposition(self._forget_state, user_content or "")
+            # P6-EPISODES X6: disposition once → log + pending writer — P6-D04
+            decision, reason = forget.turn_disposition(
+                self._forget_state, user_content or ""
+            )
             memlog.write_event(
                 memlog.LOG_EVENT_TURN_DISPOSITION,
                 decision=decision,
@@ -216,8 +260,36 @@ class ZolaMemoryProvider(MemoryProvider):
                 user_len=len(user_content or ""),
                 assistant_len=len(assistant_content or ""),
             )
+            if (
+                self._conn is not None
+                and forget.is_brian_conversation(
+                    self._platform, self._parent_session_id
+                )
+                and decision == "keep"
+            ):
+                sid = session_id or self._session_id or ""
+                self._turn_index += 1
+                user_time = pending.resolve_user_time(
+                    messages, user_content or ""
+                )
+                assistant_time = pending.resolve_assistant_time(messages)
+                with store.locked(self._conn):
+                    written = pending.write_pending(
+                        self._conn,
+                        session_id=sid,
+                        turn_index=self._turn_index,
+                        user_text=user_content or "",
+                        assistant_text=assistant_content or "",
+                        user_time=user_time,
+                        assistant_time=assistant_time,
+                        disposition=decision,
+                    )
+                if written:
+                    consolidate.note_pending_write()
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+        # P6-EPISODES: signal only — never inline consolidate (E5) — P6-D04
+        consolidate.request_consolidate(self, "session_end")
         memlog.write_event(
             memlog.LOG_EVENT_ON_SESSION_END,
             session_id="-",
@@ -242,6 +314,9 @@ class ZolaMemoryProvider(MemoryProvider):
         with self._lock:
             # P6-FORGET: E1 — disposition drops survive switch; E3 — hold ends — P6-D06
             forget.on_session_switch_forget_hooks(self)
+            self._turn_index = 0
+        # P6-EPISODES: signal only — never inline consolidate (E5) — P6-D04
+        consolidate.request_consolidate(self, "session_switch")
         memlog.write_event(
             memlog.LOG_EVENT_ON_SESSION_SWITCH,
             session_id=new_session_id or "-",
@@ -251,6 +326,8 @@ class ZolaMemoryProvider(MemoryProvider):
         )
 
     def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+        # P6-EPISODES: waits for nothing — signal only (E5) — P6-D04
+        consolidate.request_consolidate(self, "pre_compress")
         memlog.write_event(
             memlog.LOG_EVENT_ON_PRE_COMPRESS,
             session_id="-",
