@@ -36,6 +36,7 @@ at the end.
   remain the single live store for v1.
   Phase 5 (`P5-D05` / P1-D05): budget now 4400 / 4000; the `[tag]`
   convention is now in the live soul (`What I remember`).
+  Phase 6: **extended.** Files remain the fact authority; the structured store sits beside them (P6-D01).
 - **C5 — Identity assembly: Extend.** Zola edits `SOUL.md` content to be
   her own identity and extends `system_prompt.py`'s assembly logic
   wherever stock Hermes doesn't support what Zola needs (e.g. dynamic
@@ -56,6 +57,7 @@ at the end.
   Phase 5 (`P5-D10`): superseded — forget removes the entry from whichever
   memory file holds it (`MEMORY.md` or `USER.md`); `state.db` is not
   redacted.
+  Phase 6: forget now cascades through the provider; `state.db` is still not redacted (P6-D06).
 - **C9/C10 — Both architecture docs written.** `Zola_Capability_Acquisition_Architecture.md`
   and `Zola_Tool_Authorization_Architecture.md` are written, covering
   the WINH06 and WINH08 domains that had no Document of Truth during
@@ -133,6 +135,7 @@ at the end.
   P5-MEMORY capacity data (~53 chars/fact), the routing-miss pattern
   (#12), and the skills finding (no personal facts in agent-managed
   skills). `P4` to be revisited as "local only".
+  Phase 6: **foundation complete, not resolved.** Built: the local store, the fact index, episodes, lexical/entity retrieval, time and forget. Still open: long-term retrieval quality (associative-recall table from Track 5); the evidence-based fact-authority migration (P6-D01).
 - **S15 — Gmail OAuth (Google API), replacing the app-password
   adapter: deferred, stated long-term target.** *(Newly clarified
   while scoping Track 5 for the Build Plan — not in the original
@@ -183,6 +186,7 @@ at the end.
   it becomes a build concern.
   Phase 5 (`P5-D11`): to be revisited in Phase 6 as "local only". Not
   revised here.
+  Phase 6: **revised by P6-D07** (local only; the model-processing boundary stated).
 ## Security / hardening
 **Standing trigger for this whole bucket:** every item below is
 deferred on the same basis — accepted as-is for personal, single-user
@@ -665,6 +669,7 @@ section is the lore pointer, final values, and corrections. Evidence:
   error = withdrawn; builders emit only once/deny; `pending_approval` never
   rendered; approvals coalesce. Surfaced Hermes's gate (`A3`). Command text
   uses a **Cascadia Mono** constant (token later).
+  Phase 6: stand (P6-D08).
 
 - **P4-D08 — Clarify card.** Panel opens with the question; one button per
   choice if present (Hermes "(Recommended)" is a **label only**, not sent
@@ -751,6 +756,7 @@ section is the lore pointer, final values, and corrections. Evidence:
 
 - **P4-D27 — `approvals.mode: manual`.** (New.) Hermes default `smart` can
   auto-approve. Revisit with `S35`.
+  Phase 6: stand (P6-D08).
 
 - **P4-D28 — `voice.barge_in: false`.** (New; `P4-ASK` Option A.) Stops the
   full-duplex barge listener from latching spoken clarify answers. Cost:
@@ -821,6 +827,7 @@ section is the lore pointer, amendments, and measured results.
   there was **no timing** in the reply. Developer-acknowledged. Evidence
   for `S43`. Amends the `S42` principle to: sessions never
   **automatically** read each other's transcripts.
+  Phase 6: stands, restated in P6-D02 rule 8.
 
 - **P5-D07 — Proof is a scripted save-rate test, not a feel.** **As
   planned.** Blind, scripted save-rate test; per-candidate table in
@@ -840,6 +847,7 @@ section is the lore pointer, amendments, and measured results.
   Forget removes the entry from whichever memory file holds it,
   `MEMORY.md` or `USER.md`. `state.db` (transcripts and stored prompts)
   is not redacted (accepted v1 posture).
+  Phase 6: forget now cascades through the provider; `state.db` is still not redacted (P6-D06).
 
 - **P5-D11 — Phase 6 is memory.** **As planned.** Phase 6 = `S14`
   (structured local store: entity facts, episodes, relevance retrieval) +
@@ -859,3 +867,160 @@ section is the lore pointer, amendments, and measured results.
 - Blind behavioral tests (G-BLIND) plus per-candidate data beat feel.
 - Logging records must not claim "noop" after an action. Review
   diagnostic placement.
+
+## Phase 6 — Memory She Lives With
+Recorded from `PHASE6_BUILD_PLAN.md` v1.1 (`P6-D01`–`P6-D08`, Appendix A),
+the P6PRE audit (merge `92dc707ac047d2808b9f1848bb0e31f96689065a`), the
+working decisions snapshot (`PHASE6_DECISIONS_snapshot.md`), and the
+progress docs `P6-CALC` through `P6-FIX-2`. Full locked wording stays in
+Appendix A / the snapshot; this section is the lore pointer, track
+amendments, and measured limits.
+
+- **P6-D01 — Two kinds of memory, one authority each.** **As locked.**
+  `USER.md`/`MEMORY.md` stay the authority for current durable facts
+  (memory tool only). A Zola-owned local store holds (a) a structured fact
+  index rebuildable from the files and (b) episodes (store is sole
+  authority). Episodes may reference facts; they never create or change
+  them. Phase 6 retrieval surfaces episodes and temporal context, not a
+  second copy of current facts. Fact-authority migration is a future
+  evidence-based decision. **Brian's verdict:** "I agree"
+
+- **P6-D02 — Memory invariants.** **As locked** (eight rules: one author
+  each for facts and episodes; episodes never mutate facts; entities
+  organize only; timestamps record only what's known; correction preserves
+  history / forget erases; retrieval never becomes persistence; raw
+  conversation is evidence). Rule 8 keeps `P5-D06` (search past
+  conversations only when asked). **Brian's verdict:** "With that
+  correction to Rule 8, I would record P6-D02. I wouldn't change Rule 6
+  yet; your note captures exactly what the later forget decision needs to
+  solve."
+
+- **P6-D03 — A Zola-owned local memory provider (amended by P6-D06).**
+  **As locked, then amended.** Own provider (not Holographic); profile
+  plugin `zola_memory`; repo source `hermes-plugins/zola_memory/`; local
+  SQLite + FTS; no new installs. Model-facing tools: none, **amended** to
+  one erase-only forget operation. Must not depend on unreliable Windows
+  `on_session_end`. **Brian's verdict:** "yes." Amendment with D06:
+  "lock with amendment".
+
+- **P6-D04 — Episodes are written by a background summarizer inside the
+  provider.** **As locked.** Host-owned plugin LLM; pending-turn queue;
+  consolidate on quiet gap / startup / pre-compress / session end if it
+  fires; never reads `state.db`; commit only if pending unchanged;
+  bounded retry. `event_time` only when stated or from an authoritative
+  system source. **Brian's verdict:** "lock"
+  **G-BRIAN-ONLY note:** only `tui` + empty-parent turns become pending /
+  episodes (same allow-list as ambient time).
+  **Blind test:** first S1 run **failed** (Miata split into two episodes;
+  "yesterday" lost to the Unix-float timestamp bug); **C2** (rerun after
+  7-FIX: normalize Hermes unix floats; significance/`plan` rule)
+  **passed** — Miata+belt one episode, `event_time=2026-10-04` /
+  `stated` / `yesterday`; Brian summaries "good". Prefetch p95 ~1.7 ms.
+  **P6-FIX-2 note:** phrase table adds "last weekend" → Sat–Sun interval
+  (`YYYY-MM-DD/YYYY-MM-DD`, displayed "the weekend of Oct 3–4"; Ashford
+  ✅). Merge `fa6c7f078ab988a5c07c992f53f4c77b34521f5f`.
+
+- **P6-D05 — Ambient, system-stamped time.** **As locked.** Per-message
+  local stamp via `pre_llm_call`; cross-session gap via content-free
+  `last_interaction_at`; relative ages at read time; never invent unknown
+  event times; never read stamps aloud. `MeaningfulGapMinutes = 30`
+  tunable. Smoke: stamps on trivial turns; gap awareness; no spoken
+  readout. **Brian's verdict:** "Yes. I would put both into the build
+  plan, and I think the `last_interaction_at` marker is the correct
+  solution."
+  **P6-FIX-WHEN note:** SOUL line — when recalling a past conversation,
+  mention roughly when (merge `a2900eefae3b45222510962d5eb640e7641a0727`,
+  landed before a spoken-when PASS — recorded error). **P6-FIX-2 note:**
+  episodes-block cue asks her to mention roughly when if she uses an
+  episode. **R6 PASS** ("We settled that yesterday.") used a
+  Brian-approved one-day backdate of the kiln episode's
+  `source_user_time`/`recorded_at` (deviation, not a natural cross-day
+  result). Same-day recall may still omit "when".
+
+- **P6-D06 — Forget erases every copy the memory system controls.**
+  **As locked with amendment.** Recognition fails closed; cascade deletes
+  every provider-controlled copy (index, history, FTS, links, pending,
+  whole episodes); content-free tombstones only; `state.db` not redacted
+  (`P5-D10` stands); confirmation mentions chat history remains. Episode
+  memory: one erase-only `forget_memory` tool (amends D03). Proven across
+  Track 4 (mechanism) and Track 5 (live episode forget + paraphrase via
+  fact-ref cascade). **Brian's verdict:** "lock with amendment"
+
+- **P6-D07 — P4 revised: memory local; no third-party memory service.**
+  **As locked.** Persistent memory stays on-machine; no Honcho/Hindsight/
+  mem0/etc. Episode consolidation may resend pending turns through the
+  host-owned model path (same trust boundary as conversation) — model
+  processing, not off-device memory. At-rest encryption stays deferred
+  (H4). **Brian's verdict:** "lock"
+
+- **P6-D08 — Math without code; approvals unchanged.** **As locked.**
+  Bounded `calculate` tool in `zola_tools` (no eval/shell/side effects;
+  fails closed); outside the approval gate by contract. `approvals.mode:
+  manual`, `P4-D07` and `P4-D27` stand. Resolves the arithmetic case of
+  `S35` only. Live: three arithmetic prompts, zero cards; control still
+  cards. **Brian's verdict:** "lock"
+
+- **P6-D09 — Forget authority (G-AUTHORITY + G-LABELS).** **Adopted Track
+  4.** **Brian's verdicts (verbatim, `P6-FORGET_Progress.md` Phase 3
+  approval):** "1 G-AUTHORITY adopt. 2 G-LABELS adopt, F6
+  transcript/state.db persistence of args + labels accepted knowingly."
+  **G-AUTHORITY:** `confirm=true` runs only when (forget intent or an
+  active clarification hold) **and** every `target_id` is in the transient
+  candidate set from the latest authorized `confirm=false` for this
+  provider instance (plus `is_brian_conversation()`).
+  **G-LABELS:** `confirm=false` labels are minimal disambiguators only;
+  never persisted by the provider (not logged, tombstoned, or written to
+  `meta`); never echoed after `confirm=true` (IDs/kinds/counts only). F6
+  transcript/`state.db` persistence of tool args and candidate labels is
+  accepted knowingly.
+  **G-BRIAN-ONLY note:** `forget_memory` schema omitted after init and
+  execution refused (`refused_reason=platform`) for cron/non-Brian agents
+  (not `tui` + empty parent).
+  **Extension (Track 5):** after `ask_brian=true` she bypassed asking via
+  memory-tool `remove` (Larkspur episode lost). Brian adopted a
+  `pre_tool_call` guard blocking memory-tool remove/replace while an
+  `ask_brian` hold is unresolved. **Brian (verbatim):** "I agree. Yes."
+  ⚠️ Guard **not fired live** in later smoke (she asked); unit-tested.
+
+- **P6-D10 — Physical erasure (G-ERASE).** **Adopted in Track 5
+  (Brian).** After every cascade, consolidation commit, and zero-match
+  forget: `secure_delete=ON`, FTS5 secure-delete, and
+  `wal_checkpoint(TRUNCATE)` (commit before checkpoint). Approved
+  deferred-sanitize safety net when checkpoint is busy. ⚠️ Live
+  `action=defer` count **0** in smoke (never busy); unit defer→success
+  covered.
+
+- **P6-D11 — Phase-track backups are deleted after merge.** **Brian
+  (closeout, verbatim):** "delete old ones and track passes." Forget
+  cannot reach backups, so backups are deleted at each track's closeout
+  after merge. Phase 6 backups are deleted at this lore closeout (Phase 6
+  STOP delete list).
+
+### Known limits
+- **AUD-24:** `session_search` "when" strings omit timezone (Hermes-side;
+  no pin edit).
+- **Wordless paraphrase → episode:** caught only via `episode_fact_refs`
+  (D2' erased after notebook remove; accepted caveat).
+- **Notebook-fact clarification:** model judgment (Mara asked; two Rosas
+  in one sentence did not); enforced ask exists for episode memory /
+  after forget lookup flags `ask_brian`.
+- **Same-day recall** may omit spoken "when" even when prefetch supplies
+  it (FIX-WHEN / FIX-2 cue; R6 PASS was seeded cross-day).
+- **Associative/paraphrased episode retrieval:** 0/4 under fixed blind
+  queries (shared words Q2=0, Q3=1, Q4=0, Q5=0) — retrieval-quality limit;
+  OQ in Phase 3. Direct lexical recall passed.
+- **forget_guard / deferred-sanitize:** not observed live (unit-proven).
+
+### Background-review skills (closeout)
+Brian (verbatim): "Keep" — `communication/conversation-memory` and
+`communication/everyday-assistance` (procedural; 0 personal facts).
+Whether autonomous skill edits need a policy → OQ (Phase 3).
+
+### Phase 6 execution notes
+- Deploys must verify **every** Hermes process restarted (stale serve kept
+  old modules).
+- Module-level provider state is unsafe — one provider per agent; resolve
+  via the session registry (identity-checked put/rekey/remove).
+- Hermes message timestamps are Unix floats (normalize at write).
+- Prompts must say **"merge only on PASS"** (FIX-WHEN merged before spoken
+  when PASS — recorded).
