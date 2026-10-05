@@ -6,7 +6,7 @@ import json
 import re
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
@@ -25,6 +25,11 @@ except ImportError:  # P6-EPISODES: flat unittest discover top — P6-D04
 # Qualifying related hits score ≥ 1.0 via entity-name boost; must-not-surface score 0.
 EPISODE_MIN_SCORE = 0.15
 MAX_EPISODES_PER_TURN = 3
+# P6-FIX-2: say-when cue — first line of the prefetch block (exact) — P6-D05
+EPISODES_BLOCK_HEADER = (
+    '[Episodes — past conversations. If you use one, mention roughly when it was '
+    '(e.g. "yesterday", "last week").]'
+)
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+", re.UNICODE)
 _NUMBER_RE = re.compile(r"\d+")
@@ -136,14 +141,49 @@ def _format_happened(event_time: Optional[str], now: datetime) -> str:
     if not event_time:
         return "date unknown"
     text = event_time.strip()
+    # P6-FIX-2: Sat–Sun ISO interval from "last weekend"
+    m = re.fullmatch(
+        r"(\d{4}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2})",
+        text,
+    )
+    if m:
+        try:
+            y1, mo1, d1 = (int(x) for x in m.group(1).split("-"))
+            y2, mo2, d2 = (int(x) for x in m.group(2).split("-"))
+            sat = date(y1, mo1, d1)
+            sun = date(y2, mo2, d2)
+        except ValueError:
+            return "date unknown"
+        return format_weekend_happened(sat, sun, now)
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
-        y, m, d = (int(x) for x in text.split("-"))
-        dt = datetime(y, m, d, 12, 0, tzinfo=now.tzinfo or timezone.utc)
+        y, mth, d = (int(x) for x in text.split("-"))
+        dt = datetime(y, mth, d, 12, 0, tzinfo=now.tzinfo or timezone.utc)
         return f"{format_short_date(dt)} ({format_calendar_relative(now, dt)})"
     dt = _parse_iso(text)
     if dt is None:
         return "date unknown"
     return f"{format_short_date(dt)} ({format_calendar_relative(now, dt)})"
+
+
+def format_weekend_happened(sat: date, sun: date, now: datetime) -> str:
+    """Display Sat–Sun interval: 'the weekend of Oct 3–4 (last weekend)'."""
+    if sat.month == sun.month and sat.year == sun.year:
+        span = f"{time_context.MONTH_NAMES[sat.month - 1]} {sat.day}–{sun.day}"
+    else:
+        span = (
+            f"{time_context.MONTH_NAMES[sat.month - 1]} {sat.day}–"
+            f"{time_context.MONTH_NAMES[sun.month - 1]} {sun.day}"
+        )
+    now_local = time_context.localize_marker(now).date()
+    most_recent_sunday = now_local - timedelta(days=(now_local.weekday() + 1))
+    if sun == most_recent_sunday:
+        rel = "last weekend"
+    else:
+        sun_dt = datetime(
+            sun.year, sun.month, sun.day, 12, 0, tzinfo=now.tzinfo or timezone.utc
+        )
+        rel = format_calendar_relative(now, sun_dt)
+    return f"the weekend of {span} ({rel})"
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -341,4 +381,4 @@ def retrieve_episodes(
     )
     if not lines:
         return ""
-    return "[Episodes]\n" + "\n".join(lines)
+    return EPISODES_BLOCK_HEADER + "\n" + "\n".join(lines)

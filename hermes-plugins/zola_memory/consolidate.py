@@ -790,6 +790,16 @@ def resolve_stated_time_with_reason(
         return pack(turn_date - timedelta(days=1))
     if ev == "the day before yesterday":
         return pack(turn_date - timedelta(days=2))
+    # P6-FIX-2: last weekend → Sat–Sun interval (Sunday = most recent Sunday
+    # strictly before the turn's local date). Never a single day.
+    if ev == "last weekend":
+        # Mon→1 … Sat→6, Sun→7 so "this Sunday" is never selected.
+        delta_to_prev_sunday = turn_date.weekday() + 1
+        sunday = turn_date - timedelta(days=delta_to_prev_sunday)
+        saturday = sunday - timedelta(days=1)
+        if sunday > turn_date:
+            return None, "future"
+        return f"{saturday.isoformat()}/{sunday.isoformat()}", None
     m = re.fullmatch(r"(\d+)\s+days?\s+ago", ev)
     if m:
         return pack(turn_date - timedelta(days=int(m.group(1))))
