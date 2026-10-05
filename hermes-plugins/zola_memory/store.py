@@ -2,25 +2,40 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+
+try:
+    from . import log as memlog
+except ImportError:  # P6-STORE: flat unittest discover top — P6-D03
+    import log as memlog
 
 # P6-STORE: locks keyed by id(conn) — Connection rejects attributes / weakrefs — P6-D03
 _CONN_LOCKS: Dict[int, threading.RLock] = {}
 _CONN_LOCKS_GUARD = threading.Lock()
 
 # P6-STORE: schema and path constants — P6-D03
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DB_DIRNAME = "zola_memory"
 DB_FILENAME = "zola_memory.db"
 META_SCHEMA_VERSION = "schema_version"
 META_FILES_SHA256 = "files_sha256"
 META_LAST_INTERACTION_AT = "last_interaction_at"
 META_PENDING_ERASURES = "pending_erasures"
+# P6-EPISODES: cross-process consolidator lease — P6-D04
+META_CONSOLIDATE_LEASE_OWNER = "consolidate_lease_owner"
+META_CONSOLIDATE_LEASE_EXPIRES_AT = "consolidate_lease_expires_at"
+# P6-EPISODES: deferred G-ERASE physical sanitize when TRUNCATE busy — P6-D04
+META_SANITIZE_PENDING = "sanitize_pending"
+META_FTS_SECURE_DELETE = "fts_secure_delete"
+FTS_TABLES = ("facts_fts", "episodes_fts", "entities_fts")
 
 ENTRY_DELIMITER = "\n§\n"
 TARGET_USER = "user"
@@ -72,12 +87,42 @@ def open_store(hermes_home: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
+    # P6-EPISODES: G-ERASE — overwrite deleted content on page reuse — P6-D04
+    conn.execute("PRAGMA secure_delete=ON")
+    secure_row = conn.execute("PRAGMA secure_delete").fetchone()
+    secure_val = int(secure_row[0]) if secure_row else -1
     # P6-STORE: one RLock per connection for all DB use — P6-D03
     with _CONN_LOCKS_GUARD:
         _CONN_LOCKS[id(conn)] = threading.RLock()
     with locked(conn):
         migrate(conn)
+        fts_sd = enable_fts_secure_delete(conn)
+        meta_set(conn, META_FTS_SECURE_DELETE, "1" if fts_sd else "0")
+        conn.commit()
+    memlog.write_event(
+        memlog.LOG_EVENT_STORE_OPEN,
+        pid=os.getpid(),
+        secure_delete=secure_val,
+        sqlite_version=sqlite3.sqlite_version,
+        fts_secure_delete=fts_sd,
+    )
     return conn
+
+
+def enable_fts_secure_delete(conn: sqlite3.Connection) -> bool:
+    """Enable FTS5 secure-delete on all episode/fact FTS tables (SQLite 3.44+)."""
+    for table in FTS_TABLES:
+        try:
+            conn.execute(
+                f"INSERT INTO {table}({table}, rank) VALUES('secure-delete', 1)"
+            )
+        except sqlite3.Error:
+            return False
+    return True
+
+
+def fts_secure_delete_active(conn: sqlite3.Connection) -> bool:
+    return (meta_get(conn, META_FTS_SECURE_DELETE) or "") == "1"
 
 
 @contextmanager
@@ -123,7 +168,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (META_SCHEMA_VERSION, str(SCHEMA_VERSION)),
+                (META_SCHEMA_VERSION, "1"),
             )
             conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
@@ -136,6 +181,14 @@ def migrate(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                 (META_LAST_INTERACTION_AT, ""),
+            )
+            current = 1
+        if current < 2:
+            _migrate_v2(conn)
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (META_SCHEMA_VERSION, "2"),
             )
         conn.execute("COMMIT")
     except Exception:
@@ -239,6 +292,174 @@ def _migrate_v1(conn: sqlite3.Connection) -> None:
         );
         """
     )
+
+
+def _migrate_v2(conn: sqlite3.Connection) -> None:
+    # P6-EPISODES: FTS, pending dedupe fingerprint, episode source_user_time — P6-D04
+    cols = {
+        r["name"]
+        for r in conn.execute("PRAGMA table_info(pending_turns)").fetchall()
+    }
+    if "turn_fingerprint" not in cols:
+        conn.execute(
+            "ALTER TABLE pending_turns ADD COLUMN turn_fingerprint TEXT NOT NULL DEFAULT ''"
+        )
+    ep_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info(episodes)").fetchall()
+    }
+    if "source_user_time" not in ep_cols:
+        conn.execute("ALTER TABLE episodes ADD COLUMN source_user_time TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_dedupe "
+        "ON pending_turns(session_id, ifnull(user_time, ''), turn_fingerprint)"
+    )
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5("
+        "  episode_id UNINDEXED,"
+        "  summary"
+        ")"
+    )
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5("
+        "  entity_id UNINDEXED,"
+        "  name"
+        ")"
+    )
+
+
+def sanitize_after_erase(
+    conn: sqlite3.Connection,
+    *,
+    fts_tables_touched: Optional[Sequence[str]] = None,
+) -> None:
+    """G-ERASE: FTS secure-delete/rebuild + WAL TRUNCATE after committed delete.
+
+    Used after cascade erase, every consolidate commit (episodes or zero), and
+    forget requests that match nothing (Phase 7-WAL). Must use the same
+    connection only — a second connection TRUNCATE while this writer is still
+    locked deadlocks file_check / nested erase callers. Always commit afterward
+    so an implicit DML transaction cannot nest into later BEGIN IMMEDIATE
+    callers (file_check adds). No silent PASSIVE fallback — busy TRUNCATE
+    defers via meta.sanitize_pending.
+    """
+    t0 = time.perf_counter()
+    touched = list(fts_tables_touched) if fts_tables_touched else list(FTS_TABLES)
+    fts_mode = "secure-delete" if fts_secure_delete_active(conn) else "rebuild"
+    fts_ms = 0
+    busy, log_frames, checkpointed = -1, -1, -1
+    try:
+        t_fts = time.perf_counter()
+        if fts_mode == "secure-delete":
+            for table in FTS_TABLES:
+                try:
+                    conn.execute(f"INSERT INTO {table}({table}) VALUES('optimize')")
+                except sqlite3.Error:
+                    pass
+        else:
+            for table in touched:
+                if table not in FTS_TABLES:
+                    continue
+                try:
+                    conn.execute(f"INSERT INTO {table}({table}) VALUES('rebuild')")
+                except sqlite3.Error:
+                    pass
+        # Commit FTS DML before TRUNCATE — an open write txn makes checkpoint busy=1
+        # even with no second reader (C1 / long-lived single-conn failure mode).
+        try:
+            conn.commit()
+        except sqlite3.Error:
+            pass
+        fts_ms = int((time.perf_counter() - t_fts) * 1000)
+        busy, log_frames, checkpointed = _checkpoint_truncate_or_defer(conn)
+    finally:
+        try:
+            conn.commit()
+        except sqlite3.Error:
+            pass
+        pending = meta_get(conn, META_SANITIZE_PENDING) or "0"
+        try:
+            secure_row = conn.execute("PRAGMA secure_delete").fetchone()
+            secure_val = int(secure_row[0]) if secure_row else -1
+        except sqlite3.Error:
+            secure_val = -1
+        memlog.write_event(
+            memlog.LOG_EVENT_SANITIZE_AFTER_ERASE,
+            secure_delete=secure_val,
+            fts_mode=fts_mode,
+            fts_ms=fts_ms,
+            checkpoint_busy=busy,
+            checkpoint_log=log_frames,
+            checkpoint_frames=checkpointed,
+            sanitize_pending=pending,
+            ok=(busy == 0),
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+        )
+        if busy != 0:
+            memlog.write_event(
+                memlog.LOG_EVENT_SANITIZE_RETRY,
+                level=logging.WARNING,
+                trigger="sanitize_after_erase",
+                action="defer",
+                checkpoint_busy=busy,
+                checkpoint_log=log_frames,
+                checkpoint_frames=checkpointed,
+                ok=False,
+            )
+
+
+def _checkpoint_truncate_or_defer(
+    conn: sqlite3.Connection,
+) -> Tuple[int, int, int]:
+    """Run wal_checkpoint(TRUNCATE); on busy set sanitize_pending (no PASSIVE)."""
+    busy, log_frames, checkpointed = -1, -1, -1
+    try:
+        conn.execute("PRAGMA busy_timeout=50")
+        row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if row is not None:
+            busy = int(row[0])
+            log_frames = int(row[1])
+            checkpointed = int(row[2])
+    except sqlite3.Error:
+        busy = 1
+    try:
+        meta_set(conn, META_SANITIZE_PENDING, "0" if busy == 0 else "1")
+    except sqlite3.Error:
+        pass
+    return busy, log_frames, checkpointed
+
+
+def try_pending_sanitize(conn: sqlite3.Connection, *, trigger: str) -> bool:
+    """Retry deferred WAL TRUNCATE when meta.sanitize_pending is set."""
+    pending = meta_get(conn, META_SANITIZE_PENDING) or "0"
+    if pending != "1":
+        return True
+    busy, log_frames, checkpointed = _checkpoint_truncate_or_defer(conn)
+    try:
+        conn.commit()
+    except sqlite3.Error:
+        pass
+    if busy == 0:
+        memlog.write_event(
+            memlog.LOG_EVENT_SANITIZE_RETRY,
+            trigger=trigger,
+            action="success",
+            checkpoint_busy=busy,
+            checkpoint_log=log_frames,
+            checkpoint_frames=checkpointed,
+            ok=True,
+        )
+        return True
+    memlog.write_event(
+        memlog.LOG_EVENT_SANITIZE_RETRY,
+        level=logging.WARNING,
+        trigger=trigger,
+        action="retry",
+        checkpoint_busy=busy,
+        checkpoint_log=log_frames,
+        checkpoint_frames=checkpointed,
+        ok=False,
+    )
+    return False
 
 
 def meta_get(conn: sqlite3.Connection, key: str) -> Optional[str]:

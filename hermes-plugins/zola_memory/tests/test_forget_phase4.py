@@ -16,9 +16,11 @@ _HERMES_ROOT = Path(r"C:\Users\test\Dev\hermes-agent")
 if str(_HERMES_ROOT) not in sys.path:
     sys.path.insert(0, str(_HERMES_ROOT))
 
+import consolidate
 import fact_index
 import forget
 import log as memlog
+import registry
 import store
 from provider import ZolaMemoryProvider
 
@@ -62,10 +64,15 @@ class _TempHome(unittest.TestCase):
         (self.memories / "MEMORY.md").write_text("", encoding="utf-8")
         os.environ["HERMES_HOME"] = str(self.home)
         memlog.reset_log_handler_for_tests()
+        registry.clear_for_tests()
         forget.set_erase_failure_hook(None)
+        consolidate.reset_for_tests()
+        consolidate.set_background_enabled_for_tests(False)
 
     def tearDown(self) -> None:
         forget.set_erase_failure_hook(None)
+        consolidate.reset_for_tests()
+        registry.clear_for_tests()
         memlog.reset_log_handler_for_tests()
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
@@ -1011,6 +1018,159 @@ class TestForgetPhase4(_TempHome):
         decision, reason = forget.turn_disposition(state, sync)
         self.assertEqual(decision, "keep")
         self.assertEqual(reason, "ordinary")
+
+
+class TestForgetGuardAskBrian(_TempHome):
+    """7-D-FIX: ask_brian_pending blocks memory remove/replace and confirm=true."""
+
+    def _multi_group_setup(self):
+        p = self._provider(sid="guard-s1")
+        self._insert_episode(
+            p._conn, "ep-cabin", "Brian picked a slate roof for the Quillmoor cabin."
+        )
+        self._insert_episode(
+            p._conn, "ep-bronco", "Brian drove the '72 Bronco to Moab last weekend."
+        )
+        p.on_turn_start(1, "Forget what I told you in that update about the cabin and the trip.")
+        out = json.loads(
+            p.handle_tool_call(
+                "forget_memory",
+                {
+                    "description": "cabin trip Quillmoor Bronco Moab",
+                    "confirm": False,
+                },
+            )
+        )
+        return p, out
+
+    def test_multi_group_blocks_same_turn_memory_and_confirm_true(self) -> None:
+        p, out = self._multi_group_setup()
+        self.assertTrue(out["ok"])
+        self.assertGreaterEqual(len(out["groups"]), 2)
+        self.assertTrue(all(g.get("ask_brian") for g in out["groups"]))
+        self.assertEqual(out["message"], forget.MSG_ASK_BRIAN_MULTI)
+        self.assertTrue(p._forget_state.ask_brian_pending)
+
+        ep_ids = [
+            c["id"]
+            for g in out["groups"]
+            for c in g["candidates"]
+            if c["kind"] == forget.RECORD_KIND_EPISODE
+        ]
+        self.assertIn("ep-bronco", ep_ids)
+
+        blocked_mem = forget.pre_tool_call_hook(
+            tool_name="memory",
+            args={
+                "target": "memory",
+                "operations": [
+                    {"action": "remove", "old_text": "[project] Quillmoor slate"}
+                ],
+            },
+            session_id="guard-s1",
+        )
+        self.assertIsNotNone(blocked_mem)
+        self.assertEqual(blocked_mem["action"], "block")
+        self.assertEqual(blocked_mem["message"], forget.MSG_ASK_BRIAN_MEMORY_BLOCK)
+
+        blocked_confirm = forget.pre_tool_call_hook(
+            tool_name="forget_memory",
+            args={"confirm": True, "target_ids": ["ep-bronco"], "description": "trip"},
+            session_id="guard-s1",
+        )
+        self.assertIsNotNone(blocked_confirm)
+        self.assertEqual(blocked_confirm["action"], "block")
+        self.assertEqual(blocked_confirm["message"], forget.MSG_ASK_BRIAN_MULTI)
+
+        # add never blocked
+        self.assertIsNone(
+            forget.pre_tool_call_hook(
+                tool_name="memory",
+                args={"action": "add", "content": "[note] hello"},
+                session_id="guard-s1",
+            )
+        )
+        p.shutdown()
+
+    def test_next_brian_turn_allows_then_single_group_and_unknown_session(self) -> None:
+        p, out = self._multi_group_setup()
+        self.assertTrue(p._forget_state.ask_brian_pending)
+        # Next Brian turn ends ask (boundary only)
+        p.on_turn_start(2, "The trip.")
+        self.assertFalse(p._forget_state.ask_brian_pending)
+        # Hold/candidates remain for G-AUTHORITY confirm=true
+        self.assertTrue(forget.hold_active(p._forget_state))
+        self.assertIn("ep-bronco", p._forget_state.candidate_ids)
+
+        self.assertIsNone(
+            forget.pre_tool_call_hook(
+                tool_name="memory",
+                args={"action": "remove", "old_text": "x"},
+                session_id="guard-s1",
+            )
+        )
+        self.assertIsNone(
+            forget.pre_tool_call_hook(
+                tool_name="forget_memory",
+                args={"confirm": True, "target_ids": ["ep-bronco"]},
+                session_id="guard-s1",
+            )
+        )
+        # Bound confirm=true succeeds after ask cleared
+        erased = json.loads(
+            p.handle_tool_call(
+                "forget_memory",
+                {
+                    "confirm": True,
+                    "description": "trip",
+                    "target_ids": ["ep-bronco"],
+                },
+            )
+        )
+        self.assertTrue(erased["ok"])
+        self.assertIsNone(
+            p._conn.execute(
+                "SELECT id FROM episodes WHERE id = ?", ("ep-bronco",)
+            ).fetchone()
+        )
+        self.assertIsNotNone(
+            p._conn.execute(
+                "SELECT id FROM episodes WHERE id = ?", ("ep-cabin",)
+            ).fetchone()
+        )
+
+        # unknown session → allow (no provider)
+        self.assertIsNone(
+            forget.pre_tool_call_hook(
+                tool_name="memory",
+                args={"action": "remove", "old_text": "x"},
+                session_id="no-such-session",
+            )
+        )
+
+        # single-group (ask_brian=false) → confirm=true not blocked by guard
+        p2 = self._provider(sid="guard-s2")
+        self._insert_episode(p2._conn, "ep-only", SYN_EP_VOLVO)
+        p2.on_turn_start(1, "Forget the Volvo episode")
+        out2 = json.loads(
+            p2.handle_tool_call(
+                "forget_memory",
+                {"description": "Volvo P1800 Tobias", "confirm": False},
+            )
+        )
+        self.assertTrue(out2["ok"])
+        self.assertEqual(len(out2["groups"]), 1)
+        self.assertFalse(out2["groups"][0].get("ask_brian"))
+        self.assertFalse(p2._forget_state.ask_brian_pending)
+        self.assertIsNone(
+            forget.pre_tool_call_hook(
+                tool_name="forget_memory",
+                args={"confirm": True, "target_ids": ["ep-only"]},
+                session_id="guard-s2",
+            )
+        )
+        p.shutdown()
+        p2.shutdown()
 
 
 if __name__ == "__main__":
