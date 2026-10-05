@@ -92,5 +92,5 @@ Prefetch supplied the talked-about date; she did not voice it. Decision recall â
 
 ## Closeout SHAs
 
-- Implementation commit: *(filled on commit)*
+- Implementation commit: `d00161aaa3150cae6cd409ec6dc83e86d0a3fc1e`
 - Merge SHA on main: *(filled on merge)*
