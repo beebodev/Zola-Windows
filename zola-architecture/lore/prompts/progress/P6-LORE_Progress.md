@@ -24,7 +24,7 @@
 | 6b | p5* memory-copy scan (read-only) | COMPLETE — DELETE/KEEP reported |
 | 6c | p5 DELETE (4 USER/MEMORY only) | COMPLETE — deleted 2026-10-05 13:31:30 -07:00 (4/4 gone) |
 | 7 | Apply, verify, STOP | COMPLETE — Phase 7 verified Brian+Claude |
-| 8 | Commit and merge | COMPLETE � merge `84df45ffd3da11c968acfd6984563ccb6fe30b1a` |
+| 8 | Commit and merge | COMPLETE — merge 84df45ffd3da11c968acfd6984563ccb6fe30b1a |
 
 ## Guardrails (from prompt)
 
@@ -740,6 +740,9 @@ Maps to accepted drafts: Phase 6 section P6-D01–D11 + annotations; S42/S43 bul
 
 Phase 7 verified (Brian + Claude): lore files on disk — all approved content present, verdicts exact.
 
-## Phase 8 — Commit and merge
+## Phase 8 â€” Commit and merge
 
-Proceeding on **"proceed to commit and merge"** (commit message per prompt).
+- Commit: `0f75346fe73965464912f84dd6a005b98f4542a0` â€” `docs(P6-LORE): Phase 6 lore closeout â€” decisions, open questions, roadmap`
+- Merge (`--no-ff`): `84df45ffd3da11c968acfd6984563ccb6fe30b1a` â€” `Merge branch 'p6-lore'`
+- Branch `p6-lore` deleted locally and on `origin`
+- p5 DELETE (4/4) recorded before commit; spikes only (not in repo)
