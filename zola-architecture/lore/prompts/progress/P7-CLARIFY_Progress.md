@@ -497,4 +497,4 @@ Quiet-card reading: plan “no card” = quiet card built, panel never auto-open
 |---|---|
 | Implementation commit (7e) | `f89b9d6502e90b6f3eef7246e0f8499766f8af89` |
 | Merge on `main` (7h) | `80498b99f0e999efd91250fcc1c1d9315616bbb9` |
-| Final `main` HEAD (after 7i docs) | 4ff88a4d19759f23b5ffa3338a5ef0d602b44037 |
+| Final `main` HEAD (after 7i docs) | tip of closeout docs on `main` (see closeout report) |
