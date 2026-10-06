@@ -903,6 +903,6 @@ Filed for later lore closeout (no Hermes edit this track):
 |---|---|
 | Plan commit | `b5583f97c3e13870abc5d483ec23566458cd828e` |
 | Plan merge (= p7-voiceauth base) | `ffef6f050a3fd6a8092d77fc055370296e2b522b` |
-| Implementation (8e) | *(filled after 8e)* |
+| Implementation (8e) | `f34bd9bee4b9f4faa67655e845c1b05f61389ad4` |
 | Merge on main (8h `--no-ff`) | *(filled after 8h)* |
 | Final main HEAD (after 8i metadata) | *(filled after 8i)* |
