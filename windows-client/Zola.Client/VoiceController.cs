@@ -412,6 +412,8 @@ sealed class VoiceController
 
     // P4-ASK: second arg is the srq-* id when this transcript ends a clarify-answer capture — P4-D14
     public event Action<string, string?>? TranscriptReady;
+    // P7-CLARIFY: bound Clarify(id) capture ended without an admitted answer — P7-D09
+    public event Action<string>? ClarifyAnswerCaptureEndedWithoutAnswer;
 
     public event Action? VoiceChatEnded;
 
@@ -553,12 +555,15 @@ sealed class VoiceController
 
         // P4-ASK: speak token may already be cleared while the answer capture is still in flight — P4-D14
         var captureId = _activeClarifyCaptureId ?? _pendingClarifyCaptureId;
-        if (string.Equals(captureId, id, StringComparison.Ordinal))
+        if (!string.Equals(captureId, id, StringComparison.Ordinal))
         {
-            StashClosedClarifyCapture(captureId);
-            _pendingClarifyCaptureId = null;
-            _activeClarifyCaptureId = null;
+            return;
         }
+
+        // P7-CLARIFY: request close stops the bound capture via the single cancel authority — P7-D02 / P7-D09
+        // Keep ids until Invalidate→CancelFollowUp; AbandonReasonRequestClosed suppresses no-answer panel.
+        StashClosedClarifyCapture(captureId);
+        _ = InvalidateAndStopCaptureAsync(AbandonReasonRequestClosed);
     }
 
     private void StashClosedClarifyCapture(string? id)
@@ -617,6 +622,9 @@ sealed class VoiceController
             return;
         }
 
+        // P7-CLARIFY: haystack is question stem for quiet single; TTS still speaks full template — P7-D09
+        var echoHaystack = BuildEchoHaystack(view, spoken);
+
         // P7-VOICEAUTH: new clarify question invalidates any orphan capture — P7-D02
         await InvalidateAndStopCaptureAsync("question-speak").ConfigureAwait(false);
         ClearClosedClarifyCapture();
@@ -638,7 +646,7 @@ sealed class VoiceController
             return;
         }
 
-        RememberSpokenEcho(spoken);
+        RememberSpokenEcho(echoHaystack);
         WriteTimeline(LogQuestionSpokenPrefix + id + " chars=" + spoken.Length);
         var ttsReturnedAt = DateTimeOffset.Now;
         await WaitForQuestionReleaseThenCaptureAsync(id, tokenGeneration, spoken, ttsReturnedAt).ConfigureAwait(false);
@@ -680,6 +688,18 @@ sealed class VoiceController
 
     private static string BuildSpokenQuestionText(ServerRequestBroker.ClarifyView view)
     {
+        // P7-CLARIFY: quiet single speaks choices via template; card-required / batch unchanged — P7-D09
+        if (IsQuietSingleView(view))
+        {
+            if (view.IsBatch)
+            {
+                var q = view.Questions[0];
+                return ClarifySpeech.BuildSpokenTemplate(q.Question, q.Choices);
+            }
+
+            return ClarifySpeech.BuildSpokenTemplate(view.Question, view.Choices);
+        }
+
         // P4-ASK: speak question text only — never choices (developer 2026-09-30 / P4-D13 amend) — P4-D13
         if (view.IsBatch)
         {
@@ -693,6 +713,46 @@ sealed class VoiceController
         }
 
         return view.Question.Trim();
+    }
+
+    private static string BuildEchoHaystack(ServerRequestBroker.ClarifyView view, string spoken)
+    {
+        // P7-CLARIFY: quiet-single haystack is question stem only — P7-D09
+        if (IsQuietSingleView(view))
+        {
+            var stem = view.IsBatch
+                ? view.Questions[0].Question
+                : view.Question;
+            return ClarifySpeech.EchoHaystackStem(stem);
+        }
+
+        return spoken;
+    }
+
+    internal static bool IsQuietSingleView(ServerRequestBroker.ClarifyView view)
+    {
+        if (view.IsBatch)
+        {
+            var facts = new List<ClarifyQuestionFacts>(view.Questions.Count);
+            foreach (var q in view.Questions)
+            {
+                facts.Add(new ClarifyQuestionFacts(q.MultiSelect, q.Choices));
+            }
+
+            return ClarifyShape.IsQuietSingle(true, facts, legacyMultiSelect: false, legacyChoices: Array.Empty<string>());
+        }
+
+        return ClarifyShape.IsQuietSingle(
+            isBatch: false,
+            questions: Array.Empty<ClarifyQuestionFacts>(),
+            legacyMultiSelect: view.MultiSelect,
+            legacyChoices: view.Choices);
+    }
+
+    public void NoteClarifyTimeline(string line)
+    {
+        // P7-CLARIFY: MainWindow writes quiet / panel_open lines to the voice timeline — P7-D09
+        WriteTimeline(line);
     }
 
     private double EstimateQuestionPlaybackSeconds(string text)
@@ -2064,7 +2124,12 @@ sealed class VoiceController
             {
                 StatusMessage?.Invoke(NoticeIgnoredEcho);
                 _followUpEchoPending = false;
-                if (_followUpCaptureStarted && _followUpArmed)
+                // P7-CLARIFY: clarify echo never EchoReopens; CancelFollowUp raises no-answer — P7-D09
+                if (snap.Kind == CaptureKind.Clarify && !string.IsNullOrEmpty(snap.ClarifyId))
+                {
+                    CancelFollowUp("clarify-echo");
+                }
+                else if (_followUpCaptureStarted && _followUpArmed)
                 {
                     _followUpCaptureStarted = false;
                     _echoIgnoreCount++;
@@ -2243,7 +2308,8 @@ sealed class VoiceController
             return;
         }
 
-        if (Mode != ModeVoice || !IsAvailable || TurnRunning)
+        // P7-CLARIFY: TurnRunning is true while clarify blocks the turn; also refuse while awaiting — P7-D09
+        if (Mode != ModeVoice || !IsAvailable || TurnRunning || AwaitingAnswer)
         {
             WriteTimeline("echo-reopen skipped");
             return;
@@ -2540,6 +2606,9 @@ sealed class VoiceController
 
     private void CancelFollowUp(string reason)
     {
+        // P7-CLARIFY: capture id before clear — no-answer fallback when still open — P7-D09
+        var clarifyIdForFallback = _activeClarifyCaptureId ?? _pendingClarifyCaptureId;
+
         // P2-SPEAK: every cancel cause bumps generation so a later timer cannot start a capture — P2-D06
         BumpFollowUpGeneration();
         DisposeFollowUpTimer();
@@ -2559,7 +2628,7 @@ sealed class VoiceController
         // P4-ASK: stash closed id only on interrupt-like cancel (not idle/silence — that stole the next wake turn) — P4-D14
         if (ShouldStashClosedClarify(reason))
         {
-            StashClosedClarifyCapture(_activeClarifyCaptureId ?? _pendingClarifyCaptureId);
+            StashClosedClarifyCapture(clarifyIdForFallback);
         }
 
         _pendingClarifyCaptureId = null;
@@ -2567,6 +2636,23 @@ sealed class VoiceController
         SetSpeaking(false);
         // P2-WAKE: ending the follow-up window can re-enter Resting — P2-D12
         _ = ReconcileWakeRestingAsync("follow-up-end");
+
+        // P7-CLARIFY: settle/cancel without admit → MainWindow may open quiet panel once — P7-D09
+        if (!string.IsNullOrEmpty(clarifyIdForFallback)
+            && !SuppressClarifyNoAnswer(reason)
+            && _clarifyCaptureStillValid?.Invoke(clarifyIdForFallback) == true)
+        {
+            ClarifyAnswerCaptureEndedWithoutAnswer?.Invoke(clarifyIdForFallback);
+        }
+    }
+
+    private static bool SuppressClarifyNoAnswer(string reason)
+    {
+        // Admitted answer / stop-phrase path, mode→Text (panel via MainWindow), or replacing question TTS.
+        return string.Equals(reason, CancelReasonVoiceTranscript, StringComparison.Ordinal)
+            || string.Equals(reason, CancelReasonModeText, StringComparison.Ordinal)
+            || string.Equals(reason, "question-speak", StringComparison.Ordinal)
+            || string.Equals(reason, AbandonReasonRequestClosed, StringComparison.Ordinal);
     }
 
     private void BumpFollowUpGeneration()

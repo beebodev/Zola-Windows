@@ -25,6 +25,8 @@ internal sealed class CheckRunner
     private int _latchPassed;
     private int _wiringTotal;
     private int _wiringPassed;
+    private int _clarifyTotal;
+    private int _clarifyPassed;
 
     public int Failed { get; private set; }
 
@@ -39,12 +41,13 @@ internal sealed class CheckRunner
         RunLatchRows();
         RunPlanExtras();
         RunWiringRows();
+        RunClarifyRows();
     }
 
     public string CoverageLine()
     {
         return string.Format(
-            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}",
+            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}",
             _lifecyclePassed,
             _lifecycleTotal,
             _admissionPassed,
@@ -60,7 +63,9 @@ internal sealed class CheckRunner
             _latchPassed,
             _latchTotal,
             _wiringPassed,
-            _wiringTotal);
+            _wiringTotal,
+            _clarifyPassed,
+            _clarifyTotal);
     }
 
     private void RunLifecycleRows()
@@ -1118,6 +1123,131 @@ internal sealed class CheckRunner
             if (pass)
             {
                 _wiringPassed++;
+            }
+        });
+    }
+
+    private void RunClarifyRows()
+    {
+        // P7-CLARIFY: classification, template, haystack stem — P7-D09
+        Clarify("shape_single_batch_choices", () =>
+            ClarifyShape.IsQuietSingle(
+                true,
+                new[] { new ClarifyQuestionFacts(false, new[] { "navy", "gray" }) },
+                false,
+                Array.Empty<string>()));
+
+        Clarify("shape_single_batch_freetext", () =>
+            ClarifyShape.IsQuietSingle(
+                true,
+                new[] { new ClarifyQuestionFacts(false, Array.Empty<string>()) },
+                false,
+                Array.Empty<string>()));
+
+        Clarify("shape_single_legacy", () =>
+            ClarifyShape.IsQuietSingle(false, Array.Empty<ClarifyQuestionFacts>(), false, new[] { "a", "b" }));
+
+        Clarify("shape_card_multiselect", () =>
+            !ClarifyShape.IsQuietSingle(
+                true,
+                new[] { new ClarifyQuestionFacts(true, new[] { "a", "b" }) },
+                false,
+                Array.Empty<string>()));
+
+        Clarify("shape_card_batch2", () =>
+            !ClarifyShape.IsQuietSingle(
+                true,
+                new[]
+                {
+                    new ClarifyQuestionFacts(false, new[] { "a" }),
+                    new ClarifyQuestionFacts(false, new[] { "b" }),
+                },
+                false,
+                Array.Empty<string>()));
+
+        Clarify("shape_card_zero_questions", () =>
+            !ClarifyShape.IsQuietSingle(true, Array.Empty<ClarifyQuestionFacts>(), false, Array.Empty<string>()));
+
+        Clarify("shape_card_legacy_multi", () =>
+            !ClarifyShape.IsQuietSingle(false, Array.Empty<ClarifyQuestionFacts>(), true, new[] { "a", "b" }));
+
+        var under20 = Enumerable.Repeat("word", 20).ToArray();
+        var over20 = Enumerable.Repeat("word", 21).ToArray();
+        Clarify("shape_cap_at_20", () =>
+            ClarifyShape.IsQuietSingle(
+                true,
+                new[] { new ClarifyQuestionFacts(false, under20) },
+                false,
+                Array.Empty<string>())
+            && ClarifyShape.CountSpokenChoiceWords(under20) == 20);
+
+        Clarify("shape_cap_over_20", () =>
+            !ClarifyShape.IsQuietSingle(
+                true,
+                new[] { new ClarifyQuestionFacts(false, over20) },
+                false,
+                Array.Empty<string>())
+            && ClarifyShape.CountSpokenChoiceWords(over20) == 21);
+
+        Clarify("shape_cap_under_20", () =>
+            ClarifyShape.IsQuietSingle(
+                true,
+                new[] { new ClarifyQuestionFacts(false, Enumerable.Repeat("word", 19).ToArray()) },
+                false,
+                Array.Empty<string>()));
+
+        Clarify("template_0_choices", () =>
+            ClarifySpeech.BuildSpokenTemplate("Which color?", Array.Empty<string>()) == "Which color?");
+
+        Clarify("template_1_choice", () =>
+            ClarifySpeech.BuildSpokenTemplate("Which color?", new[] { "navy" })
+            == "Which color? Is it navy?");
+
+        Clarify("template_2_choices", () =>
+            ClarifySpeech.BuildSpokenTemplate("Which color?", new[] { "navy", "gray" })
+            == "Which color? Is it navy or gray?");
+
+        Clarify("template_3_choices", () =>
+            ClarifySpeech.BuildSpokenTemplate("Pick one?", new[] { "a", "b", "c" })
+            == "Pick one? Is it a, b, or c?");
+
+        Clarify("template_4_choices", () =>
+            ClarifySpeech.BuildSpokenTemplate("Pick one?", new[] { "a", "b", "c", "d" })
+            == "Pick one? Is it a, b, c, or d?");
+
+        Clarify("template_strip_recommended", () =>
+            ClarifySpeech.BuildSpokenTemplate(
+                "Which color?",
+                new[] { "navy " + ClarifyShape.RecommendedMarker, "gray" })
+            == "Which color? Is it navy or gray?");
+
+        Clarify("template_already_in_question", () =>
+            ClarifySpeech.BuildSpokenTemplate(
+                "Do you want navy or gray?",
+                new[] { "navy", "gray" })
+            == "Do you want navy or gray?");
+
+        Clarify("contain_whole_word_not_substring", () =>
+            !ClarifyShape.AllLabelsAppearInQuestion("Which colored option?", new[] { "red" }));
+
+        Clarify("contain_multiword_sequence", () =>
+            ClarifyShape.AllLabelsAppearInQuestion("navy blue or gray?", new[] { "navy blue" }));
+
+        Clarify("haystack_stem_only", () =>
+            ClarifySpeech.EchoHaystackStem("  Which color?  ") == "Which color?"
+            && ClarifySpeech.EchoHaystackStem("Which color?") != ClarifySpeech.BuildSpokenTemplate(
+                "Which color?",
+                new[] { "navy", "gray" }));
+    }
+
+    private void Clarify(string name, Func<bool> body)
+    {
+        _clarifyTotal++;
+        Run(name, body, pass =>
+        {
+            if (pass)
+            {
+                _clarifyPassed++;
             }
         });
     }
