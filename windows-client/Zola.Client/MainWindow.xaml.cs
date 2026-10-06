@@ -177,6 +177,7 @@ public sealed partial class MainWindow : Window
         // P4-ASK: monitor bout forward + question speech wiring — P4-D13
         _presence.PlaybackBoutStarted += () => _voice.NotePlaybackBoutStarted();
         _presence.PlaybackBoutStopped += forced => _voice.NotePlaybackBoutStopped(forced);
+        // P7-VOICEAUTH: broker query scoped to clarify id + current session (never "any open") — P7-D05
         _voice.ConfigureQuestionSpeech(
             () => _presence?.PlaybackMonitorAvailable == true,
             id =>
@@ -582,17 +583,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // P4-ASK: unbound capture while a clarify is open answers the newest (probe / Option D) — P4-D14
-        if (_requests.HasOpenClarify(_chat.SessionId))
-        {
-            var id = _requests.NewestOpenClarify(_chat.SessionId);
-            if (id is not null)
-            {
-                ApplyVoiceClarifyAnswer(id, text);
-                return;
-            }
-        }
-
+        // P7-VOICEAUTH: unbound admitted transcripts never answer clarify (newest-clarify removed) — P7-D05
         _ = SubmitTurnAsync(text);
     }
 

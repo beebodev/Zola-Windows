@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Zola.Client.Voice;
 
 namespace Zola.Client;
 
@@ -185,6 +186,18 @@ sealed class VoiceController
     private const string TranscriptLogFormat =
         "transcript len={0} filtered={1} stop={2} nospeech={3} bound={4} capture_start={5} capture_stop={6} duration_s={7}";
     private const string TranscriptBoundNone = "none";
+    // P7-VOICEAUTH: lifecycle tick cadence and cancel/start reasons — P7-D01 / P7-D03
+    private const int LifecycleTickMilliseconds = 1000;
+    private const string CancelReasonTurnStart = "turn-start";
+    private const string CancelReasonTypedSubmit = "typed-submit";
+    private const string CancelReasonSessionReady = "session-ready";
+    private const string CancelReasonAppClose = "app-close";
+    private const string CancelReasonModeText = "mode-text";
+    private const string CancelReasonVoiceInterrupted = "voice.interrupted";
+    private const string CancelReasonVoiceTranscript = "voice.transcript";
+    private const string LogHandbackTimeoutQuestionFormat =
+        "question_release handback_timeout rule={0}";
+    private const string NoticeCaptureBusy = "Still listening…";
 
     // P2-WAKE: wake RPC names, params, reasons, and timings are named constants — P2-D04
     private const string MethodWakeStart = "wake.start";
@@ -287,6 +300,11 @@ sealed class VoiceController
     private DateTimeOffset _captureWindowStart;
     private DateTimeOffset _captureWindowStop;
     private bool _captureWindowOpen;
+    // P7-VOICEAUTH: one lifecycle authority; all calls under _lifecycleGate (never concurrent) — P7-D01
+    private readonly CaptureLifecycle _lifecycle = new();
+    private readonly object _lifecycleGate = new();
+    private Timer? _lifecycleTickTimer;
+    private int _lifecycleTickBusy;
 
     public VoiceController(ChatSocket chat)
     {
@@ -298,6 +316,12 @@ sealed class VoiceController
         // P2-WAKE: this controller is the only subscriber and the only owner of wake RPCs — P2-D12
         _chat.WakeDetected += OnWakeDetected;
         _chat.BeforeReplaceAsync = DisarmWakeAsync;
+        // P7-VOICEAUTH: 1 Hz Tick drives listening/settle/latch timeouts — P7-D03
+        _lifecycleTickTimer = new Timer(
+            _ => OnLifecycleTick(),
+            null,
+            LifecycleTickMilliseconds,
+            LifecycleTickMilliseconds);
     }
 
     public string Mode { get; private set; } = ModeVoice;
@@ -593,7 +617,8 @@ sealed class VoiceController
             return;
         }
 
-        CancelFollowUp("question-speak");
+        // P7-VOICEAUTH: new clarify question invalidates any orphan capture — P7-D02
+        await InvalidateAndStopCaptureAsync("question-speak").ConfigureAwait(false);
         ClearClosedClarifyCapture();
         var tokenGeneration = Interlocked.Increment(ref _pendingQuestionGeneration);
         _pendingQuestionId = id;
@@ -845,6 +870,16 @@ sealed class VoiceController
                 return;
             }
 
+            // P7-VOICEAUTH: D06 — estimate/fallback cannot open while bout active — P7-D06
+            if (rule is QuestionRuleNoBoutEstimate or QuestionRuleForcedEstimate
+                && !await HandBackActiveBoutOrAllowEstimateAsync(
+                    isQuestion: true,
+                    rule,
+                    () => IsPendingQuestionCurrent(id, tokenGeneration)).ConfigureAwait(false))
+            {
+                return;
+            }
+
             await OpenClarifyAnswerCaptureAsync(id, tokenGeneration).ConfigureAwait(false);
         }
         finally
@@ -902,10 +937,11 @@ sealed class VoiceController
         ClearPendingQuestionToken();
         EndQuestionSpeaking();
         _followUpArmed = true;
-        await StartCaptureAsync(generation).ConfigureAwait(false);
-        if (!CaptureActive)
+        // P7-VOICEAUTH: Deferred/SupersededAndDeferred is pending, not failure — P7-D03
+        var outcome = await StartCaptureAsync(CaptureKind.Clarify, generation, id).ConfigureAwait(false);
+        if (outcome == StartDisposition.Rejected)
         {
-            CancelFollowUp("clarify-capture-failed");
+            _ = InvalidateAndStopCaptureAsync("clarify-capture-failed");
         }
     }
 
@@ -1055,8 +1091,9 @@ sealed class VoiceController
             wakeWasArmed ? GateBoolTrue : GateBoolFalse));
 
         // P4-FEEDBACK: cancel pending follow-up so she does not auto-listen; keep clarify token — P4-FB-STOP
+        // P7-VOICEAUTH: Stop speaking invalidates then record-stops before toggle off — P7-D02
         WriteTimeline(StopSpeakingStepPrefix + "cancel_follow_up");
-        CancelFollowUp(StopSpeakingCancelReason);
+        await InvalidateAndStopCaptureAsync(StopSpeakingCancelReason).ConfigureAwait(false);
         // P4-FEEDBACK: freeze P2-D15 estimate for the rest of this turn (not QuestionSpeaking) — P4-FB-STOP
         _speechStoppedThisTurn = true;
 
@@ -1179,34 +1216,9 @@ sealed class VoiceController
         WriteTimeline(GateStepCancelFollowUp);
         // P4-ASK: gate close abandons pending question speech/capture chain — P4-D13
         AbandonPendingQuestion(AbandonReasonVoiceGated);
-        CancelFollowUp(GateCancelReason);
-
+        // P7-VOICEAUTH: gate close uses the one cancel-stop method — P7-D02
+        await InvalidateAndStopCaptureAsync(GateCancelReason).ConfigureAwait(false);
         var ok = true;
-        if (CaptureActive)
-        {
-            try
-            {
-                var stop = await RecordAsync(ActionStop, allowResync: false, requiredGeneration: null).ConfigureAwait(false);
-                WriteTimeline(string.Format(
-                    GateStepRecordStopFormat,
-                    stop.Ok ? GateBoolTrue : GateBoolFalse,
-                    stop.Status ?? "",
-                    stop.Error ?? ""));
-                if (!stop.Ok)
-                {
-                    ok = false;
-                }
-            }
-            catch (Exception ex)
-            {
-                WriteTimeline(string.Format(GateStepRecordStopFormat, GateBoolFalse, "", ex.Message));
-                ok = false;
-            }
-        }
-        else
-        {
-            WriteTimeline(GateStepRecordStopSkipped);
-        }
 
         try
         {
@@ -1487,7 +1499,8 @@ sealed class VoiceController
         ResetSelfInterruptCount();
         // P4-ASK: Text mode invalidates a pending spoken question — P4-D13
         AbandonPendingQuestion(AbandonReasonTextMode);
-        CancelFollowUp("mode-text");
+        // P7-VOICEAUTH: mode→Text invalidates then stops before toggle off — P7-D02
+        await InvalidateAndStopCaptureAsync(CancelReasonModeText).ConfigureAwait(false);
         // P2-VOICE: text mode turns Hermes voice off and clears a live capture — P2-D07
         var reply = await ToggleAsync(ActionOff).ConfigureAwait(false);
         if (!reply.Ok)
@@ -1544,7 +1557,7 @@ sealed class VoiceController
 
         if (!CaptureActive)
         {
-            await StartCaptureAsync(requiredGeneration: null).ConfigureAwait(false);
+            await StartCaptureAsync(CaptureKind.Manual, requiredGeneration: null).ConfigureAwait(false);
             return;
         }
 
@@ -1554,7 +1567,8 @@ sealed class VoiceController
             return;
         }
 
-        await StopCaptureAsync().ConfigureAwait(false);
+        // P7-VOICEAUTH: mic stop invalidates then record-stops — P7-D02
+        await InvalidateAndStopCaptureAsync("mic-toggle-stop").ConfigureAwait(false);
     }
 
     public void OnTurnStarted()
@@ -1564,17 +1578,16 @@ sealed class VoiceController
         ClearClosedClarifyCapture();
         // P4-FEEDBACK: new turn clears Stop-this-turn freeze so the estimate can run again — P4-FB-STOP
         _speechStoppedThisTurn = false;
-        BumpFollowUpGeneration();
-        DisposeFollowUpTimer();
-        // P4-FEEDBACK: new turn drops reply release arm (Speaking hold) — P4-D18
-        ClearReplyFollowUpRelease();
+        // P7-VOICEAUTH: turn start cancels any outstanding Hermes capture (sync flags, async stop) — P7-D02
+        var needsStop = InvalidateCapture(CancelReasonTurnStart);
+        if (needsStop)
+        {
+            _ = SendRecordStopAsync();
+        }
+
         _accumulatedReply = "";
         _countedWords = 0;
         _countedSentences = 0;
-        _followUpArmed = false;
-        _followUpCaptureStarted = false;
-        _followUpTranscriptSeen = false;
-        _followUpEchoPending = false;
         _echoIgnoreCount = 0;
         _cancelReason = "";
         _turnStartedAt = DateTimeOffset.Now;
@@ -1669,44 +1682,52 @@ sealed class VoiceController
             return;
         }
 
-        CancelFollowUp(status);
+        _ = InvalidateAndStopCaptureAsync(status);
     }
 
     public void OnTypedSubmit()
     {
         // P2-SPEAK: a typed Send cancels follow-up and is not a self-trip — P2-D06
         ResetSelfInterruptCount();
-        CancelFollowUp("typed-submit");
+        // P7-VOICEAUTH: typed submit invalidates then stops — P7-D02
+        _ = InvalidateAndStopCaptureAsync(CancelReasonTypedSubmit);
     }
 
     public void OnSessionReady()
     {
         // P2-WAKE: a new socket invalidates in-flight wake replies from the previous transport — P2-D04
         BumpConnectionGeneration();
-        // P2-SPEAK: every new or resumed session drops a pending follow-up — P2-D06
-        CancelFollowUp("session-ready");
+        // P7-VOICEAUTH: session ready invalidates then stops any orphan capture — P7-D02
+        _ = InvalidateAndStopCaptureAsync(CancelReasonSessionReady);
     }
 
     public void Shutdown()
     {
+        // P7-VOICEAUTH: dispose lifecycle tick before cancel — P7-D03
+        var tick = Interlocked.Exchange(ref _lifecycleTickTimer, null);
+        tick?.Dispose();
         // P2-SPEAK: closing the window must not leave a follow-up timer armed — P2-D06
-        CancelFollowUp("app-close");
+        _ = InvalidateAndStopCaptureAsync(CancelReasonAppClose);
     }
 
     private bool ClockEligible => Mode == ModeVoice && _ttsOn == true;
 
-    private async Task StartCaptureAsync(int? requiredGeneration)
+    // P7-VOICEAUTH: (a) lifecycle BeginStart then (b) SendRecordStartAsync — never BeginStart twice — P7-D03
+    private async Task<StartDisposition> StartCaptureAsync(
+        CaptureKind kind,
+        int? requiredGeneration,
+        string? clarifyId = null)
     {
         // P4-LOCK: every capture path refuses while the system gate holds — P4-D02
         if (RefuseIfGated(GateRefuseCaptureStart))
         {
-            return;
+            return StartDisposition.Rejected;
         }
 
         // P2-VOICE: voice.record always carries the current runtime session id — P2-D01
         if (string.IsNullOrEmpty(_chat.SessionId))
         {
-            return;
+            return StartDisposition.Rejected;
         }
 
         // P4-ASK: a new wake capture is a fresh turn — never bind it to a prior cancelled clarify — P4-D14
@@ -1718,23 +1739,83 @@ sealed class VoiceController
         // P2-SPEAK: a stale follow-up must not send voice.record after any await — P2-D06
         if (requiredGeneration is int generation && generation != Volatile.Read(ref _followUpGeneration))
         {
-            return;
+            return StartDisposition.Rejected;
         }
+
+        var boundClarify = kind == CaptureKind.Clarify
+            ? (clarifyId ?? _pendingClarifyCaptureId)
+            : null;
+        BeginStartResult begin;
+        lock (_lifecycleGate)
+        {
+            begin = _lifecycle.BeginStart(kind, boundClarify, DateTimeOffset.Now, requiredGeneration);
+        }
+
+        if (!string.IsNullOrEmpty(begin.LogLine))
+        {
+            WriteTimeline(begin.LogLine);
+        }
+
+        if (begin.NeedsHermesStop)
+        {
+            await SendRecordStopAsync().ConfigureAwait(false);
+        }
+
+        if (begin.Disposition == StartDisposition.Rejected)
+        {
+            if (kind == CaptureKind.Manual)
+            {
+                StatusMessage?.Invoke(NoticeCaptureBusy);
+            }
+
+            return StartDisposition.Rejected;
+        }
+
+        if (begin.Disposition is StartDisposition.Deferred or StartDisposition.SupersededAndDeferred)
+        {
+            // Pending start waits for idle/latch_recover; wiring revalidates on release.
+            return begin.Disposition;
+        }
+
+        return await SendRecordStartAsync(begin, kind, requiredGeneration, boundClarify).ConfigureAwait(false);
+    }
+
+    // P7-VOICEAUTH: (b) wake pause + MarkStartSent + voice.record start + settle-on-every-exit — P7-D03
+    private async Task<StartDisposition> SendRecordStartAsync(
+        BeginStartResult begin,
+        CaptureKind kind,
+        int? requiredGeneration,
+        string? boundClarify)
+    {
+        var lifecycleGen = begin.Snapshot.Generation;
 
         // P2-WAKE: client-initiated captures await pause before voice.record; wake.detected already paused — P2-D12
         var wakeGeneration = Volatile.Read(ref _connectionGeneration);
         await PauseWakeForCaptureAsync(wakeGeneration).ConfigureAwait(false);
         if (requiredGeneration is int afterPause && afterPause != Volatile.Read(ref _followUpGeneration))
         {
-            return;
+            AbortUnsentLifecycleStart(lifecycleGen, CaptureConstants.ReasonStaleGeneration);
+            return StartDisposition.Rejected;
         }
 
         if (wakeGeneration != Volatile.Read(ref _connectionGeneration))
         {
             WriteTimeline(NoticeStaleWake);
             _pendingClarifyCaptureId = null;
+            AbortUnsentLifecycleStart(lifecycleGen, CaptureConstants.ReasonWakeStale);
             await RecoverWakeCaptureIfNeededAsync(wakeGeneration).ConfigureAwait(false);
-            return;
+            return StartDisposition.Rejected;
+        }
+
+        if (requiredGeneration is int beforeRpc && beforeRpc != Volatile.Read(ref _followUpGeneration))
+        {
+            AbortUnsentLifecycleStart(lifecycleGen, CaptureConstants.ReasonStaleGeneration);
+            return StartDisposition.Rejected;
+        }
+
+        lock (_lifecycleGate)
+        {
+            _ = _lifecycle.MarkStartSent(lifecycleGen);
         }
 
         var reply = await RecordAsync(ActionStart, allowResync: true, requiredGeneration).ConfigureAwait(false);
@@ -1743,12 +1824,15 @@ sealed class VoiceController
             // P4-ASK: interrupt may bump generation after Hermes already started record — keep id for late drop — P4-D14
             StashClosedClarifyCapture(_pendingClarifyCaptureId);
             _pendingClarifyCaptureId = null;
-            return;
+            // Hermes may be recording — cancel method (invalidate + stop), not AbortUnsentStart.
+            await InvalidateAndStopCaptureAsync(CaptureConstants.ReasonStaleGeneration).ConfigureAwait(false);
+            return StartDisposition.Rejected;
         }
 
         if (IsBusy(reply))
         {
             ReportBusy(reply);
+            NoteLifecycleStartFailed(busy: true);
             await RecoverWakeCaptureIfNeededAsync(wakeGeneration).ConfigureAwait(false);
             if (requiredGeneration is not null)
             {
@@ -1760,12 +1844,13 @@ sealed class VoiceController
                 _pendingClarifyCaptureId = null;
             }
 
-            return;
+            return StartDisposition.Rejected;
         }
 
         if (!reply.Ok)
         {
             StatusMessage?.Invoke(reply.Error ?? "Voice recording did not start.");
+            NoteLifecycleStartFailed(busy: false);
             await RecoverWakeCaptureIfNeededAsync(wakeGeneration).ConfigureAwait(false);
             if (requiredGeneration is not null)
             {
@@ -1777,7 +1862,7 @@ sealed class VoiceController
                 _pendingClarifyCaptureId = null;
             }
 
-            return;
+            return StartDisposition.Rejected;
         }
 
         CaptureActive = true;
@@ -1786,35 +1871,40 @@ sealed class VoiceController
         // P2-WAKE: a successful record start confirms the wake capture; do not resume — P2-D12
         _wakeCapturePending = false;
         // P4-ASK: bind this capture to the armed clarify id (if any); otherwise unbound — P4-D14
-        _activeClarifyCaptureId = _pendingClarifyCaptureId;
+        _activeClarifyCaptureId = kind == CaptureKind.Clarify ? boundClarify : null;
         _pendingClarifyCaptureId = null;
         if (RecorderState == StateIdle)
         {
             RecorderState = StateListening;
         }
 
-        if (requiredGeneration is not null)
+        if (requiredGeneration is not null || kind is CaptureKind.FollowUp or CaptureKind.EchoReopen or CaptureKind.Clarify)
         {
             _followUpCaptureStarted = true;
         }
 
         StateChanged?.Invoke();
+        return StartDisposition.Began;
+    }
+
+    private void AbortUnsentLifecycleStart(long generation, string reason)
+    {
+        TransitionResult tr;
+        lock (_lifecycleGate)
+        {
+            tr = _lifecycle.AbortUnsentStart(generation, reason, DateTimeOffset.Now);
+        }
+
+        if (!string.IsNullOrEmpty(tr.LogLine))
+        {
+            WriteTimeline(tr.LogLine);
+        }
     }
 
     private async Task StopCaptureAsync()
     {
         // P2-VOICE: stop forces transcription; capture stays active until voice.status idle — P2-D05
-        var reply = await RecordAsync(ActionStop, allowResync: true, requiredGeneration: null).ConfigureAwait(false);
-        if (IsBusy(reply))
-        {
-            ReportBusy(reply);
-            return;
-        }
-
-        if (!reply.Ok)
-        {
-            StatusMessage?.Invoke(reply.Error ?? "Voice recording did not stop.");
-        }
+        await SendRecordStopAsync().ConfigureAwait(false);
     }
 
     private async Task<ChatSocket.RpcReply> RecordAsync(string action, bool allowResync, int? requiredGeneration)
@@ -1876,6 +1966,17 @@ sealed class VoiceController
     {
         // P2-VOICE: capture is active from a successful start until the recorder reports idle — P2-D08
         RecorderState = string.IsNullOrEmpty(state) ? StateIdle : state;
+        TransitionResult tr;
+        lock (_lifecycleGate)
+        {
+            tr = _lifecycle.ApplyStatus(RecorderState, DateTimeOffset.Now);
+        }
+
+        if (!string.IsNullOrEmpty(tr.LogLine))
+        {
+            WriteTimeline(tr.LogLine);
+        }
+
         if (RecorderState == StateIdle)
         {
             CaptureActive = false;
@@ -1902,86 +2003,154 @@ sealed class VoiceController
             }
         }
 
+        if (tr.ReleasePendingNow)
+        {
+            _ = ReleasePendingStartAsync();
+        }
+
         StateChanged?.Invoke();
     }
 
     private void OnVoiceTranscript(ChatSocket.VoiceTranscript transcript)
     {
-        // P4-FEEDBACK: log every transcript (length + flags + window; never text) — P4-D18
-        LogVoiceTranscript(transcript);
-
-        // P4-LOCK: drop any transcript that arrives while gated; never raise TranscriptReady — P4-D02
-        if (VoiceGated)
+        // P7-VOICEAUTH: admit on snapshot BEFORE ApplyTranscript changes state — P7-D01
+        CaptureSnapshot snap;
+        AdmissionVerdict verdict;
+        TransitionResult tr;
+        var text = transcript.Text?.Trim() ?? "";
+        var echoEligible = _followUpCaptureStarted || _followUpEchoPending;
+        var isEcho = text.Length > 0 && echoEligible && IsEchoOfLastReply(text);
+        lock (_lifecycleGate)
         {
-            WriteTimeline(GateRefusePrefix + GateRefuseTranscript);
+            snap = _lifecycle.Snapshot();
+            var clarifyOpen = snap.Kind == CaptureKind.Clarify
+                && !string.IsNullOrEmpty(snap.ClarifyId)
+                && _clarifyCaptureStillValid?.Invoke(snap.ClarifyId!) == true;
+            verdict = TranscriptAdmission.Decide(
+                new TranscriptFacts(text.Length, transcript.IsStopPhrase, transcript.IsNoSpeechLimit),
+                snap,
+                TurnRunning,
+                clarifyOpen,
+                VoiceGated,
+                Mode == ModeText,
+                isEcho);
+            var signal = transcript.IsNoSpeechLimit
+                ? LifecycleSignal.TranscriptNoSpeechLimit
+                : transcript.IsStopPhrase
+                    ? LifecycleSignal.TranscriptStopPhrase
+                    : LifecycleSignal.TranscriptText;
+            tr = _lifecycle.ApplyTranscript(signal, DateTimeOffset.Now);
+        }
+
+        // P4-FEEDBACK / P7-VOICEAUTH: log length+flags+owner window (never text) — P4-D18 / P7-D08
+        LogVoiceTranscript(transcript, snap);
+
+        if (!string.IsNullOrEmpty(tr.LogLine))
+        {
+            WriteTimeline(tr.LogLine);
+        }
+
+        if (verdict is AdmissionVerdict.Drop drop)
+        {
+            WriteTimeline(TranscriptAdmission.FormatDrop(drop, snap, text.Length));
+            if (transcript.IsStopPhrase)
+            {
+                // P7-VOICEAUTH: inadmissible stop → VA-G4 restore only; never VoiceChatEnded — P7-D01
+                WriteTimeline(string.Format(AdmissionLog.StopPhraseRestoreFormat, drop.Reason));
+                CancelFollowUp(CancelReasonVoiceTranscript);
+                _ = ResyncAfterStopAsync();
+            }
+            else if (drop.Reason == AdmissionReasons.Echo)
+            {
+                StatusMessage?.Invoke(NoticeIgnoredEcho);
+                _followUpEchoPending = false;
+                if (_followUpCaptureStarted && _followUpArmed)
+                {
+                    _followUpCaptureStarted = false;
+                    _echoIgnoreCount++;
+                    if (_echoIgnoreCount > EchoReopenLimit)
+                    {
+                        _ = InvalidateAndStopCaptureAsync("echo-ignored-limit");
+                    }
+                    else
+                    {
+                        var generation = Volatile.Read(ref _followUpGeneration);
+                        _ = ReopenFollowUpAfterEchoAsync(generation);
+                    }
+                }
+            }
+            else if (transcript.IsNoSpeechLimit)
+            {
+                CancelFollowUp("no-speech");
+                StatusMessage?.Invoke(NoticeNoSpeech);
+            }
+
+            if (tr.ReleasePendingNow)
+            {
+                _ = ReleasePendingStartAsync();
+            }
+
             return;
         }
+
+        if (verdict is not AdmissionVerdict.Admit admit)
+        {
+            return;
+        }
+
+        WriteTimeline(TranscriptAdmission.FormatAdmit(admit, snap, text.Length));
 
         if (transcript.IsStopPhrase)
         {
             // P2-VOICE: Hermes already turned voice off; syncing turns it back on for the next capture — P2-D05
-            CancelFollowUp("voice.transcript");
+            CancelFollowUp(CancelReasonVoiceTranscript);
             VoiceChatEnded?.Invoke();
             _ = ResyncAfterStopAsync();
+            if (tr.ReleasePendingNow)
+            {
+                _ = ReleasePendingStartAsync();
+            }
+
             return;
         }
 
         if (transcript.IsNoSpeechLimit)
         {
-            // P2-VOICE: three silent captures are a status line, not a turn — P2-D05
             CancelFollowUp("no-speech");
             StatusMessage?.Invoke(NoticeNoSpeech);
+            if (tr.ReleasePendingNow)
+            {
+                _ = ReleasePendingStartAsync();
+            }
+
             return;
         }
 
-        if (transcript.Text.Trim().Length > 0)
+        if (text.Length == 0)
         {
-            // P2-SPEAK: only a follow-up capture may drop an echo of the reply that just finished — P2-D12
-            var echoEligible = _followUpCaptureStarted || _followUpEchoPending;
-            if (echoEligible && IsEchoOfLastReply(transcript.Text))
+            if (tr.ReleasePendingNow)
             {
-                WriteTimeline($"echo-ignored words={string.Join(' ', NormalizeSpokenWords(transcript.Text))}");
-                StatusMessage?.Invoke(NoticeIgnoredEcho);
-                _followUpEchoPending = false;
-                if (!_followUpCaptureStarted || !_followUpArmed)
-                {
-                    return;
-                }
-
-                _followUpCaptureStarted = false;
-                _echoIgnoreCount++;
-                // P2-SPEAK: an ignored tail must not consume the follow-up window; reopen listen for the user — P2-D12
-                if (_echoIgnoreCount > EchoReopenLimit)
-                {
-                    CancelFollowUp("echo-ignored-limit");
-                    return;
-                }
-
-                var generation = Volatile.Read(ref _followUpGeneration);
-                _ = ReopenFollowUpAfterEchoAsync(generation);
-                return;
+                _ = ReleasePendingStartAsync();
             }
 
-            _followUpEchoPending = false;
-            _followUpTranscriptSeen = true;
-            // P4-ASK: prefer live binding; else closed id from Cancel so late answers drop (C4) — P4-D14
-            var boundClarifyId = _activeClarifyCaptureId;
-            if (string.IsNullOrEmpty(boundClarifyId))
-            {
-                boundClarifyId = _closedClarifyCaptureId;
-            }
+            return;
+        }
 
-            _activeClarifyCaptureId = null;
-            if (!string.IsNullOrEmpty(boundClarifyId)
-                && string.Equals(boundClarifyId, _closedClarifyCaptureId, StringComparison.Ordinal))
-            {
-                ClearClosedClarifyCapture();
-            }
+        _followUpEchoPending = false;
+        _followUpTranscriptSeen = true;
+        _activeClarifyCaptureId = null;
+        if (!string.IsNullOrEmpty(admit.ClarifyId)
+            && string.Equals(admit.ClarifyId, _closedClarifyCaptureId, StringComparison.Ordinal))
+        {
+            ClearClosedClarifyCapture();
+        }
 
-            // P2-SPEAK: a transcript is a new utterance, so the pending follow-up is cancelled — P2-D06
-            CancelFollowUp("voice.transcript");
-            // P2-VOICE: a non-empty transcript is submitted once by the window — P2-D05
-            TranscriptReady?.Invoke(transcript.Text.Trim(), boundClarifyId);
+        CancelFollowUp(CancelReasonVoiceTranscript);
+        // P2-VOICE: a non-empty admitted transcript is submitted once by the window — P2-D05
+        TranscriptReady?.Invoke(text, admit.ClarifyId);
+        if (tr.ReleasePendingNow)
+        {
+            _ = ReleasePendingStartAsync();
         }
     }
 
@@ -2004,27 +2173,47 @@ sealed class VoiceController
         _captureWindowOpen = false;
     }
 
-    private void LogVoiceTranscript(ChatSocket.VoiceTranscript transcript)
+    private void LogVoiceTranscript(ChatSocket.VoiceTranscript transcript, CaptureSnapshot owner)
     {
-        var stop = _captureWindowOpen ? DateTimeOffset.Now : _captureWindowStop;
         if (_captureWindowOpen)
         {
             NoteCaptureWindowStopped();
-            stop = _captureWindowStop;
         }
 
-        var bound = _activeClarifyCaptureId ?? _closedClarifyCaptureId;
-        if (string.IsNullOrEmpty(bound))
-        {
-            bound = TranscriptBoundNone;
-        }
-
-        var startText = _captureWindowStart == default ? "" : _captureWindowStart.ToString("o");
-        var stopText = stop == default ? "" : stop.ToString("o");
+        var bound = owner.Kind == CaptureKind.Clarify && !string.IsNullOrEmpty(owner.ClarifyId)
+            ? owner.ClarifyId!
+            : TranscriptBoundNone;
+        var startText = owner.WindowStart?.ToString("o")
+            ?? (_captureWindowStart == default ? "" : _captureWindowStart.ToString("o"));
+        var stopText = owner.WindowStop?.ToString("o")
+            ?? (_captureWindowStop == default ? "" : _captureWindowStop.ToString("o"));
         var duration = "";
-        if (_captureWindowStart != default && stop != default)
+        if (owner.WindowStart is { } ws && owner.WindowStop is { } we)
         {
-            duration = (stop - _captureWindowStart).TotalSeconds.ToString("0.###");
+            duration = (we - ws).TotalSeconds.ToString("0.###");
+        }
+        else if (_captureWindowStart != default && _captureWindowStop != default)
+        {
+            duration = (_captureWindowStop - _captureWindowStart).TotalSeconds.ToString("0.###");
+        }
+
+        if (!owner.HasOutstanding && owner.WindowStart is null)
+        {
+            startText = "";
+            stopText = "";
+            duration = "";
+            bound = TranscriptBoundNone;
+            WriteTimeline(string.Format(
+                TranscriptLogFormat,
+                transcript.Text?.Length ?? 0,
+                transcript.Filtered ? GateBoolTrue : GateBoolFalse,
+                transcript.IsStopPhrase ? GateBoolTrue : GateBoolFalse,
+                transcript.IsNoSpeechLimit ? GateBoolTrue : GateBoolFalse,
+                bound,
+                "owner=none",
+                "",
+                ""));
+            return;
         }
 
         WriteTimeline(string.Format(
@@ -2061,7 +2250,7 @@ sealed class VoiceController
         }
 
         WriteTimeline($"echo-reopen count={_echoIgnoreCount}");
-        await StartCaptureAsync(generation).ConfigureAwait(false);
+        await StartCaptureAsync(CaptureKind.EchoReopen, generation).ConfigureAwait(false);
     }
 
     private async Task ResyncAfterStopAsync()
@@ -2086,7 +2275,8 @@ sealed class VoiceController
     private void OnVoiceInterrupted()
     {
         // P2-SPEAK: barge-in ends the speaking estimate and counts toward the bleed-loop pause — P2-D12
-        CancelFollowUp("voice.interrupted");
+        // P7-VOICEAUTH: interrupt invalidates then stops — P7-D02
+        _ = InvalidateAndStopCaptureAsync(CancelReasonVoiceInterrupted);
         _selfInterruptCount++;
         if (_selfInterruptCount >= SelfInterruptLimit)
         {
@@ -2122,7 +2312,230 @@ sealed class VoiceController
         }
 
         WriteTimelineLine(started: true, fireOrCancel: DateTimeOffset.Now.ToString("o"));
-        await StartCaptureAsync(generation).ConfigureAwait(false);
+        await StartCaptureAsync(CaptureKind.FollowUp, generation).ConfigureAwait(false);
+    }
+
+    // P7-VOICEAUTH: one cancel method — invalidate lifecycle first, then voice.record stop — P7-D02
+    private bool InvalidateCapture(string reason)
+    {
+        TransitionResult tr;
+        CaptureSnapshot before;
+        lock (_lifecycleGate)
+        {
+            before = _lifecycle.Snapshot();
+            tr = _lifecycle.Cancel(reason, DateTimeOffset.Now);
+        }
+
+        if (!string.IsNullOrEmpty(tr.LogLine))
+        {
+            WriteTimeline(tr.LogLine);
+        }
+
+        CancelFollowUp(reason);
+
+        // NeedsHermesStop covers Starting-sent/Accepting cancel; unsent Starting settles with no stop.
+        // Latch / recorder-state hints may still stop (idle Hermes is a no-op, VA-G2).
+        var needsStop = tr.NeedsHermesStop
+            || CaptureActive
+            || before.HermesBusyUntilIdle
+            || RecorderState == StateListening
+            || RecorderState == StateTranscribing;
+        if (needsStop)
+        {
+            WriteTimeline(string.Format(CaptureConstants.LogStopSentFormat, before.Generation));
+        }
+
+        if (tr.ReleasePendingNow)
+        {
+            _ = ReleasePendingStartAsync();
+        }
+
+        return needsStop;
+    }
+
+    private async Task InvalidateAndStopCaptureAsync(string reason)
+    {
+        if (InvalidateCapture(reason))
+        {
+            await SendRecordStopAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task SendRecordStopAsync()
+    {
+        try
+        {
+            var reply = await RecordAsync(ActionStop, allowResync: true, requiredGeneration: null).ConfigureAwait(false);
+            if (IsBusy(reply))
+            {
+                ReportBusy(reply);
+                return;
+            }
+
+            if (!reply.Ok)
+            {
+                StatusMessage?.Invoke(reply.Error ?? "Voice recording did not stop.");
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(string.Format(GateStepRecordStopFormat, GateBoolFalse, "", ex.Message));
+        }
+    }
+
+    private void NoteLifecycleStartFailed(bool busy)
+    {
+        TransitionResult tr;
+        lock (_lifecycleGate)
+        {
+            tr = _lifecycle.NoteStartRpcFailed(busy, DateTimeOffset.Now);
+        }
+
+        if (!string.IsNullOrEmpty(tr.LogLine))
+        {
+            WriteTimeline(tr.LogLine);
+        }
+    }
+
+    private void OnLifecycleTick()
+    {
+        if (Interlocked.Exchange(ref _lifecycleTickBusy, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            TransitionResult tr;
+            lock (_lifecycleGate)
+            {
+                tr = _lifecycle.Tick(DateTimeOffset.Now);
+            }
+
+            if (!string.IsNullOrEmpty(tr.LogLine))
+            {
+                WriteTimeline(tr.LogLine);
+            }
+
+            if (tr.NeedsHermesStop)
+            {
+                _ = SendRecordStopAsync();
+            }
+
+            if (tr.ReleasePendingNow)
+            {
+                _ = ReleasePendingStartAsync();
+            }
+
+            if (tr.StartRejectedAfterNoListening)
+            {
+                _ = ReconcileWakeRestingAsync("start-no-listening");
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _lifecycleTickBusy, 0);
+        }
+    }
+
+    // P7-VOICEAUTH: revalidate → P2-D06 → TryReleasePending → SendRecordStartAsync only (no BeginStart) — P7-D03
+    private async Task ReleasePendingStartAsync()
+    {
+        PendingStart? pending;
+        lock (_lifecycleGate)
+        {
+            pending = _lifecycle.Pending;
+        }
+
+        if (pending is null)
+        {
+            return;
+        }
+
+        var kind = pending.Value.Kind;
+        var clarifyId = pending.Value.ClarifyId;
+        // P7-VOICEAUTH: release with deferral-time generation (P2-D06), not the current one — P7-D03
+        var generation = pending.Value.FollowUpGeneration;
+
+        if (VoiceGated || Mode != ModeVoice || !IsAvailable)
+        {
+            DiscardPendingStart("revalidate_failed");
+            return;
+        }
+
+        if (kind != CaptureKind.Clarify && TurnRunning)
+        {
+            DiscardPendingStart("revalidate_turn");
+            return;
+        }
+
+        if (kind == CaptureKind.Clarify)
+        {
+            if (string.IsNullOrEmpty(clarifyId) || _clarifyCaptureStillValid?.Invoke(clarifyId) != true)
+            {
+                DiscardPendingStart("revalidate_clarify");
+                return;
+            }
+        }
+
+        // P2-D06: generation staleness before TryReleasePending (never BeginFresh a stale deferral).
+        if (generation is int staleGen && staleGen != Volatile.Read(ref _followUpGeneration))
+        {
+            DiscardPendingStart(CaptureConstants.ReasonStaleGeneration);
+            return;
+        }
+
+        if (RefuseIfGated(GateRefuseCaptureStart) || string.IsNullOrEmpty(_chat.SessionId))
+        {
+            DiscardPendingStart("revalidate_failed");
+            return;
+        }
+
+        BeginStartResult released;
+        lock (_lifecycleGate)
+        {
+            released = _lifecycle.TryReleasePending(DateTimeOffset.Now);
+        }
+
+        if (!string.IsNullOrEmpty(released.LogLine))
+        {
+            WriteTimeline(released.LogLine);
+        }
+
+        if (released.Disposition != StartDisposition.Began)
+        {
+            if (released.LogLine != null
+                && released.LogLine.Contains("start_expired", StringComparison.Ordinal))
+            {
+                _ = ReconcileWakeRestingAsync("pending-expired");
+            }
+
+            return;
+        }
+
+        if (kind == CaptureKind.Clarify && !string.IsNullOrEmpty(clarifyId))
+        {
+            ArmClarifyAnswerCapture(clarifyId);
+            _followUpArmed = true;
+            _followUpEchoPending = true;
+        }
+
+        var boundClarify = kind == CaptureKind.Clarify ? clarifyId : null;
+        await SendRecordStartAsync(released, kind, generation, boundClarify).ConfigureAwait(false);
+    }
+
+    private void DiscardPendingStart(string reason)
+    {
+        TransitionResult discarded;
+        lock (_lifecycleGate)
+        {
+            discarded = _lifecycle.DiscardPending(reason);
+        }
+
+        if (!string.IsNullOrEmpty(discarded.LogLine))
+        {
+            WriteTimeline(discarded.LogLine);
+        }
     }
 
     private void CancelFollowUp(string reason)
@@ -2355,6 +2768,15 @@ sealed class VoiceController
                         return;
                     }
 
+                    // P7-VOICEAUTH: D06 hand-back for no_bout_estimate — P7-D06
+                    if (!await HandBackActiveBoutOrAllowEstimateAsync(
+                        isQuestion: false,
+                        FollowUpRuleNoBoutEstimate,
+                        () => IsReplyReleaseCurrent(generation)).ConfigureAwait(false))
+                    {
+                        return;
+                    }
+
                     ClearReplyFollowUpRelease();
                     await OnFollowUpTimerAsync(generation).ConfigureAwait(false);
                     return;
@@ -2434,6 +2856,15 @@ sealed class VoiceController
                     return;
                 }
 
+                // P7-VOICEAUTH: D06 hand-back for forced_estimate — P7-D06
+                if (!await HandBackActiveBoutOrAllowEstimateAsync(
+                    isQuestion: false,
+                    FollowUpRuleForcedEstimate,
+                    () => IsReplyReleaseCurrent(generation)).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 ClearReplyFollowUpRelease();
                 await OnFollowUpTimerAsync(generation).ConfigureAwait(false);
                 return;
@@ -2489,6 +2920,52 @@ sealed class VoiceController
                 return;
             }
         }
+    }
+
+    // P7-VOICEAUTH: if monitor reports an active bout, wait for stop (≤120s) instead of estimate-open — P7-D06
+    // Returns false when the caller must not open a capture (timeout or invalidated).
+    private async Task<bool> HandBackActiveBoutOrAllowEstimateAsync(
+        bool isQuestion,
+        string rule,
+        Func<bool> stillCurrent)
+    {
+        if (_playbackMonitorAvailable?.Invoke() != true || _playbackBoutActive?.Invoke() != true)
+        {
+            return true;
+        }
+
+        WriteTimeline(
+            string.Format(
+                isQuestion ? CaptureConstants.LogHandbackQuestionFormat : CaptureConstants.LogHandbackFollowUpFormat,
+                rule));
+
+        var stoppedTcs = isQuestion ? _questionBoutStoppedTcs : _replyBoutStoppedTcs;
+        if (stoppedTcs is null)
+        {
+            WriteTimeline(
+                string.Format(
+                    isQuestion ? LogHandbackTimeoutQuestionFormat : CaptureConstants.LogHandbackTimeoutFormat,
+                    rule));
+            return false;
+        }
+
+        var timeout = Task.Delay(TimeSpan.FromSeconds(CaptureConstants.D06HandbackMaxSeconds));
+        var winner = await Task.WhenAny(stoppedTcs.Task, timeout).ConfigureAwait(false);
+        if (!stillCurrent())
+        {
+            return false;
+        }
+
+        if (winner == timeout || _playbackBoutActive?.Invoke() == true)
+        {
+            WriteTimeline(
+                string.Format(
+                    isQuestion ? LogHandbackTimeoutQuestionFormat : CaptureConstants.LogHandbackTimeoutFormat,
+                    rule));
+            return false;
+        }
+
+        return true;
     }
 
     private void ResetSelfInterruptCount()
@@ -3275,7 +3752,7 @@ sealed class VoiceController
         _wakeCapturePending = true;
         try
         {
-            await StartCaptureAsync(requiredGeneration: null).ConfigureAwait(false);
+            await StartCaptureAsync(CaptureKind.Wake, requiredGeneration: null).ConfigureAwait(false);
         }
         catch (ChatUnreachableException ex)
         {

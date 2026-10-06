@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- P7-VOICEAUTH: dependency-free console checks for pure voice authority — P7-D01 -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Zola.Client.Checks</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Zola.Client\Voice\CaptureLifecycle.cs" Link="Voice\CaptureLifecycle.cs" />
+    <Compile Include="..\Zola.Client\Voice\TranscriptAdmission.cs" Link="Voice\TranscriptAdmission.cs" />
+  </ItemGroup>
+</Project>
