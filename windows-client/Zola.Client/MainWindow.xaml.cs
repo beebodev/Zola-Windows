@@ -12,6 +12,7 @@ using Windows.System;
 using Windows.UI.Core;
 using Windows.UI.ViewManagement;
 using Zola.Client.Presence;
+using Zola.Client.Voice;
 
 namespace Zola.Client;
 
@@ -127,6 +128,9 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, string> _requestCloseRecords = new(StringComparer.Ordinal);
     // P4-ASK: one spoken question per clarify id; re-shows do not speak again — P4-D13
     private readonly HashSet<string> _spokenClarifyIds = new(StringComparer.Ordinal);
+    // P7-CLARIFY: quiet singles (Voice) — skip auto panel; track no-answer panel once — P7-D09
+    private readonly HashSet<string> _quietClarifyIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _noAnswerPanelOpenedIds = new(StringComparer.Ordinal);
 
     public MainWindow(HermesProcessManager backend)
     {
@@ -201,6 +205,8 @@ public sealed partial class MainWindow : Window
         // P4-LOCK: belt-and-braces refuse of voice submit while gated — P4-D02
         // P4-ASK: bound clarify id, then open clarify, else prompt.submit — P4-D14
         _voice.TranscriptReady += (text, boundClarifyId) => Dispatch(() => OnTranscriptReady(text, boundClarifyId));
+        // P7-CLARIFY: bound capture ended without admit → quiet panel once — P7-D09
+        _voice.ClarifyAnswerCaptureEndedWithoutAnswer += id => Dispatch(() => OnClarifyNoAnswer(id));
         _voice.VoiceChatEnded += () => Dispatch(OnVoiceChatEnded);
         _voice.StatusMessage += message => Dispatch(() => OnVoiceStatusMessage(message));
         _chat.SessionReady += (sessionId, storedId) => Dispatch(() => OnSessionReady(sessionId, storedId));
@@ -372,7 +378,20 @@ public sealed partial class MainWindow : Window
             Composer.Text = "";
             if (view.IsBatch)
             {
+                // P7-CLARIFY: Voice quiet single fill-then-send; Text fills only (card Send) — P7-D09
                 FillFirstUnansweredBatchRow(id, text);
+                if (_voice.Mode == VoiceController.ModeVoice
+                    && IsQuietClarifyView(view)
+                    && !BatchHasUnansweredRows(id))
+                {
+                    var answers = CollectBatchAnswers(id);
+                    if (answers.Count > 0)
+                    {
+                        _requestCloseRecords[id] = RecordAnsweredPrefix + string.Join("; ", answers.Values);
+                        _requests.AnswerBatch(id, answers);
+                    }
+                }
+
                 UpdateChrome();
                 return;
             }
@@ -513,7 +532,13 @@ public sealed partial class MainWindow : Window
         {
             if (_voice.Mode == VoiceController.ModeVoice)
             {
+                // P7-CLARIFY: Voice→Text with quiet single open → show the card — P7-D09
+                var quietId = NewestOpenQuietClarifyId();
                 await _voice.EnterTextModeAsync().ConfigureAwait(false);
+                if (quietId is not null)
+                {
+                    Dispatch(() => OpenClarifyPanelIfStillOpen(quietId, ClarifyLog.ReasonModeText));
+                }
             }
             else
             {
@@ -1110,7 +1135,35 @@ public sealed partial class MainWindow : Window
         var card = BuildClarifyCard(id, fresh);
         _requestCards[id] = card;
         Transcript.Children.Add(card);
-        EnsureConversationOpen();
+
+        // P7-CLARIFY: quiet single in Voice — build card, never auto-open panel — P7-D09
+        var quiet = _voice.Mode == VoiceController.ModeVoice && IsQuietClarifyView(fresh);
+        if (quiet)
+        {
+            _quietClarifyIds.Add(id);
+            var choiceCount = fresh.IsBatch
+                ? (fresh.Questions.Count > 0 ? fresh.Questions[0].Choices.Count : 0)
+                : fresh.Choices.Count;
+            _voice.NoteClarifyTimeline(string.Format(
+                ClarifyLog.QuietFormat,
+                id,
+                ClarifyShape.ShapeSingle,
+                choiceCount));
+            // P7-CLARIFY: quiet card stays in view when the panel is already open — P7-D09
+            if (ConversationOverlay.Visibility == Visibility.Visible)
+            {
+                ScrollToEnd();
+            }
+        }
+        else
+        {
+            EnsureConversationOpen();
+            _voice.NoteClarifyTimeline(string.Format(
+                ClarifyLog.PanelOpenFormat,
+                fresh.Replayed ? ClarifyLog.ReasonReshow : ClarifyLog.ReasonClarifyOpen,
+                id));
+        }
+
         UpdateChrome();
 
         // P4-ASK: Voice mode speaks each clarify id once after the card is rendered Open — P4-D13
@@ -1162,6 +1215,8 @@ public sealed partial class MainWindow : Window
         if (!_requestCards.TryGetValue(id, out var card))
         {
             _requestCloseRecords.Remove(id);
+            _quietClarifyIds.Remove(id);
+            _noAnswerPanelOpenedIds.Remove(id);
             UpdateChrome();
             return;
         }
@@ -1171,6 +1226,8 @@ public sealed partial class MainWindow : Window
             : DefaultCloseRecord(outcome);
         _requestCloseRecords.Remove(id);
         CollapseCardToRecord(id, card, record);
+        _quietClarifyIds.Remove(id);
+        _noAnswerPanelOpenedIds.Remove(id);
         UpdateChrome();
     }
 
@@ -1211,7 +1268,16 @@ public sealed partial class MainWindow : Window
         };
         Transcript.Children[index] = border;
         _requestCards.Remove(id);
-        EnsureConversationOpen();
+        // P7-CLARIFY: quiet single in Voice — collapse without auto-opening the panel — P7-D09
+        if (!(_voice.Mode == VoiceController.ModeVoice && _quietClarifyIds.Contains(id)))
+        {
+            EnsureConversationOpen();
+            _voice.NoteClarifyTimeline(string.Format(
+                ClarifyLog.PanelOpenFormat,
+                ClarifyLog.ReasonCollapse,
+                id));
+        }
+
         ScrollToEnd();
     }
 
@@ -1514,6 +1580,59 @@ public sealed partial class MainWindow : Window
                 state.DenyButton.IsEnabled = !gated;
             }
         }
+    }
+
+    // P7-CLARIFY: quiet-single classification shared by panel / typed / speech paths — P7-D09
+    private static bool IsQuietClarifyView(ServerRequestBroker.ClarifyView view) =>
+        VoiceController.IsQuietSingleView(view);
+
+    private string? NewestOpenQuietClarifyId()
+    {
+        var id = _requests.NewestOpenClarify(_chat.SessionId);
+        if (id is null)
+        {
+            return null;
+        }
+
+        var view = _requests.TryGetClarifyView(id);
+        return view is not null && IsQuietClarifyView(view) ? id : null;
+    }
+
+    private void OpenClarifyPanelIfStillOpen(string id, string reason)
+    {
+        if (_requests.GetState(id) != ServerRequestBroker.Lifecycle.Open)
+        {
+            return;
+        }
+
+        EnsureConversationOpen();
+        _voice.NoteClarifyTimeline(string.Format(ClarifyLog.PanelOpenFormat, reason, id));
+    }
+
+    private void OnClarifyNoAnswer(string id)
+    {
+        // P7-CLARIFY: Voice quiet single, request still open, panel once — P7-D09
+        if (_voice.Mode != VoiceController.ModeVoice)
+        {
+            return;
+        }
+
+        if (_requests.GetState(id) != ServerRequestBroker.Lifecycle.Open)
+        {
+            return;
+        }
+
+        if (!_quietClarifyIds.Contains(id))
+        {
+            return;
+        }
+
+        if (!_noAnswerPanelOpenedIds.Add(id))
+        {
+            return;
+        }
+
+        OpenClarifyPanelIfStillOpen(id, ClarifyLog.ReasonNoAnswer);
     }
 
     private void FillFirstUnansweredBatchRow(string id, string text)
@@ -1900,6 +2019,9 @@ public sealed partial class MainWindow : Window
         // P4-REQUEST: card visuals drop with the transcript; broker keeps parked entries — P4-D08
         _requestCards.Clear();
         _requestCloseRecords.Clear();
+        // P7-CLARIFY: quiet tracking is visual; re-show reclassifies — P7-D09
+        _quietClarifyIds.Clear();
+        _noAnswerPanelOpenedIds.Clear();
         _live = null;
         _streaming = false;
         _turnFinalized = true;

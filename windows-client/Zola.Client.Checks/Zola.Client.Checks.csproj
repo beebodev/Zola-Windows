@@ -11,5 +11,9 @@
   <ItemGroup>
     <Compile Include="..\Zola.Client\Voice\CaptureLifecycle.cs" Link="Voice\CaptureLifecycle.cs" />
     <Compile Include="..\Zola.Client\Voice\TranscriptAdmission.cs" Link="Voice\TranscriptAdmission.cs" />
+    <!-- P7-CLARIFY: pure classify + speech helpers — P7-D09 -->
+    <Compile Include="..\Zola.Client\Voice\ClarifyShape.cs" Link="Voice\ClarifyShape.cs" />
+    <Compile Include="..\Zola.Client\Voice\ClarifySpeech.cs" Link="Voice\ClarifySpeech.cs" />
+    <Compile Include="..\Zola.Client\Voice\ClarifyLog.cs" Link="Voice\ClarifyLog.cs" />
   </ItemGroup>
 </Project>
