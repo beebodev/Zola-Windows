@@ -223,3 +223,74 @@ No Track-1 code adds process kill/restart. Timeline `capture stop_sent` is RPC o
 - WER `ReportArchive\AppCrash_python.exe_*` for (a) and (b)
 - `hermes-agent` @ `345cd2b0`: `hermes_cli/voice.py`, `tui_gateway/methods_voice.py`, `tools/voice_mode.py`
 - `windows-client/Zola.Client/HermesProcessManager.cs`, `App.xaml.cs`, `VoiceController.cs`
+
+---
+
+## Addendum — what changed 10-04/10-05; guard facts; Hermes wake-on-idle
+
+### What changed around 10-04 / 10-05?
+
+**Windows updates (`Get-HotFix` since 2026-09-01):** only **KB5124007** (9/9), **KB5126052** (9/10), **KB5129195** (9/17). **No HotFix installed on 10-04 or 10-05.**
+
+**Windows Update Client (System log, 10-04→10-06):** Store / Defender / runtime churn only — e.g. Defender intelligence KB2267602 (daily), `Microsoft.WindowsAppRuntime.2` (10-05 **12:01**), `Microsoft.WindowsSoundRecorder` (10-05 **14:44**), Windows Terminal / Todos / OpenAI.Codex. **No Realtek or audio-driver package install.**  
+Note: first APPCRASH on 10-05 is **11:13:49**, which **precedes** the 12:01 App Runtime install — that update is not a causal prerequisite for the crash class.
+
+**Drivers / Realtek:** `RTKVHD64.sys` LastWrite **2024-06-13** (Creation 2025-06-06). Realtek DriverStore folders last touched **2025-06-06 / 2025-07-21 / 2025-08-13** (none on 10-04/05). `HdAudio.sys` updated **2026-09-09** (with September HotFixes). System log 10-03→10-06 shows Wi-Fi (`Netwtw14`) noise and Sound Recorder Store install — **not** a Realtek reinstall.
+
+**uv CPython:**  
+`C:\Users\test\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\python.exe` / `python312.dll` — **3.12.14** `(main, Sep 1 2026, 14:17:39)`, file Creation/LastWrite **2026-09-22 07:34**. Unchanged through the crash window.
+
+**Hermes venv packages** (`.venv`, interpreter same 3.12.14):
+
+| Package | Version | site-packages mtime |
+|---|---|---|
+| numpy | 2.4.3 | 2026-09-23 07:27:36 |
+| sounddevice | 0.5.5 | 2026-09-23 07:27:51 |
+| onnxruntime | 1.30.0 | 2026-09-23 07:27:51 |
+| ctranslate2 | 4.8.2 | 2026-09-23 07:27:58 |
+| faster_whisper | 1.2.1 | 2026-09-23 07:28:05 |
+
+PortAudio via sounddevice: `PortAudio V19.7.0-devel` under `_sounddevice_data` (mtime **2026-09-23**).  
+`uv.lock` / `package-lock.json` LastWrite **2026-09-21**. **No package tree change on 10-04/10-05.**
+
+**P7PRE:** audit-only (`zola-architecture/audit/p7pre-phase7/*`). Harness notes **G-NO-INSTALL**; H-1 used existing venv + already-installed WinGet ffmpeg; Whisper model already cached. Progress records `security.allow_lazy_installs: false`. **P7PRE did not install or modify CPython / site-packages / Realtek.**
+
+**Conclusion on the Sep→Oct cliff:** Zero APPCRASHes 09-01→10-04, then five in two days, with **no matching HotFix, Realtek driver, uv CPython, or pip/site-packages change** on 10-04/05. Closest environmental churn is Store apps (Sound Recorder, App Runtime) and Defender defs — weak / non-explanatory for `python312.dll` AV. Crash class is consistent with a latent native fault exposed by **usage pattern** (wake + voice.record / PortAudio) rather than a fresh dependency bump. **Root of the cliff remains unknown.**
+
+### WER buckets and fault offsets (all 5)
+
+| Time | Fault module | Exception | Fault offset | WER Fault bucket | Hashed bucket |
+|---|---|---|---|---|---|
+| 2026-10-05 11:13:49 | python312.dll | c0000005 | **000000000003b1ff** | **1390635367873966451** | **0e4dfdb20134c075a34c877fca38f173** |
+| 2026-10-05 12:06:34 | python312.dll | c0000005 | **000000000003b1ff** | **1390635367873966451** | **0e4dfdb20134c075a34c877fca38f173** |
+| 2026-10-05 19:28:51 | python312.dll | c0000005 | **000000000003b1ff** | **1390635367873966451** | **0e4dfdb20134c075a34c877fca38f173** |
+| 2026-10-06 08:48:12 **(a)** | python312.dll | c0000005 | **000000000003b1ff** | **1390635367873966451** | **0e4dfdb20134c075a34c877fca38f173** |
+| 2026-10-06 10:52:31 **(b)** | ntdll.dll | c0000005 | **000000000000fa7d** | **1196196834374829860** | **c8ae4d8cf075775e2099beaee25bc724** |
+
+**4 of 5 share one bucket/offset** (`python312.dll` @ `0x3b1ff`, bucket `1390…`). **(b) is a different bucket** (`ntdll.dll` @ `0xfa7d`, bucket `1196…`) — consistent with a distinct race (stop + wake-resume during STT) vs the common wake/runtime AV class.
+
+### Client facts for a guard (crash b)
+
+**Transcribing before typed-submit:** `voice-timeline.log` does **not** echo every `voice.status` string (Accepting+transcribing is a no-op lifecycle log). Client **did** receive it: `display-state.log` shows HUD `voice="Transcribing"` at **10:52:30.284** (matches agent silence auto-stop / WAV write), and typed-submit cancel is at **10:52:30.841** — **~557 ms later**. `OnVoiceStatus` sets `RecorderState` from the wire (`VoiceController.cs` ~L1965–1968) and sets `CaptureActive = true` while Listening/Transcribing (~L1996–1998).
+
+**Why turn-start sent a second stop after Cancelled:**
+
+1. Typed-submit: `InvalidateAndStopCaptureAsync("typed-submit")` → `CaptureLifecycle.Cancel` transitions Accepting→Cancelled with `NeedsHermesStop=true` → `stop_sent` (~L2364 path).
+2. Mars prompt acceptance fires `OnTurnStarted` (~26 ms later) → `InvalidateCapture("turn-start")` (`VoiceController.cs` L1582–1585).
+3. `CaptureLifecycle.Cancel` when **already `Cancelled`** still returns **`NeedsHermesStop: true`** (`CaptureLifecycle.cs` L393–403) — it logs `capture cancel … reason=turn-start` but does not change state; the `true` flag alone requests another stop.
+4. Additionally `InvalidateCapture` ORs latch/recorder hints (`VoiceController.cs` L2338–2342): `CaptureActive`, `HermesBusyUntilIdle`, `RecorderState == Listening|Transcribing` — any of which also force `stop_sent` even if Cancel had returned false.
+
+So the second stop is **by design of the current hints + Cancelled re-cancel returning NeedsHermesStop**, not a second Accepting→Cancelled transition. Guard candidates: (i) Cancelled re-cancel → `NeedsHermesStop=false`; (ii) suppress stop when a stop was just sent for the same generation; (iii) skip stop OR when already Cancelled and stop already in flight.
+
+### Hermes: silence path wake resume without client stop?
+
+**Yes.** With `auto_restart=False`, silence path ends via `_rearm_after_turn` → `_deactivate(on_status)` (`hermes_cli/voice.py` L532–534, L200–205), which emits **`idle`**. Gateway `_vr_on_status` resumes wake on idle:
+
+```697:700:tui_gateway/methods_voice.py
+def _vr_on_status(state):
+    _voice_emit("voice.status", {"state": state})
+    if state == "idle":
+        _resume_voice_wake()
+```
+
+Also `_vr_transcript` resumes wake on every transcript deliver (L685–687). So when the client sends **no** stop, wake still resumes on the silence-path idle (and/or transcript) without `voice.record stop`. Client stop’s extra `_resume_voice_wake()` at methods_voice.py L724 is therefore **redundant with the idle/transcript path** and can race if invoked while STT is still running.
