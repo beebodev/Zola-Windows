@@ -294,3 +294,21 @@ def _vr_on_status(state):
 ```
 
 Also `_vr_transcript` resumes wake on every transcript deliver (L685–687). So when the client sends **no** stop, wake still resumes on the silence-path idle (and/or transcript) without `voice.record stop`. Client stop’s extra `_resume_voice_wake()` at methods_voice.py L724 is therefore **redundant with the idle/transcript path** and can race if invoked while STT is still running.
+
+---
+
+## Disposition
+
+**Brian's verdict (verbatim):**
+
+> Let's file both the hotfix and the crash issue and prioritize for a future phase.
+
+Both items below are **deferred to a future phase**. They will be filed in `OPEN_QUESTIONS.md` at the **Phase 7 lore closeout** (next free S-numbers). **No code changes now.**
+
+### Future S-item (a) — backend native crash + no automatic recovery
+
+Investigate what changed ~10-04/10-05, given zero python APPCRASHes 09-01→10-04 (Windows/driver updates, uv CPython, Hermes env packages, P7PRE changes, WER bucket comparison). Persist Hermes stderr to a log file; enable WER local dumps; design backend supervision. Add an upstream note.
+
+### Future S-item (b) — stop-vs-silence-STT race hotfix
+
+The client sends no `voice.record stop` once Hermes has reported `transcribing` for the current capture (invalidate only; drop as cancelled; settle on idle). Cancel on an already-Cancelled capture is a no-op (no duplicate stop). Add an upstream note on stop → immediate `_resume_voice_wake`.
