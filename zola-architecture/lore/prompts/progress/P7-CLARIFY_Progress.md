@@ -495,6 +495,6 @@ Quiet-card reading: plan “no card” = quiet card built, panel never auto-open
 
 | Step | SHA |
 |---|---|
-| Implementation commit (7e) | *(filled after 7e)* |
+| Implementation commit (7e) | `f89b9d6502e90b6f3eef7246e0f8499766f8af89` |
 | Merge on `main` (7h) | *(filled after 7h)* |
 | Final `main` HEAD (after 7i docs) | *(filled after 7i)* |
