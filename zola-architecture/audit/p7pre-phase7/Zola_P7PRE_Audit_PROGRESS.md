@@ -212,8 +212,10 @@ L-3/L-4 seven IDs: `19:46:03` `quiet turns=7 episodes=0 ok=true` — same drain;
 | Label | SHA |
 |---|---|
 | Audit content SHA (10c) | `044fe10a857edc364b0fa69cd2f72be5f45067d8` |
-| Merge SHA (`--no-ff` merge commit, not final main HEAD) | — |
-| Final main HEAD (after metadata commit) | — |
+| Merge SHA (`--no-ff` merge commit, not final main HEAD) | `3e87e7c47ed2eee4a26f53dc9c4bba7d6f16b1ee` |
+| Final main HEAD (after metadata commit) | this commit (`audit: record P7PRE merge SHA`) |
+
+The merge SHA above is the `--no-ff` merge commit that brought `p7pre-audit` into `main`. It is **not** the final `main` HEAD after the closeout metadata commit.
 
 ---
 
