@@ -211,7 +211,7 @@ L-3/L-4 seven IDs: `19:46:03` `quiet turns=7 episodes=0 ok=true` — same drain;
 
 | Label | SHA |
 |---|---|
-| Audit content SHA (10c) | — |
+| Audit content SHA (10c) | `044fe10a857edc364b0fa69cd2f72be5f45067d8` |
 | Merge SHA (`--no-ff` merge commit, not final main HEAD) | — |
 | Final main HEAD (after metadata commit) | — |
 
