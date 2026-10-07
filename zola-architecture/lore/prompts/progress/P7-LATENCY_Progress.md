@@ -21,7 +21,7 @@
 | 4 | STOP: Rank Candidates and Choose Fix | COMPLETE |
 | 5 | STOP: Approve the Exact Change | COMPLETE |
 | 6 | Apply Fix and Remeasure | COMPLETE (closed on findings) |
-| 7 | Closeout | IN PROGRESS |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -756,7 +756,7 @@ Confirms: offset live; SOUL revert loaded; AUD-25 path still active on a plain l
 | LT-G2 + LT-G3 | ✅ | 91% short-factual tools; pause max 1360 ≪ silence 1500 |
 | Brian STOP + fix under rules | ⚠️ | Close on findings; SOUL Everyday **reverted**; UTC offset **kept** (plugin tests OK) |
 | HUMAN-RUN causal target B1/B2 | ❌ | Ack’d — root cause `execution_guidance` / mandatory_tool_use (Phase 8) |
-| Scratch deleted; backups after merge | ⏳ | 7j |
+| Scratch deleted; backups after merge | ✅ | 7j (confirm below) |
 | hermes-agent clean; profile only approved | ✅ | hermes clean; SOUL restored; offset approved/kept |
 
 ### Final file list (G-SCOPE)
@@ -772,5 +772,5 @@ Confirms: offset live; SOUL revert loaded; AUD-25 path still active on a plain l
 | | SHA |
 |---|---|
 | Implementation (7e) | `1fc463abc19aa4ee61c575256fc5469119471ea6` |
-| Merge on main (7h) | *(pending)* |
-| Final main HEAD (7i) | *(pending)* |
+| Merge on main (7h) | `7b168cfbb4daa95f5fa58307fd2377176f9ffd35` |
+| Final main HEAD (7i) | *(pending metadata commit)* |
