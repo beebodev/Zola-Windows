@@ -147,6 +147,14 @@ synthesis document.
   Also: markdown / em-dash in replies can collapse spoken pauses on Edge
   (`P4-VOICE` Phase 6 notes). Best path is upstream note or careful adopt of
   `voice-live` after tracing surface effects.
+  **Phase 7:** Track 4 (`P7-VOICEPROSE`) **cut** — Brian (verbatim): "Cut it;
+  go to lore closeout (Recommended)". Reasons: S-sentence ≈4% of the wait;
+  prose shaping depends on the Phase 8 voice-pipeline choice (streaming TTS);
+  the voice-live note's Edge "paraphrase" claim is false (P7-D12 evaluation).
+  Inputs carried to Phase 8 voice work: voice-live note evaluation; short-
+  first-sentence idea; one-sentence end-of-stream flush (6/8 baseline replies
+  spoken only after the full stream); Brian's observation that speech lags
+  the text. `P4-D20` and `P4-D24` unchanged.
 
 - **S35 — Approval scopes beyond "once"; revisit `approvals.mode`.**
   Phase 4 forces `manual` (`P4-D27`) because Hermes's default `smart` can
@@ -176,13 +184,9 @@ synthesis document.
   `voice.barge_in` stays `false` (`P4-D28`). Stays open, upstream-gated. Keep
   `P4-D13`/`D14`/`D15`/`D18`. Echo filter still only drops ≥3-word / ≥60%
   tail runs (A32).
-
-- **S37 — Re-anchor speech estimate on first reply text.**
-  `FirstSentenceLatencySeconds` is seeded at turn start; late first text
-  leaves real TTS start delay uncounted, so short/medium fallback estimates
-  can lead the bout (up to ~4.33 s before margin 5.0). Reply `forced_estimate`
-  uses **no** `FollowUpMarginSeconds`. Monitor path is primary; this is
-  fallback-only (`P4-D22` / B45).
+  **Phase 7:** the "her echo → ignore" part of this policy is now the P7
+  transcript-admission authority (`P7-D01`–`D08`; content matcher remains
+  defense only, `P7-D07`). Barge-in / talk-over itself stays upstream-gated.
 
 - **S38 — Listen-to-think latency.** Too long between the user finishing and
   Zola starting to think. Measured in P5PRE / `P5-D09` (warm, after he stops
@@ -191,6 +195,21 @@ synthesis document.
   stages under 15 ms. That is a substantial per-turn transcription component
   worth isolating later. Shorter silence risks cutting mid-thought (B44). No
   Phase 5 tuning. Stays open.
+  **Phase 7 (`P7-LATENCY` / P7-D10) — updated, not resolved.** Instrumented
+  `turn_timing` (observation only). **Baseline** EoS→first audio median
+  **9534 ms** (n=7). Additive median shares: S-model **51.4%**, pre-submit
+  **31.3%**, S-tts (Edge) **19.3%** (≈2.0 s), S-sentence **4.3%**, S-play
+  **1.5%**; 6/8 replies spoken only on end-of-stream flush. **Tool vs
+  no-tool:** submit→first audio **17.8 s** vs **5.4 s**. **AUD-26 = in-call**
+  (standalone `transcribe_recording` ≈1.0 s, idle-serve ≈1.2 s, live ≈1.6 s).
+  **Pauses (LT-G3):** median **120 ms**, p90 **484 ms**, max **1360 ms** vs
+  `silence_duration` 1500 ms (0 pauses ≥1500 ms). Remeasure after narrow SOUL
+  + UTC offset: causal B1/B2 still used tools; additive shares shifted but
+  wait remained. **Root cause:** Hermes `OPENAI_MODEL_EXECUTION_GUIDANCE` /
+  `agent.execution_guidance` outranks `SOUL.md` (see `S54`). SOUL "Everyday
+  answers" applied then reverted; UTC offset kept. Brian (verbatim): "The
+  wait still feels the same." Causal pass bar ❌; closed on findings
+  (Brian: "C: close on findings (Recommended)").
 
 - **S39 — Voice timbre (husky / breathiness).** Developer wants her huskier
   or deeper. Edge exposes rate/pitch/volume only; texture needs a premium
@@ -206,26 +225,24 @@ synthesis document.
 
 
 
-- **S44 — No clarify card in Voice mode.** Developer, 2026-10-02. In
-  Voice mode, clarify questions should be purely conversational: she
-  asks, he answers out loud, and no card appears; the conversation panel
-  is not forced open. Approvals keep cards (`P4-D07`, never by voice).
-  Text mode keeps the clarify card (`P4-D08`). Touches `P4-D08` and
-  `P4-D13`. Open: voice Cancel/Skip ("never mind", "skip", timeout);
-  multi-select; batch `questions[]`; late-answer drop (`P4-D14`) tied
-  today to card Cancel. Needs a short audit of card users before any
-  build. Not Phase 5; with `S40` or in Phase 6 (developer's call).
-
-- **S45 — Voice echo injected as "User correction during the turn".**
-  **High priority.** Zola's TTS was picked up by the mic and injected into
-  Brian's turn via Hermes's active-turn redirect (`User correction during
-  the turn: …`). This can put her words into his turns anywhere (forget
-  disposition, pending text, consolidator input). Brian (verbatim):
-  "Record it as an open question. We have to get this tightened."
-  Related: `S36` (state-aware policy "her echo → ignore"; echo filter
-  still only drops ≥3-word / ≥60% tail runs, A32). Observed path was
-  Hermes active-turn redirect (mid-turn submit), not barge-in
-  (`voice.barge_in` stays false, `P4-D28`). Next-phase candidate.
+- **S44 — No clarify card in Voice mode (partly resolved).**
+  **Original scope:** In Voice mode, clarify questions should be purely
+  conversational: she asks, he answers out loud, and no card appears; the
+  conversation panel is not forced open. Approvals keep cards (`P4-D07`,
+  never by voice). Text mode keeps the clarify card (`P4-D08`). Open then:
+  voice Cancel/Skip ("never mind", "skip", timeout); multi-select; batch
+  `questions[]`; late-answer drop (`P4-D14`) tied today to card Cancel.
+  **Phase 7 (partly resolved by `P7-CLARIFY` / P7-D09):** single questions
+  are voice-first with spoken choices and the **quiet card** (card still
+  built in the conversation; panel never auto-opens). Typed fill-then-send
+  in Voice mode only; no-answer opens the panel once; C3 adapted (composer
+  lives inside the panel). Batch and multi-select still use the visual card.
+  Exact "stop" unchanged; no new command words.
+  **Remainder (Brian, 2026-10-07, verbatim):** "I want the only time a card
+  is necessary is when in text mode.  No need in voice mode." Full Voice-
+  mode-with-no-cards scope (batch / multi-select by voice, and open
+  sub-questions on approvals and typed answers) → **`S57`**. Not marked
+  fully RESOLVED.
 
 - **S46 — Semantic / associative episode retrieval.**
   Direct lexical episode recall passed in Track 5. Associative /
@@ -268,6 +285,92 @@ synthesis document.
   missed consolidations, or prefetch false-positives/negatives — not by
   feel.
 
+- **S51 — Backend native crash + no automatic recovery.**
+  Serve child dies as native APPCRASH (`0xc0000005`) with no Python
+  traceback; Zola needs a manual relaunch. P7-FORENSIC-SERVE: (a) 08:48:12
+  `python312.dll` (not Track-1-related; same class as three crashes on
+  2026-10-05); (b) 10:52:31 `ntdll.dll` during silence auto-stop → client
+  `voice.record stop` → `_resume_voice_wake` while silence-path STT in
+  flight (indirect Track 1 relation). Clue: **zero** python APPCRASHes
+  09-01→10-04, then **five in two days** (something changed ~10-04/10-05;
+  not yet checked). Future work: find what changed (Windows/driver, uv
+  CPython, Hermes env packages, P7PRE); persist Hermes stderr; enable WER
+  local dumps; backend supervision (client respawns serve on unexpected
+  exit; fail-closed voice during restart). Upstream note for the native
+  crash. **Brian (verbatim, 2026-10-06):** "Let's file both the hotfix and
+  the crash issue and prioritize for a future phase."
+
+- **S52 — Stop-vs-silence-STT race client guard.**
+  Same forensic window as `S51`(b). Proposed client guard: once Hermes
+  reports `transcribing` for the current capture, a cancel invalidates
+  only (no `voice.record stop`; transcript dropped as `cancelled`; idle
+  settles); Cancel on an already-Cancelled capture is a no-op (no
+  duplicate stop). Needs grounding that wake resumes on its own after
+  silence-path idle. Upstream: `voice.record stop` should not resume wake
+  until the silence/forced-stop pipeline reaches idle. **Brian (verbatim,
+  2026-10-06):** "Let's file both the hotfix and the crash issue and
+  prioritize for a future phase."
+
+- **S53 — Hermes capture correlation ID + `voice.record cancel` (upstream).**
+  No capture/correlation ID on `voice.transcript` or status terminals
+  (`P7-D03`; AUD-23). `voice.record stop` always force-transcribes; there
+  is no `voice.record cancel` that ends without transcription. Client
+  lifecycle is enough for Phase 7; durable fix is upstream (Track 1
+  progress notes / P7-D13).
+
+- **S54 — `agent.execution_guidance` decision.**
+  Largest measured latency lever from `P7-LATENCY`: tool rounds ≈ **+8–12 s
+  per turn**; submit→first audio **17.8 s** with tools vs **5.4 s** without.
+  Hermes `OPENAI_MODEL_EXECUTION_GUIDANCE` `<mandatory_tool_use>`
+  (time/date/timezone → terminal; arithmetic → terminal) + `<act_dont_ask>`,
+  gated by `agent.execution_guidance` (`prompt_builder.py` ~L333–345,
+  402–431, 470), outranks `SOUL.md`; reinforced by MUST-`skill_view` /
+  `everyday-assistance`. Needs its own audit: what each part of the block
+  protects; a broad regression test; possibly a `SOUL.md` replacement for
+  the good parts. Upstream note: the time/date → terminal rule conflicts
+  with a trusted time context, and `TZ=… date` is wrong on Windows.
+
+- **S55 — Streaming TTS bake-off.**
+  Raised by Brian during Track 3. ElevenLabs, OpenAI, Gemini and xAI
+  streamers exist at the Hermes pin; Edge has none; Cartesia is not built
+  in. Voice choice is Brian's. Any switch must re-validate the playback
+  monitor and Track 1/2 admission / clarify behavior on the new playback
+  path. Related: Edge S-tts ≈2.0 s per first sentence; one-sentence flush
+  (`S34` inputs).
+
+- **S56 — Voice I/O ownership study.**
+  Brian asked (2026-10-06) whether to fork Hermes. Compare (read-only
+  pre-audit): (1) status quo; (2) a minimal documented patch set on a fork;
+  (3) Zola owns voice I/O (client- or helper-process mic + STT; Hermes stays
+  stock as the brain — reverses `C3` / `P2-D01`). Every upstream-blocked
+  voice item (capture ID, record cancel, `S52` race, `S36` barge-in/pre-roll,
+  likely `S51` native crashes) sits in the voice/audio layer. Wholesale fork
+  of the whole agent is not the default recommendation (provider/API drift
+  and security fixes become Zola's burden).
+
+- **S57 — Voice mode with no cards.**
+  **Brian (verbatim, 2026-10-07):** "I want the only time a card is necessary
+  is when in text mode.  No need in voice mode." Scope: batch and
+  multi-select clarify by voice (AUD-13; a voice protocol for several
+  answers). Continues the unresolved remainder of `S44` after the quiet-card
+  Phase 7 reading. **Open sub-questions, not decided:** (1) whether this
+  extends to **approvals** (P4-D07 / P4-D27; voice approval of commands
+  carries echo and mis-hearing risk); (2) typed answers in Voice mode
+  currently need the panel open (composer lives inside it).
+
+- **S58 — Smaller Whisper models (P2-D17 install decision).**
+  Download = install (`P2-D17`). AUD-26 / LT-G1: standalone entry ≈**1.0 s**,
+  live ≈**1.6 s** (in-call). Candidate sizes and English-only variants need
+  measured WER vs latency before any change. No Phase 7 Whisper model change
+  (P7-D10).
+
+- **S59 — `silence_duration` (data only).**
+  Live `silence_duration` = **1500 ms**. LT-G3 within-utterance pauses
+  (9 clips, 78 pauses): median **120 ms**, p90 **484 ms**, max **1360 ms**;
+  **0** pauses ≥1500 ms. Data filed for a future decision; **no
+  recommendation** in Phase 7 (P7-D10: no silence change without new
+  evidence).
+
 *S13 and S16 remain open. S17, S21, S26 updated at Phase 4 lore closeout.
 S20, S22, S32 resolved (see DESIGN_DECISIONS Phase 4). S33–S41 added at
 Phase 4 lore closeout. S42 added at Phase 5 kickoff (2026-10-01). S41
@@ -275,7 +378,10 @@ resolved (see DESIGN_DECISIONS Phase 5). S42 and S43 resolved at Phase 6
 lore closeout (episodes + ambient time). S35 arithmetic resolved by
 P6-CALC; session/always scopes remain. S14 annotated (foundation
 complete, not resolved). S28 annotated (episodes exist; retirement
-evaluable). S45–S50 added at Phase 6 lore closeout. Not open questions
-(one line): question quiet window withdrawn (B38); gap "no Stop" closed
-by P4-D29; AUD-37 closed by P4-D18 (residual in S36); external dictation
-tool is test hygiene (A20). Resolved items stay in DESIGN_DECISIONS.md.*
+evaluable). S45 and S37 resolved at Phase 7 lore closeout (P7-VOICEAUTH /
+P7-D06). S44 partly resolved (quiet card); remainder → S57. S38 updated
+(not resolved); S34/S36 annotated. S51–S59 added at Phase 7 lore closeout.
+Not open questions (one line): question quiet window withdrawn (B38); gap
+"no Stop" closed by P4-D29; AUD-37 closed by P4-D18 (residual in S36);
+external dictation tool is test hygiene (A20). Resolved items stay in
+DESIGN_DECISIONS.md.*
