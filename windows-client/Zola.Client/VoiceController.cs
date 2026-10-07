@@ -305,6 +305,12 @@ sealed class VoiceController
     private readonly object _lifecycleGate = new();
     private Timer? _lifecycleTickTimer;
     private int _lifecycleTickBusy;
+    // P7-LATENCY: one owner of per-turn timing; observation only — P7-D10
+    private readonly TurnTiming _turnTiming = new();
+    private readonly object _turnTimingGate = new();
+    private int _turnTimingSeq;
+    private DateTimeOffset? _pendingTranscriptAt;
+    private CancellationTokenSource? _turnTimingFinalizeCts;
 
     public VoiceController(ChatSocket chat)
     {
@@ -486,6 +492,9 @@ sealed class VoiceController
             _questionBoutStartedTcs?.TrySetResult(true);
             return;
         }
+
+        // P7-LATENCY: reply bout (incl. before message.complete) marks first audio — P7-D10
+        NoteTurnFirstAudio(DateTimeOffset.Now);
 
         if (!_replyReleaseArmed)
         {
@@ -1672,6 +1681,9 @@ sealed class VoiceController
 
     public void OnTurnDelta(string chunk)
     {
+        // P7-LATENCY: feed reply deltas into the open timing record — P7-D10
+        NoteTurnDelta(chunk, DateTimeOffset.Now);
+
         // P2-SPEAK: word count is always from the accumulated reply, never from one raw delta — P2-D06
         if (!ClockEligible)
         {
@@ -1701,6 +1713,9 @@ sealed class VoiceController
 
     public void OnTurnCompleted(string status)
     {
+        // P7-LATENCY: message.complete closes the submit→complete span — P7-D10
+        NoteTurnComplete(DateTimeOffset.Now);
+
         // P2-SPEAK: only a complete reply starts the follow-up timer — P2-D06
         if (string.Equals(status, "complete", StringComparison.Ordinal))
         {
@@ -2164,6 +2179,8 @@ sealed class VoiceController
         }
 
         WriteTimeline(TranscriptAdmission.FormatAdmit(admit, snap, text.Length));
+        // P7-LATENCY: admit time for transcript_to_submit_ms (cleared on submit) — P7-D10
+        _pendingTranscriptAt = DateTimeOffset.Now;
 
         if (transcript.IsStopPhrase)
         {
@@ -2718,6 +2735,8 @@ sealed class VoiceController
             _replyBoutActive = true;
             _replyBoutStartedTcs.TrySetResult(true);
             WriteTimeline("follow_up_release seeded_active_bout=true");
+            // P7-LATENCY: bout already playing at complete → first audio now — P7-D10
+            NoteTurnFirstAudio(DateTimeOffset.Now);
         }
     }
 
@@ -3344,6 +3363,182 @@ sealed class VoiceController
         }
         catch
         {
+        }
+    }
+
+    // P7-LATENCY: submit / tools / approval feed the single TurnTiming owner — P7-D10
+    public void NoteTurnSubmit(string kind, DateTimeOffset submitAt)
+    {
+        try
+        {
+            string? priorLine = null;
+            lock (_turnTimingGate)
+            {
+                if (_turnTiming.IsOpen)
+                {
+                    priorLine = _turnTiming.Finalize(submitAt, force: true);
+                }
+
+                var transcriptAt = string.Equals(kind, TurnTiming.KindVoice, StringComparison.Ordinal)
+                    ? _pendingTranscriptAt
+                    : null;
+                _pendingTranscriptAt = null;
+                _turnTimingSeq++;
+                _turnTiming.Begin(_turnTimingSeq, kind, submitAt, transcriptAt);
+            }
+
+            if (priorLine is not null)
+            {
+                WriteTimeline(priorLine);
+            }
+
+            ArmTurnTimingFinalize();
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(TurnTiming.LogErrorPrefix + ex.GetType().Name);
+        }
+    }
+
+    public void NoteTurnToolStart()
+    {
+        try
+        {
+            lock (_turnTimingGate)
+            {
+                _turnTiming.NoteToolStart();
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(TurnTiming.LogErrorPrefix + ex.GetType().Name);
+        }
+    }
+
+    public void NoteTurnApproval()
+    {
+        try
+        {
+            lock (_turnTimingGate)
+            {
+                _turnTiming.NoteApproval();
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(TurnTiming.LogErrorPrefix + ex.GetType().Name);
+        }
+    }
+
+    private void NoteTurnDelta(string? chunk, DateTimeOffset now)
+    {
+        try
+        {
+            lock (_turnTimingGate)
+            {
+                _turnTiming.NoteDelta(chunk, now);
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(TurnTiming.LogErrorPrefix + ex.GetType().Name);
+        }
+    }
+
+    private void NoteTurnComplete(DateTimeOffset now)
+    {
+        try
+        {
+            string? line;
+            lock (_turnTimingGate)
+            {
+                _turnTiming.NoteComplete(now);
+                line = _turnTiming.Finalize(now, force: false);
+            }
+
+            if (line is not null)
+            {
+                WriteTimeline(line);
+                CancelTurnTimingFinalize();
+            }
+            else
+            {
+                ArmTurnTimingFinalize();
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(TurnTiming.LogErrorPrefix + ex.GetType().Name);
+        }
+    }
+
+    private void NoteTurnFirstAudio(DateTimeOffset now)
+    {
+        try
+        {
+            string? line;
+            lock (_turnTimingGate)
+            {
+                _turnTiming.NoteFirstAudio(now);
+                line = _turnTiming.Finalize(now, force: false);
+            }
+
+            if (line is not null)
+            {
+                WriteTimeline(line);
+                CancelTurnTimingFinalize();
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(TurnTiming.LogErrorPrefix + ex.GetType().Name);
+        }
+    }
+
+    private void ArmTurnTimingFinalize()
+    {
+        CancelTurnTimingFinalize();
+        var cts = new CancellationTokenSource();
+        _turnTimingFinalizeCts = cts;
+        _ = FinalizeTurnTimingAfterDelayAsync(cts.Token);
+    }
+
+    private void CancelTurnTimingFinalize()
+    {
+        try
+        {
+            _turnTimingFinalizeCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        _turnTimingFinalizeCts?.Dispose();
+        _turnTimingFinalizeCts = null;
+    }
+
+    private async Task FinalizeTurnTimingAfterDelayAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(TurnTiming.FinalizeSeconds), ct).ConfigureAwait(false);
+            string? line;
+            lock (_turnTimingGate)
+            {
+                line = _turnTiming.Finalize(DateTimeOffset.Now, force: false);
+            }
+
+            if (line is not null)
+            {
+                WriteTimeline(line);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            WriteTimeline(TurnTiming.LogErrorPrefix + ex.GetType().Name);
         }
     }
 

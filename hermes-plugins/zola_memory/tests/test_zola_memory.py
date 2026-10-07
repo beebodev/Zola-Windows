@@ -696,25 +696,32 @@ class TestPhase4bRemoveUnmatched(_TempHome):
 class TestTimeContextStamp(unittest.TestCase):
     def test_stamp_format_integers_and_english_names(self) -> None:
         now = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
-        self.assertEqual(time_context.format_stamp(now), "[Time: Fri Oct 2, 3:45 PM PDT]")
         self.assertEqual(
-            time_context.format_stamp_body(now), "Fri Oct 2, 3:45 PM PDT"
+            time_context.format_stamp(now),
+            "[Time: Fri Oct 2, 3:45 PM PDT (UTC\u221207:00)]",
+        )
+        self.assertEqual(
+            time_context.format_stamp_body(now),
+            "Fri Oct 2, 3:45 PM PDT (UTC\u221207:00)",
         )
 
     def test_stamp_midnight_and_noon(self) -> None:
         midnight = datetime(2026, 10, 3, 0, 17, tzinfo=_PDT)
         self.assertEqual(
-            time_context.format_stamp(midnight), "[Time: Sat Oct 3, 12:17 AM PDT]"
+            time_context.format_stamp(midnight),
+            "[Time: Sat Oct 3, 12:17 AM PDT (UTC\u221207:00)]",
         )
         noon = datetime(2026, 10, 3, 12, 5, tzinfo=_PDT)
         self.assertEqual(
-            time_context.format_stamp(noon), "[Time: Sat Oct 3, 12:05 PM PDT]"
+            time_context.format_stamp(noon),
+            "[Time: Sat Oct 3, 12:05 PM PDT (UTC\u221207:00)]",
         )
 
     def test_stamp_year_boundary(self) -> None:
         now = datetime(2027, 1, 1, 0, 1, tzinfo=_PST)
         self.assertEqual(
-            time_context.format_stamp(now), "[Time: Fri Jan 1, 12:01 AM PST]"
+            time_context.format_stamp(now),
+            "[Time: Fri Jan 1, 12:01 AM PST (UTC\u221208:00)]",
         )
 
     def test_stamp_locale_independent_dow_month(self) -> None:
@@ -723,6 +730,7 @@ class TestTimeContextStamp(unittest.TestCase):
         body = time_context.format_stamp_body(now)
         self.assertTrue(body.startswith("Sun Mar 15,"))
         self.assertIn("9:05 AM", body)
+        self.assertIn("(UTC\u221207:00)", body)
         for name in time_context.DOW_NAMES:
             self.assertEqual(len(name), 3)
         for name in time_context.MONTH_NAMES:
@@ -735,6 +743,33 @@ class TestTimeContextStamp(unittest.TestCase):
         odd = timezone(timedelta(hours=5, minutes=30), name="Some Long Zone Name")
         odd_now = datetime(2026, 10, 2, 15, 45, tzinfo=odd)
         self.assertEqual(time_context.short_zone_label(odd_now), "UTC+05:30")
+
+    def test_stamp_always_includes_numeric_utc_offset(self) -> None:
+        # P7-LATENCY: PDT + explicit offset — P7-D10
+        pdt = datetime(2026, 10, 6, 15, 16, tzinfo=_PDT)
+        self.assertEqual(
+            time_context.format_stamp(pdt),
+            "[Time: Tue Oct 6, 3:16 PM PDT (UTC\u221207:00)]",
+        )
+        self.assertEqual(time_context.utc_offset_label(pdt), "UTC\u221207:00")
+
+    def test_stamp_dst_and_standard_offsets(self) -> None:
+        # P7-LATENCY: DST vs standard numeric offsets — P7-D10
+        dst = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
+        std = datetime(2027, 1, 1, 12, 0, tzinfo=_PST)
+        self.assertIn("(UTC\u221207:00)", time_context.format_stamp(dst))
+        self.assertIn("PDT", time_context.format_stamp(dst))
+        self.assertIn("(UTC\u221208:00)", time_context.format_stamp(std))
+        self.assertIn("PST", time_context.format_stamp(std))
+
+    def test_stamp_zone_with_no_percent_z_abbreviation(self) -> None:
+        # P7-LATENCY: long/unknown %Z → offset alone (no doubled parenthetical) — P7-D10
+        odd = timezone(timedelta(hours=5, minutes=30), name="Some Long Zone Name")
+        now = datetime(2026, 10, 2, 15, 45, tzinfo=odd)
+        body = time_context.format_stamp_body(now)
+        self.assertEqual(body, "Fri Oct 2, 3:45 PM UTC+05:30")
+        self.assertNotIn("(", body)
+        self.assertEqual(time_context.utc_offset_label(now), "UTC+05:30")
 
 
 class TestTimeContextRelative(unittest.TestCase):
@@ -793,15 +828,16 @@ class TestTimeContextRelative(unittest.TestCase):
         spring_after = datetime(2026, 3, 8, 3, 30, tzinfo=_PDT)
         self.assertEqual(
             time_context.format_stamp(spring_before),
-            "[Time: Sun Mar 8, 1:30 AM PST]",
+            "[Time: Sun Mar 8, 1:30 AM PST (UTC\u221208:00)]",
         )
         self.assertEqual(
             time_context.format_stamp(spring_after),
-            "[Time: Sun Mar 8, 3:30 AM PDT]",
+            "[Time: Sun Mar 8, 3:30 AM PDT (UTC\u221207:00)]",
         )
         fall = datetime(2026, 11, 1, 1, 30, tzinfo=_PST)
         self.assertEqual(
-            time_context.format_stamp(fall), "[Time: Sun Nov 1, 1:30 AM PST]"
+            time_context.format_stamp(fall),
+            "[Time: Sun Nov 1, 1:30 AM PST (UTC\u221208:00)]",
         )
 
 
@@ -840,17 +876,11 @@ class TestTimeContextBuildAndHook(_TempHome):
 
     def test_first_run_no_gap_line(self) -> None:
         now = datetime(2026, 10, 2, 15, 45, tzinfo=_PDT)
+        stamp = "[Time: Fri Oct 2, 3:45 PM PDT (UTC\u221207:00)]"
+        self.assertEqual(time_context.build_turn_time_context(now, None), stamp)
+        self.assertEqual(time_context.build_turn_time_context(now, ""), stamp)
         self.assertEqual(
-            time_context.build_turn_time_context(now, None),
-            "[Time: Fri Oct 2, 3:45 PM PDT]",
-        )
-        self.assertEqual(
-            time_context.build_turn_time_context(now, ""),
-            "[Time: Fri Oct 2, 3:45 PM PDT]",
-        )
-        self.assertEqual(
-            time_context.build_turn_time_context(now, "not-a-timestamp"),
-            "[Time: Fri Oct 2, 3:45 PM PDT]",
+            time_context.build_turn_time_context(now, "not-a-timestamp"), stamp
         )
 
     def test_block_joined_with_newline(self) -> None:
@@ -861,9 +891,9 @@ class TestTimeContextBuildAndHook(_TempHome):
         )
         self.assertEqual(
             block,
-            "[Time: Fri Oct 2, 3:45 PM PDT]\n"
+            "[Time: Fri Oct 2, 3:45 PM PDT (UTC\u221207:00)]\n"
             "[Gap: Brian's last message to me was 2 days ago "
-            "(Wed Sep 30, 9:14 PM PDT).]",
+            "(Wed Sep 30, 9:14 PM PDT (UTC\u221207:00)).]",
         )
 
     def test_allow_list_predicate(self) -> None:
@@ -928,7 +958,11 @@ class TestTimeContextBuildAndHook(_TempHome):
         )
         self.assertIsInstance(result, dict)
         self.assertIn("context", result)
-        self.assertTrue(result["context"].startswith("[Time: Fri Oct 2, 3:45 PM PDT]"))
+        self.assertTrue(
+            result["context"].startswith(
+                "[Time: Fri Oct 2, 3:45 PM PDT (UTC\u221207:00)]"
+            )
+        )
         self.assertIn("[Gap:", result["context"])
         marker = store.meta_get(provider._conn, store.META_LAST_INTERACTION_AT)
         self.assertEqual(marker, time_context.marker_iso(now))
@@ -1008,17 +1042,18 @@ class TestTimeContextZoneInfoDst(_TempHome):
     def _assert_fall_back_gap(self) -> None:
         now = datetime(2026, 11, 2, 9, 0, tzinfo=_LA)
         block = time_context.build_turn_time_context(now, "2026-10-31T21:00:00-07:00")
-        self.assertIn("(Sat Oct 31, 9:00 PM PDT)", block)
+        # P7-LATENCY: gap past_body includes numeric offset — P7-D10
+        self.assertIn("Sat Oct 31, 9:00 PM PDT (UTC\u221207:00)", block)
         self.assertIn("2 days ago", block)
-        self.assertNotIn("UTC-07:00", block)
+        self.assertIn("Mon Nov 2, 9:00 AM PST (UTC\u221208:00)", block)
         self.assertNotIn("8:00 PM", block)
 
     def _assert_spring_forward_gap(self) -> None:
         now = datetime(2026, 3, 8, 10, 0, tzinfo=_LA)
         block = time_context.build_turn_time_context(now, "2026-03-07T22:00:00-08:00")
-        self.assertIn("(Sat Mar 7, 10:00 PM PST)", block)
+        self.assertIn("Sat Mar 7, 10:00 PM PST (UTC\u221208:00)", block)
         self.assertIn("yesterday", block)
-        self.assertNotIn("UTC-08:00", block)
+        self.assertIn("Sun Mar 8, 10:00 AM PDT (UTC\u221207:00)", block)
 
     def test_fall_back_configured_zone(self) -> None:
         time_context.set_clock_for_tests(

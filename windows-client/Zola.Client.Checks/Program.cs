@@ -27,6 +27,8 @@ internal sealed class CheckRunner
     private int _wiringPassed;
     private int _clarifyTotal;
     private int _clarifyPassed;
+    private int _timingTotal;
+    private int _timingPassed;
 
     public int Failed { get; private set; }
 
@@ -42,12 +44,13 @@ internal sealed class CheckRunner
         RunPlanExtras();
         RunWiringRows();
         RunClarifyRows();
+        RunTimingRows();
     }
 
     public string CoverageLine()
     {
         return string.Format(
-            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}",
+            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}, timing rows {18}/{19}",
             _lifecyclePassed,
             _lifecycleTotal,
             _admissionPassed,
@@ -65,7 +68,9 @@ internal sealed class CheckRunner
             _wiringPassed,
             _wiringTotal,
             _clarifyPassed,
-            _clarifyTotal);
+            _clarifyTotal,
+            _timingPassed,
+            _timingTotal);
     }
 
     private void RunLifecycleRows()
@@ -1240,6 +1245,96 @@ internal sealed class CheckRunner
                 new[] { "navy", "gray" }));
     }
 
+    private void RunTimingRows()
+    {
+        // P7-LATENCY: pure TurnTiming boundary + line + finalize — P7-D10
+        Timing("boundary_short_under_min_len", () =>
+            !TurnTiming.HasCompleteFirstSentence("Hi. More text follows here."));
+
+        Timing("boundary_long_first_sentence", () =>
+            TurnTiming.HasCompleteFirstSentence(
+                "This is a complete first sentence that is long enough. Trailing."));
+
+        Timing("boundary_abbrev_like_hermes", () =>
+            // Hermes has no abbrev exception; short head after "Dr. " stays under min_len.
+            !TurnTiming.HasCompleteFirstSentence("Dr. Smith said hello today."));
+
+        Timing("boundary_none", () =>
+            !TurnTiming.HasCompleteFirstSentence("No terminal punctuation in this reply yet"));
+
+        Timing("line_format_empty_fields", () =>
+        {
+            var line = TurnTiming.FormatLine(1, TurnTiming.KindTyped, "", "10", "", "", "20", "", "", 0, 0);
+            return line.StartsWith(TurnTiming.LogPrefix + " ", StringComparison.Ordinal)
+                && line.Contains(" " + TurnTiming.FieldFirstDeltaToFirstSentenceMs + "=", StringComparison.Ordinal)
+                && line.Contains(" " + TurnTiming.FieldFirstSentenceToFirstAudioMs + "=", StringComparison.Ordinal)
+                && line.Contains(" " + TurnTiming.FieldTranscriptToSubmitMs + "=", StringComparison.Ordinal)
+                && line.Contains(" tools=0", StringComparison.Ordinal)
+                && line.Contains(" approval=0", StringComparison.Ordinal)
+                && line.Contains(TurnTiming.FieldFirstDeltaToFirstSentenceMs + "= ", StringComparison.Ordinal);
+        });
+
+        Timing("finalize_complete_before_audio", () =>
+        {
+            var t = new TurnTiming();
+            var t0 = T(0);
+            t.Begin(1, TurnTiming.KindVoice, t0, t0.AddMilliseconds(-50));
+            t.NoteDelta("This is a complete first sentence that is long enough. ", T(1));
+            t.NoteComplete(T(2));
+            if (t.ShouldFinalize(T(2), force: false))
+            {
+                return false;
+            }
+
+            if (!t.ShouldFinalize(T(2).AddSeconds(TurnTiming.FinalizeSeconds), force: false))
+            {
+                return false;
+            }
+
+            var line = t.Finalize(T(2).AddSeconds(TurnTiming.FinalizeSeconds), force: false);
+            if (line is null)
+            {
+                return false;
+            }
+
+            // first_audio empty: field present with empty value before tools=
+            return line.Contains(" " + TurnTiming.FieldSubmitToFirstAudioMs + "= tools=", StringComparison.Ordinal);
+        });
+
+        Timing("finalize_audio_before_complete", () =>
+        {
+            var t = new TurnTiming();
+            var t0 = T(0);
+            t.Begin(2, TurnTiming.KindTyped, t0, null);
+            t.NoteDelta("This is a complete first sentence that is long enough. ", T(1));
+            t.NoteFirstAudio(T(2));
+            if (t.ShouldFinalize(T(2), force: false))
+            {
+                return false;
+            }
+
+            t.NoteComplete(T(3));
+            var line = t.Finalize(T(3), force: false);
+            return line is not null
+                && line.Contains(TurnTiming.FieldSubmitToCompleteMs + "=3000", StringComparison.Ordinal)
+                && line.Contains(TurnTiming.FieldSubmitToFirstAudioMs + "=2000", StringComparison.Ordinal);
+        });
+
+        Timing("finalize_no_audio_at_all", () =>
+        {
+            var t = new TurnTiming();
+            t.Begin(3, TurnTiming.KindTyped, T(0), null);
+            t.NoteDelta("Short", T(1));
+            t.NoteComplete(T(2));
+            var early = t.Finalize(T(3), force: false);
+            var late = t.Finalize(T(2).AddSeconds(TurnTiming.FinalizeSeconds), force: false);
+            return early is null
+                && late is not null
+                && late.Contains(" " + TurnTiming.FieldSubmitToFirstAudioMs + "= tools=", StringComparison.Ordinal)
+                && late.Contains("kind=" + TurnTiming.KindTyped, StringComparison.Ordinal);
+        });
+    }
+
     private void Clarify(string name, Func<bool> body)
     {
         _clarifyTotal++;
@@ -1248,6 +1343,18 @@ internal sealed class CheckRunner
             if (pass)
             {
                 _clarifyPassed++;
+            }
+        });
+    }
+
+    private void Timing(string name, Func<bool> body)
+    {
+        _timingTotal++;
+        Run(name, body, pass =>
+        {
+            if (pass)
+            {
+                _timingPassed++;
             }
         });
     }
