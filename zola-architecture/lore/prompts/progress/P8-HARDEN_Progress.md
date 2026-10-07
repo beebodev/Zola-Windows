@@ -24,7 +24,7 @@
 | 4 | Implementation (repo only) | COMPLETE |
 | 5 | STOP, Then Apply Live-Profile Changes and Deploy | COMPLETE |
 | 6 | Smoke Test | COMPLETE — smoke test passed |
-| 7 | Closeout | IN PROGRESS |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -990,8 +990,8 @@ none so far
 
 | Step | SHA |
 |---|---|
-| 7e implementation | *(pending)* |
-| 7f docs record implementation | *(pending)* |
+| 7e implementation | `f60a7a84c8f2cd7e34cf671344202152eb498102` |
+| 7f docs record implementation | *(this commit)* |
 | 7h merge `--no-ff` on `main` | *(pending)* |
 | 7i docs record merge | *(pending)* |
 | Final `main` HEAD | *(pending)* |
