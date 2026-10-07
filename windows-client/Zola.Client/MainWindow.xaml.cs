@@ -408,10 +408,10 @@ public sealed partial class MainWindow : Window
         Composer.Text = "";
         // P3-SHELL: typed send returns focus to the composer when the turn ends — P3-D11
         _returnFocusToComposer = true;
-        await SubmitTurnAsync(text);
+        await SubmitTurnAsync(text, Voice.TurnTiming.KindTyped);
     }
 
-    private async Task SubmitTurnAsync(string text)
+    private async Task SubmitTurnAsync(string text, string turnKind)
     {
         // P2-VOICE: transcripts and typed sends share this prompt.submit; a live turn is not a reason to hold the transcript — P2-D05
         if (!_sessionReady || _unreachable || text.Length == 0)
@@ -434,6 +434,8 @@ public sealed partial class MainWindow : Window
         try
         {
             await _chat.SubmitAsync(text).ConfigureAwait(false);
+            // P7-LATENCY: submit clock for turn_timing (typed vs voice) — P7-D10
+            _voice.NoteTurnSubmit(turnKind, DateTimeOffset.Now);
         }
         catch (ChatUnreachableException ex)
         {
@@ -609,7 +611,7 @@ public sealed partial class MainWindow : Window
         }
 
         // P7-VOICEAUTH: unbound admitted transcripts never answer clarify (newest-clarify removed) — P7-D05
-        _ = SubmitTurnAsync(text);
+        _ = SubmitTurnAsync(text, Voice.TurnTiming.KindVoice);
     }
 
     private void ApplyVoiceClarifyAnswer(string id, string text)
@@ -714,6 +716,8 @@ public sealed partial class MainWindow : Window
     private void OnToolStarted(string? toolId, string name)
     {
         _display.OnToolStarted(toolId, name);
+        // P7-LATENCY: count tool.start on the open turn — P7-D10
+        _voice.NoteTurnToolStart();
         ApplyVoiceChrome();
         UpdateDockVisibility();
     }
@@ -1202,6 +1206,8 @@ public sealed partial class MainWindow : Window
 
         var card = BuildApprovalCard(id, fresh);
         _requestCards[id] = card;
+        // P7-LATENCY: approval card shown for open turn — P7-D10
+        _voice.NoteTurnApproval();
         Transcript.Children.Add(card);
         EnsureConversationOpen();
         UpdateChrome();

@@ -15,5 +15,7 @@
     <Compile Include="..\Zola.Client\Voice\ClarifyShape.cs" Link="Voice\ClarifyShape.cs" />
     <Compile Include="..\Zola.Client\Voice\ClarifySpeech.cs" Link="Voice\ClarifySpeech.cs" />
     <Compile Include="..\Zola.Client\Voice\ClarifyLog.cs" Link="Voice\ClarifyLog.cs" />
+    <!-- P7-LATENCY: pure turn timing helper — P7-D10 -->
+    <Compile Include="..\Zola.Client\Voice\TurnTiming.cs" Link="Voice\TurnTiming.cs" />
   </ItemGroup>
 </Project>

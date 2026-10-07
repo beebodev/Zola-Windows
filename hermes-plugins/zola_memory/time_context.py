@@ -117,6 +117,7 @@ def short_zone_label(when: datetime) -> str:
     mapped = WINDOWS_TZ_ABBREV.get(abbrev)
     if mapped:
         return mapped
+    # P7-LATENCY: fallback uses ASCII sign; stamp parenthetical uses utc_offset_label — P7-D10
     offset = when.utcoffset()
     if offset is None:
         return "UTC"
@@ -128,8 +129,22 @@ def short_zone_label(when: datetime) -> str:
     return f"UTC{sign}{hours:02d}:{minutes:02d}"
 
 
+def utc_offset_label(when: datetime) -> str:
+    """Numeric UTC offset for stamps: ``UTC+05:30`` / ``UTC−07:00`` (Unicode minus)."""
+    # P7-LATENCY: always beside the zone abbrev so she can convert places without a tool — P7-D10
+    offset = when.utcoffset()
+    if offset is None:
+        return "UTC"
+    total = int(offset.total_seconds())
+    sign = "+" if total >= 0 else "\u2212"
+    total = abs(total)
+    hours, rem = divmod(total, 3600)
+    minutes = rem // 60
+    return f"UTC{sign}{hours:02d}:{minutes:02d}"
+
+
 def format_stamp_body(when: datetime) -> str:
-    """``Fri Oct 2, 3:45 PM PDT`` — integers for day/hour/minute; fixed English names."""
+    """``Fri Oct 2, 3:45 PM PDT (UTC−07:00)`` — integers; English names; offset always present."""
     dow = DOW_NAMES[when.weekday()]
     month = MONTH_NAMES[when.month - 1]
     day = when.day
@@ -140,7 +155,11 @@ def format_stamp_body(when: datetime) -> str:
         hour12 = 12
     ampm = "AM" if hour24 < 12 else "PM"
     zone = short_zone_label(when)
-    return f"{dow} {month} {day}, {hour12}:{minute:02d} {ampm} {zone}"
+    offset = utc_offset_label(when)
+    # P7-LATENCY: when %Z is missing, zone is already UTC±HH:MM — don't double it — P7-D10
+    if zone == offset or zone.replace("-", "\u2212") == offset:
+        return f"{dow} {month} {day}, {hour12}:{minute:02d} {ampm} {offset}"
+    return f"{dow} {month} {day}, {hour12}:{minute:02d} {ampm} {zone} ({offset})"
 
 
 def format_stamp(now: datetime) -> str:
