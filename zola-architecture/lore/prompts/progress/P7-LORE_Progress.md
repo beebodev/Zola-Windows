@@ -22,8 +22,8 @@
 | 3 | Draft OPEN_QUESTIONS.md | COMPLETE — Brian (verbatim): "approved" |
 | 4 | Draft ROADMAP.md | COMPLETE — Brian (verbatim): "approved" |
 | 5 | Identity and deploy verification | COMPLETE (STOP) |
-| 6 | Apply, verify, STOP | COMPLETE (STOP — no commit) |
-| 7 | Commit and merge | PENDING |
+| 6 | Apply, verify, STOP | COMPLETE |
+| 7 | Commit and merge | COMPLETE |
 
 ## Guardrails summary
 
@@ -865,3 +865,19 @@ Every hunk maps to approved draft text (annotations, Phase 7 section, OQ status 
 ### Phase 6 STOP
 
 **No commit.** Lore applied on `p7-lore`. Awaiting **"proceed to commit and merge"**.
+
+---
+
+## Phase 7 — Commit and merge
+
+| Item | SHA |
+|---|---|
+| Lore commit | `53cd1b3dc929c3b8b1463ad397c1ec08c5563c8d` |
+| Merge (`--no-ff` `p7-lore` → `main`) | `c7e46fb308c7e21d47e72183944ba5e74a2c0081` |
+| Final `main` HEAD (after this metadata commit) | recorded below |
+
+Branch `p7-lore` deleted locally and on `origin`.
+
+### Phase 7 CLOSED
+
+Phase 7 lore closeout merged. New OQs: S51–S59. Phase 8 candidates listed in ROADMAP.
