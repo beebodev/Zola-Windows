@@ -771,6 +771,6 @@ Confirms: offset live; SOUL revert loaded; AUD-25 path still active on a plain l
 
 | | SHA |
 |---|---|
-| Implementation (7e) | *(pending commit)* |
+| Implementation (7e) | `1fc463abc19aa4ee61c575256fc5469119471ea6` |
 | Merge on main (7h) | *(pending)* |
 | Final main HEAD (7i) | *(pending)* |
