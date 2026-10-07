@@ -1,0 +1,4 @@
+name: zola_workspace
+version: 0.1.0
+description: "Zola Workspace boundary skeleton — Brian-only turn context, config self-edit guard, posture (P8-D01/D02)."
+author: Zola
