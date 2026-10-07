@@ -50,10 +50,10 @@ G-SCOPE / G-NOCHANGE / G-NO-INSTALL / G-NO-GOOGLE-ACCOUNT / G-SCRATCH / G-EXT / 
 | Item | SHA |
 |------|-----|
 | **Audit content SHA (12c)** | `fba2663d0fbb030b42a925b58e6de960e21327f6` |
-| Merge SHA (--no-ff merge commit) | *(recorded in 12g)* |
-| Final main HEAD (after metadata commit) | *(recorded in 12g)* |
+| **Merge SHA (--no-ff merge commit)** | `26a8f0063dfe8f0919707b05cdf56d9fddbc8138` |
+| Final main HEAD (after this metadata commit) | *(filled after 12g commit)* |
 
-Note: The merge SHA recorded below is the `--no-ff` merge commit, **not** the final `main` HEAD after the metadata commit.
+**Important:** The merge SHA above is the `--no-ff` merge commit (`26a8f006…`), **not** the final `main` HEAD after the metadata commit that records it.
 
 ---
 
