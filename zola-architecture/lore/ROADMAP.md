@@ -197,18 +197,70 @@ One-line track results:
 - **P6-FIX-2** — "last weekend" interval + episodes-block say-when cue;
   R6 PASS (seeded).
 
-## Current stage — Phase 7 (scope is Brian's call)
-Candidates (not a committed order):
-- **`S45` voice echo** (Brian: high priority) — TTS → mic → "User
-  correction during the turn"; related `S36` echo policy;
-- **`S46` semantic / associative episode retrieval** — minimum mechanism
-  that improves 0/4 associative recall without a second memory authority;
-- **`S44`** — no clarify card in Voice mode;
-- **`S40`** — UI polish after Phase 4;
-- **`S28`** — session UI retirement (episodes now exist; evaluate);
-- then carry: `S35` (session/always scopes), `S38`, `S36` (upstream-gated),
-  `S33`, `S34`, `S37`, `S39`, `S17`, `S21`, `S26`, `S14` (migration /
-  measurement), `S47`–`S50`, `S12`, `S13`, `S16`, `S24`, `S25`, `S31`.
+## Phase 7 — COMPLETE: Voice She Can Trust
+Phase 7 closed three tracks plus a read-only forensic pass; Track 4 was
+cut. "Complete" means the planned phase shipped — not that voice work is
+done. Shipped: transcript admission authority (her voice can't become
+Brian's turn); voice clarify with spoken choices and the quiet card;
+per-turn latency instrumentation and the first stage-level attribution;
+the UTC offset in the time stamp. Measured limitations: latency was not
+improved (causal target ❌); root cause identified as Hermes
+`execution_guidance` outranking `SOUL.md`. `S45` and `S37` resolved;
+`S44` partly resolved (remainder → `S57`); `S38` updated, not resolved;
+`S34`/`S36` annotated.
+
+1. ✅ **AUDIT** — P7PRE, merge `3e87e7c47ed2eee4a26f53dc9c4bba7d6f16b1ee`
+   (audit content `044fe10a857edc364b0fa69cd2f72be5f45067d8`).
+2. ✅ **DECISIONS LOCKED** — `P7-D01`–`P7-D13` (Appendix A); Brian
+   (verbatim): "approved."; S34: "Yes. keep S34". Quiet-card reading of
+   P7-D09 adopted during Track 2.
+3. ✅ **BUILD PLAN WRITTEN** — `PHASE7_BUILD_PLAN.md` v1.1, commit
+   `b5583f97c3e13870abc5d483ec23566458cd828e`, merge
+   `ffef6f050a3fd6a8092d77fc055370296e2b522b`.
+4. ✅ **TRACKS EXECUTED** — Tracks 1–3 merged; Track 4 cut; FORENSIC-SERVE
+   read-only merged.
+5. ✅ **VERIFICATION / SMOKE TEST** — per-track; recorded ⚠️: Track 1 S1
+   PARTIAL at Starting (S1b PASS); Track 2 C3 adapted (composer in panel);
+   Track 3 causal ❌ closed on findings (Brian: "C: close on findings
+   (Recommended)"); serve APPCRASH class unresolved (`S51`/`S52`).
+6. ✅ **TRACK MERGED**
+   - Plan: `ffef6f050a3fd6a8092d77fc055370296e2b522b`
+   - P7-VOICEAUTH: `3d264f07bb026c499c1fa8d82cce6dc71892f4e2`
+   - P7-FORENSIC-SERVE: `512d91490be6317e6f644afc8051160b7cb560ef`
+   - P7-CLARIFY: `80498b99f0e999efd91250fcc1c1d9315616bbb9`
+   - P7-LATENCY: `7b168cfbb4daa95f5fa58307fd2377176f9ffd35`
+   - Track 4 (VOICEPROSE): **cut** — Brian (verbatim): "Cut it; go to lore
+     closeout (Recommended)"
+7. ✅ **LORE CLOSEOUT** — this pass.
+
+One-line track results:
+- **P7-VOICEAUTH** — admission authority; cancel-before-stop; frozen
+  terminal set; D06 hand-back; S45/S37 closed.
+- **P7-FORENSIC-SERVE** — native APPCRASH class documented; filed `S51`/`S52`.
+- **P7-CLARIFY** — spoken choices + quiet card; C1–C9/T1 PASS (C3 adapted).
+- **P7-LATENCY** — `turn_timing`; stage attribution; UTC offset kept; SOUL
+  Everyday reverted; closed on findings.
+- **P7-VOICEPROSE** — cut (S-sentence ≈4%; depends on streaming-TTS choice).
+
+## Current stage — Phase 8 (scope is Brian's call)
+Candidates only (not a committed order); each with one line of evidence:
+- **Voice I/O ownership study (`S56`)** — every upstream-blocked voice item
+  sits in the voice/audio layer; Brian asked whether to fork.
+- **`agent.execution_guidance` decision (`S54`)** — largest measured latency
+  lever (tool rounds ≈ +8–12 s/turn; 17.8 s vs 5.4 s submit→audio).
+- **Streaming TTS bake-off (`S55`)** — Edge has no streamer; ~2.0 s S-tts;
+  Brian raised; re-validate monitor + Track 1/2 on any new path.
+- **Backend crash / recovery (`S51`)** — five APPCRASHes in two days after
+  zero 09-01→10-04; no automatic relaunch.
+- **Stop-vs-silence-STT race guard (`S52`)** — forensic (b); client guard +
+  duplicate-stop no-op proposed.
+- **Voice mode with no cards (`S57`)** — Brian: "I want the only time a card
+  is necessary is when in text mode.  No need in voice mode."
+- **Memory round two (`S46`, P6-D01 migration, `S48`–`S50`)** — associative
+  recall 0/4; fact-authority migration evidence-based; don't-note / skill
+  policy / tunables after real use.
+- **`S35` scopes, `S40`, `S28`** — session/always approvals; UI polish;
+  session UI retirement (episodes exist; evaluate).
 
 
 ## Source documents

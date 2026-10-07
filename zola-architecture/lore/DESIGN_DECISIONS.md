@@ -293,6 +293,7 @@ corrections and final tuned values.
   `prompt.submit` on the current session. No draft-and-edit.
   Phase 4 (`P4-D14`): clarify answers are routed to the open request, not
   submitted as a normal user turn.
+  Phase 7: **revised by P7-D02** (a transcript from a cancelled capture is dropped).
 - **P2-D06 — Follow-up listening uses Hermes as-is.** Barge-in while
   she speaks; after that, one estimated-delay `voice.record`. The
   clock is provisional; final constants are `P2-D15`. A precise
@@ -325,6 +326,7 @@ corrections and final tuned values.
   `MainWindow` only forwards and renders. Running-turn
   `prompt.submit` is accepted (redirect or queue); the client submits
   once and never holds.
+  Phase 7: **revised by P7-D04** (no mid-turn unbound voice submits; one admission authority, P7-D01).
 Phase 1 client defects fixed in Phase 2 (`P2-VOICE`):
   Phase 4 execution correction: `ReconcileWakeRestingAsync` is single-flight
   and re-checks after await (≤ 3 passes, logged) so an in-flight pause cannot
@@ -359,6 +361,7 @@ Phase 1 client defects fixed in Phase 2 (`P2-VOICE`):
   run: dry run dropped a user quoting Zola; (5) end-anchored
   contiguous: dry run missed number-heavy echoes; (6) final:
   digit-stripped, gap-tolerant, end-anchored (this rule).
+  Phase 7: unchanged; defense only (P7-D07).
 - **P2-D15 — Simulated playback clock, final model.** Speech
   estimate: `FirstSentenceLatencySeconds = 3.3`, plus
   `EstimatedWordsPerSecond = 2.5`, plus
@@ -706,10 +709,12 @@ section is the lore pointer, final values, and corrections. Evidence:
   → estimate; forced releases flagged. Mid-smoke: stale forced-release flag
   fixed (C1). Question quiet window considered and **withdrawn** (single-file
   `voice.tts` / single bout; B38).
+  Phase 7: **revised by P7-D09** (choices spoken; quiet card for a single question in Voice mode — card built, panel never auto-opens).
 
 - **P4-D14 — One transcript consumer routes answers.** `TranscriptReady`
   branch: open clarify → answer that request; else unchanged submit. Binding
   clear on C5b; closed-clarify id cleared on turn start (`P4-FEEDBACK` K2).
+  Phase 7: **revised in part by P7-D05** (no newest-clarify fallback; only the bound clarify capture answers).
 
 - **P4-D15 — Presence and HUD while waiting for an answer.** HUD
   "Waiting for your answer"; `LISTENING` if capturing else `IDLE` (not
@@ -728,6 +733,7 @@ section is the lore pointer, final values, and corrections. Evidence:
   rejected). Fix: monitor natural bout stop; seed bout; quiet **0.5 s** with
   `quiet_restart`; startup window. Residual ~1 s clip on instant answers →
   `S36`. Quiet window required (F1).
+  Phase 7: preserved; the monitor outranks the estimate (P7-D06).
 
 - **P4-D19 — Voice: `en-GB-SoniaNeural` at speed 1.1, provisional until a live
   trial.** Live trial rejected 1.1; blind speed A/B picked **0.95**. Mirrored under
@@ -736,6 +742,7 @@ section is the lore pointer, final values, and corrections. Evidence:
 - **P4-D20 — Speech-shaped replies in `SOUL.md`.** Heading: `## How I talk
   out loud` (canonical file; live byte-identical). Do not copy the full text
   here.
+  Phase 7: unchanged (Track 4 cut).
 
 - **P4-D21 — Pitch: blind A/B through the command provider, kept only if it
   wins.** Pitch **dropped**; built-in Edge kept (command-provider first-audio
@@ -748,6 +755,7 @@ section is the lore pointer, final values, and corrections. Evidence:
 - **P4-D23 — No premium or local neural providers in Phase 4.**
 
 - **P4-D24 — Whole-line synthesis is not in Phase 4.** Filed as `S34`.
+  Phase 7: unchanged (Track 4 cut).
 
 - **P4-D25 — Live profile edits are developer-approved, exact, and
   mirrored.**
@@ -757,6 +765,7 @@ section is the lore pointer, final values, and corrections. Evidence:
 - **P4-D27 — `approvals.mode: manual`.** (New.) Hermes default `smart` can
   auto-approve. Revisit with `S35`.
   Phase 6: stand (P6-D08).
+  Phase 7: `approvals.mode: manual` means **dangerous-pattern approval only**, not approve-all (P7-CLARIFY C7: Hermes `approval.py` 1093–1124, `approval_detection.py` 227; `Remove-Item -Force` raised the card).
 
 - **P4-D28 — `voice.barge_in: false`.** (New; `P4-ASK` Option A.) Stops the
   full-duplex barge listener from latching spoken clarify answers. Cost:
@@ -936,6 +945,7 @@ amendments, and measured limits.
   Brian-approved one-day backdate of the kiln episode's
   `source_user_time`/`recorded_at` (deviation, not a natural cross-day
   result). Same-day recall may still omit "when".
+  Phase 7 (P7-LATENCY): stamp gains an explicit UTC offset parenthetical, e.g. `[Time: Tue Oct 6, 6:47 PM PDT (UTC−07:00)]` (`time_context.py` `327A027A…`).
 
 - **P6-D06 — Forget erases every copy the memory system controls.**
   **As locked with amendment.** Recognition fails closed; cascade deletes
@@ -1024,3 +1034,266 @@ Whether autonomous skill edits need a policy → OQ (Phase 3).
 - Hermes message timestamps are Unix floats (normalize at write).
 - Prompts must say **"merge only on PASS"** (FIX-WHEN merged before spoken
   when PASS — recorded).
+
+## Phase 7 — Voice She Can Trust
+Recorded from `PHASE7_BUILD_PLAN.md` v1.1 (`P7-D01`–`P7-D13`, Appendix A),
+the P7PRE audit (merge `3e87e7c47ed2eee4a26f53dc9c4bba7d6f16b1ee`), the
+working decisions snapshot (`PHASE7_DECISIONS_snapshot.md`), and the
+progress docs `P7-VOICEAUTH`, `P7-FORENSIC-SERVE_Findings`, `P7-CLARIFY`,
+`P7-LATENCY`. Full locked wording stays in Appendix A / the snapshot;
+this section is the lore pointer, track amendments, and measured limits.
+
+**Brian's verdicts (verbatim, 2026-10-05):** On the full decision set,
+including the revisions to P2-D05, P2-D12, P4-D13 and P4-D14: "approved."
+On S34: "Yes. keep S34"
+
+### The Phase 7 invariant
+A voice transcript is not Brian merely because Hermes transcribed microphone
+audio. The Windows client admits it as Brian only when the current conversational and capture state
+authorizes that input. Cancelled, stale, unbound or state-incompatible transcripts fail closed and
+are never replayed later. Content similarity to Zola is a secondary defense only.
+
+**How it is applied (v1.1).** A transcript becomes Brian's
+input only when the client can **prove** it came from a currently authorized capture opportunity.
+The absence of contrary evidence is not proof. **Ambiguous** transcripts fail closed, alongside
+cancelled, stale, unbound and state-incompatible ones. Ambiguity is the core risk, because Hermes
+supplies no capture ID. Dropped transcripts are logged with reason and length (never text). The
+echo matcher may reject; it may never admit.
+
+- **P7-D01 — One transcript-admission authority.** **As locked.**
+  `VoiceController` is the single authority that decides whether a transcript is Brian's input. A
+  transcript is admitted only when the current capture state authorizes it. Content resemblance to
+  Zola can reject a transcript; it can never admit one. The check order is: capture ownership and
+  lifecycle → turn state and clarify binding → content echo check (reject-only, including clarify
+  answers).
+  - Evidence: AUD-08, Audit 01 §10–11.
+  **Brian's verdict:** "approved."
+  **Implementation:** pure `CaptureLifecycle` + `TranscriptAdmission`
+  (`Voice/CaptureLifecycle.cs`, `Voice/TranscriptAdmission.cs`);
+  `TranscriptAdmission.Decide` is the only admission site
+  (`VoiceController.OnVoiceTranscript`, snapshot before `ApplyTranscript`).
+  Dependency-free `Zola.Client.Checks` project (lifecycle / admission /
+  latch / wiring tables). MainWindow never re-decides admission.
+
+- **P7-D02 — Cancel invalidates, then stops (revises P2-D05).** **As locked.**
+  Every intentional client cancellation invalidates the current capture generation **before**
+  Hermes is told to stop. `CancelFollowUp` and every other cancel path that can leave Hermes
+  recording (typed submit, Stop speaking, mode change, session ready) issue `voice.record stop`. The
+  forced transcript from that stop belongs to the cancelled generation and is inadmissible.
+  - **Revises P2-D05** ("every voice transcript is sent immediately"): a transcript from a cancelled
+    capture is dropped.
+  - Evidence: AUD-01, AUD-02, AUD-09, L-3.
+  **Brian's verdict:** "approved."
+  **Implementation:** cancel mechanism **A** (`voice.record stop`; forced
+  transcript dropped). One cancel method (`InvalidateCapture` +
+  `SendRecordStopAsync`). Track 2: closing a clarify request (typed,
+  click, skip, timeout) cancels its bound capture through that same method.
+
+- **P7-D03 — One capture at a time, with a proven end.** **As locked.**
+  Only one client-owned capture may be outstanding. A new capture cannot accept speech until the
+  previous client-owned capture has reached a **proven terminal Hermes state**. The VOICEAUTH track's
+  grounding step enumerates every Hermes event or state that can settle a client-started capture,
+  proves whether a text transcript can still arrive after each one, and then freezes the terminal
+  set. "Idle" is not assumed terminal until proven. A transcript received with no accepting capture
+  owner is dropped. A bounded recovery timeout may clear a stuck lifecycle, but it never
+  retroactively admits a transcript.
+  - Why: with no capture ID, "drop the next transcript after a stop" can drop Brian's real speech if
+    the cancelled capture had already ended on silence.
+  - Future (upstream, not Phase 7): a Hermes-issued capture correlation ID.
+  - Evidence: 5.1a, AUD-23.
+  **Brian's verdict:** "approved."
+  **Frozen Hermes terminal set (Track 1 grounding):** transcript text /
+  `stop_phrase` / `no_speech_limit` settle admission; `idle` is required
+  before the next Accepting. Grounding: `listening` is emitted only by a
+  genuine `start_continuous` start, so it proves a fresh capture;
+  `start_continuous` is a no-op when already active. No
+  `LateTranscriptGuardSeconds`. Recovery never admits.
+  **Lifecycle constants:** `StartListeningTimeoutSeconds = 3` (no
+  `listening` after our start → `start_no_listening`, cancel A, wait
+  idle, then start-policy); `CaptureSettleTimeoutSeconds = 180`
+  (Starting/Accepting settle backstop); `CancelSettleTimeoutSeconds = 30`
+  (Cancelled after stop sent settles faster); `LatchIdleTimeoutSeconds =
+  65` (Hermes longest TTS wait 60 s + margin; clears stuck
+  `HermesBusyUntilIdle` with no outstanding capture); `HermesBusyUntilIdle`
+  latch (set on `listening`, cleared on `idle`; no new Accepting while
+  held). **Pending-start policy:** Wake/Manual **reject**; FollowUp /
+  EchoReopen **defer** 5 s (`PendingStartExpirySeconds`); Clarify
+  **supersede** outstanding then **defer** 15 s
+  (`ClarifyPendingStartExpirySeconds`). The 65 s / 30 s timeouts fixed the
+  stuck-latch deafness path found in review.
+
+- **P7-D04 — No unbound transcripts during a running turn (revises P2-D12).** **As locked.**
+  During `TurnRunning`, an ordinary unbound transcript is inadmissible. It is dropped, never held or
+  replayed. No genuine input is lost: with `voice.barge_in: false`, Brian cannot start a capture
+  during a turn (wake requires Resting, and the mic button and hotkey require `!TurnRunning`).
+  - **Revises P2-D12** ("running-turn `prompt.submit` is accepted; the client submits once and never
+    holds"): mid-turn voice submits stop. Typed submits are unchanged.
+  - Evidence: AUD-05, E2.
+  **Brian's verdict:** "approved."
+
+- **P7-D05 — Only the bound clarify capture answers a clarify (revises P4-D14 in part).** **As locked.**
+  A transcript may answer a clarify only if it comes from the active clarify-answer capture bound to
+  that request. The fallback that lets an unbound transcript answer the newest open clarify is
+  removed. Typed answers through the composer (P4-D09) are unchanged.
+  - Evidence: AUD-12, Audit 03.
+  **Brian's verdict:** "approved."
+  **Track 2 notes:** echo haystack for clarify is the **question stem
+  only** (CL-G5: 0/90 vs 3/90 false drops). Typed fill-then-send for a
+  single question in **Voice mode only** (Brian: "Voice mode only
+  (Recommended)"); Text mode unchanged.
+
+- **P7-D06 — The playback monitor outranks the estimate.** **As locked.**
+  A fallback or estimate release cannot create an accepting capture while the playback monitor
+  reports Zola still speaking. Monitor-driven release remains authoritative and unchanged (P4-D18
+  preserved). **S37 closes into this decision.** Acceptance: if an estimate release fires while she
+  is still audible, her speech cannot become admitted Brian input.
+  - Why: A + B alone miss this case. The turn is already complete (`TurnRunning` false) while her
+    audio continues, so a fallback capture would otherwise be a current, owned capture.
+  - Evidence: AUD-20, AUD-21, Audit 05 §7.
+  **Brian's verdict:** "approved."
+  **Implementation (D06 hand-back):** when release rule is estimate /
+  forced-estimate / no-bout-estimate (or estimate branch of question
+  release), the hand-back applies only when the monitor is available and
+  reports an active bout — then do not open capture; hand back to monitor
+  bout-stop + quiet rule (`D06HandbackMaxSeconds = 120`; timeout → no
+  capture). Monitor unavailable → today's estimate behavior unchanged.
+  Smoke S1–S8: **1** `no_bout_estimate` (S8), **0** `forced_estimate`,
+  **1** `question_release rule=monitor` (S5); estimate did not open
+  capture during bout. Audit context: 196/205 releases were monitor-driven
+  (AUD-21).
+
+- **P7-D07 — The echo matcher is defense-in-depth only.** **As locked.**
+  `IsEchoOfLastReply` stays as is: end-anchored, follow-up and clarify captures, P2-D14 unchanged. It
+  can reject only. No un-anchoring in Phase 7 (H-2: quote false positives).
+  **Brian's verdict:** "approved."
+
+- **P7-D08 — Drops are logged, not announced.** **As locked.**
+  Every dropped transcript gets a log line with the reason and length (never text). No on-screen
+  notice, since Brian said nothing. The capture-window bookkeeping is fixed so log lines describe the
+  capture that produced the transcript (AUD-23).
+  **Brian's verdict:** "approved."
+
+- **P7-D09 — Clarify in Voice mode (revises P4-D13).** **As locked.**
+  In Voice mode, a **single** clarify question is asked conversationally, with no card and no
+  automatic panel opening. If it has choices, she speaks the choices (**revises the P4-D13
+  amendment** "question only, never the choice list"). Batch (`questions[]`) and multi-select keep
+  the visual card in Phase 7. Exact "stop" keeps its current meaning; no new command words ("skip" or
+  "never mind" reach her as ordinary answers). Text-mode clarify is unchanged (P4-D08, P4-D09).
+  Approvals stay visual and manual (P4-D07, P4-D27).
+  - Depends on P7-D01–D06: the answer capture must be Brian-only.
+  - Evidence: AUD-12–15, AUD-24, Audit 03.
+  **Brian's verdict:** "approved."
+  **Quiet card (Brian, 2026-10-06, verbatim selection):** "Quiet card
+  (Recommended)". Brian's selection supersedes the locked "no card"
+  wording (and the build plan's "do not build or show the card"), while
+  "no automatic panel opening" stands. Hermes wires every clarify as
+  `questions[]` (`IsBatch=true` even for one); voice and typed paths fill
+  card rows. Single-question card is still built in the conversation, but
+  the panel never auto-opens for it (not on open, not on collapse).
+  **Spoken choices (Brian Phase 3 selections, verbatim):** "(Recommended)"
+  when spoken: "Drop it (Recommended)" (card may still show it). Typed
+  scope: "Voice mode only (Recommended)". Long choices: "Cap → show card
+  (Recommended)" (`SpokenChoicesMaxWords = 20`). Template:
+  `"{q} Is it A, B, or C?"` (skipped when the question already names every
+  choice, whole-word match). No admitted answer → panel opens once
+  (silence, gate, Stop, clarify-echo; echo-reopen refused while awaiting).
+
+- **P7-D10 — Latency is measure → STOP → fix → measure again.** **As locked.**
+  First add the missing stage timing: `prompt.submit` → first model token → first speakable sentence
+  → Edge synthesis start and end → playback; Whisper infer start and end (AUD-26); and
+  within-utterance pause lengths (for a future silence decision). Investigate unnecessary tool use on
+  simple questions first (AUD-25). At the STOP, choose and implement the largest proven, safely
+  addressable cause within Phase 7, then measure again. No changes to the Whisper model, beam size or
+  silence duration without new evidence.
+  - Candidates noted (not chosen): `SOUL.md` guidance to answer common knowledge and conversions
+    directly; extending the bounded `calculate` tool to unit conversion.
+  **Brian's verdict:** "approved."
+  **Instrumentation:** one `turn_timing` line per turn; pure `TurnTiming`
+  (mirrors Hermes `SentenceChunker`); `VoiceController` sole owner;
+  observation only (never drives decisions).
+  **Track 3 outcome — closed on findings (causal target not met).**
+  Baseline EoS→first audio median 9534 ms; additive median shares
+  S-model 51.4%, pre-submit 31.3%, S-tts (Edge) 19.3% (≈2.0 s),
+  S-sentence 4.3%, S-play 1.5%; 6/8 replies spoken only on end-of-stream
+  flush. Tool vs no-tool submit→first audio 17.8 s vs 5.4 s. AUD-26 =
+  in-call (standalone ≈1.0 s, live ≈1.6 s). Pause median 120 ms, max
+  1360 ms < 1500 ms silence. **AUD-25 root cause:** Hermes
+  `OPENAI_MODEL_EXECUTION_GUIDANCE` / `agent.execution_guidance`
+  outranks `SOUL.md` (time/date → terminal; arithmetic → terminal;
+  reinforced by everyday-assistance MUST-`skill_view`). Phase 4 Brian:
+  "Narrow SOUL + UTC offset (Recommended)", "Keep calculate
+  (Recommended)". Phase 5: "Approved, with Claude's one edit to the
+  SOUL.md draft." Diagnosis: "C: close on findings (Recommended)",
+  "Revert it (Recommended)". Kept: UTC offset in the time stamp. Reverted:
+  SOUL "Everyday answers" (`E3D7BF9A…`). Brian on the wait: "The wait
+  still feels the same."
+
+- **P7-D11 — No memory cleanup.** **As locked.**
+  The 10 probe pending rows (7 tagged `LIVE-PROBE-CONTAMINATION`) were consolidated into nothing,
+  with zero episodes. E1 and E2 stay in `state.db` as conversation history and forensic evidence
+  (P5-D10).
+  **Brian's verdict:** "approved."
+
+- **P7-D12 — voice-live is checked before it is adopted.** **As locked.**
+  Track 4 starts by capturing the exact `voice_live_turn_note` at `345cd2b0` and evaluating every
+  instruction against Zola's chained Edge setup. Phase 4 found it says a voice model "paraphrases"
+  her text, which is false for Edge. Adoption, editing or rejection is decided at a STOP. Sentence
+  streaming stays; no whole-line synthesis. Last track, explicitly cuttable.
+  **Brian (2026-10-05):** "Yes. keep S34"
+  **Track 4 cut (Brian, 2026-10-07, verbatim):** "Cut it; go to lore
+  closeout (Recommended)". Reasons: S-sentence ≈4% of the wait; prose
+  shaping depends on the Phase 8 voice-pipeline choice (streaming TTS);
+  the voice-live note's Edge "paraphrase" claim is false. Inputs carried
+  forward: voice-live evaluation, short-first-sentence idea, one-sentence
+  end-of-stream flush (6/8 baseline), Brian's speech-lags-text
+  observation. **P4-D20 and P4-D24 unchanged.**
+
+- **P7-D13 — Track order.** **As locked.**
+  VOICEAUTH (S45 + S37) → CLARIFY (S44) → LATENCY (S38) → VOICEPROSE (S34). A Hermes capture
+  correlation ID is filed as a future upstream improvement.
+  **Brian's verdict:** "approved."
+  FORENSIC-SERVE ran after Track 1 (read-only); Tracks 2–3 followed;
+  Track 4 cut.
+
+### Known limits
+- **No Hermes capture ID** on `voice.transcript` / status terminals
+  (upstream; client generation + lifecycle is the ownership model).
+- **Stop-vs-silence-STT race** and **native serve APPCRASH** class
+  (`0xc0000005`; filed; Brian: "Let's file both the hotfix and the crash
+  issue and prioritize for a future phase."). Unresolved in Phase 7.
+- **Composer lives inside the conversation panel** — typed clarify in
+  Voice mode needs the panel open (C3 adapted).
+- **Hermes `execution_guidance` outranks `SOUL.md`** for time and math
+  tool use (Track 3 causal ❌).
+- **Edge has no streaming TTS** — about 2.0 s of synthesis per first
+  sentence (S-tts median ≈2004 ms).
+- **One-sentence replies** are spoken only after the full stream
+  (end-of-stream flush; 6/8 baseline).
+- **AUD-26 live residual:** standalone warm STT ≈1.0 s vs live ≈1.6 s
+  (in-call; not a config-key fix).
+
+### Process lessons
+- Claude's independent probes caught critical wiring bugs before deploy
+  (a released start never sent; a stuck-latch deafness path).
+- Add a live test for the exact original failure path when a smoke step
+  only exercises an easier variant (S1 → S1b).
+- Backend crashes during smoke are recorded and repeated, not treated as
+  failures (G-CRASH).
+- Verify which prompt layer controls a behavior before trying to change
+  it with `SOUL.md` (Track 3).
+- Stage files under unique paths and read back their SHAs.
+
+### Phase 7 execution notes
+- Frozen terminal set and cancel mechanism A are binding for any later
+  voice-admission work.
+- Quiet card is the Phase 7 reading of P7-D09; Brian's later direction
+  ("only time a card is necessary is when in text mode") is a Phase 8 OQ,
+  not a Phase 7 revision.
+- Track 3 "Complete" on the roadmap means the planned measure→fix→remeasure
+  shipped and closed on findings — not that latency is solved.
+- S45 RESOLVED by P7-VOICEAUTH (P7-D01–D08): the orphan capture that turned
+  her speech into Brian's turn is closed by the admission authority,
+  cancel-before-stop, serialized captures, no unbound mid-turn transcripts
+  and the D06 hand-back. Smoke S1–S8 plus S1b (S1 PARTIAL at Starting; the
+  Accepting → forced-transcript drop proven live in S1b). S37 RESOLVED,
+  closed into P7-D06.
