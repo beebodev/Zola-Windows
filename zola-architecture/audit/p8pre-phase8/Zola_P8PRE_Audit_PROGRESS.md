@@ -40,10 +40,20 @@ G-SCOPE / G-NOCHANGE / G-NO-INSTALL / G-NO-GOOGLE-ACCOUNT / G-SCRATCH / G-EXT / 
 | Phase | Status |
 |-------|--------|
 | 1–11 | COMPLETE (F1–F10 corrections applied) |
-| 12 Closeout | IN PROGRESS |
+| 12 Closeout | COMPLETE |
 
 **Final findings count:** 46 — 11 HIGH, 10 MEDIUM, 3 LOW, 22 MATCH  
 **LEADs:** 9 confirmed / 0 refuted / 2 partly
+
+## Closeout SHAs
+
+| Item | SHA |
+|------|-----|
+| **Audit content SHA (12c)** | `fba2663d0fbb030b42a925b58e6de960e21327f6` |
+| Merge SHA (--no-ff merge commit) | *(recorded in 12g)* |
+| Final main HEAD (after metadata commit) | *(recorded in 12g)* |
+
+Note: The merge SHA recorded below is the `--no-ff` merge commit, **not** the final `main` HEAD after the metadata commit.
 
 ---
 
