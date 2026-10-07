@@ -874,7 +874,8 @@ Every hunk maps to approved draft text (annotations, Phase 7 section, OQ status 
 |---|---|
 | Lore commit | `53cd1b3dc929c3b8b1463ad397c1ec08c5563c8d` |
 | Merge (`--no-ff` `p7-lore` → `main`) | `c7e46fb308c7e21d47e72183944ba5e74a2c0081` |
-| Final `main` HEAD (after this metadata commit) | recorded below |
+| Merge-SHA metadata | `3d31cefed95aaae69f689b7ace5e773e10c444d0` |
+| Final `main` HEAD | tip of closeout docs on main (this tip commit) |
 
 Branch `p7-lore` deleted locally and on `origin`.
 
