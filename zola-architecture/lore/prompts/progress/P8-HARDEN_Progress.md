@@ -991,7 +991,7 @@ none so far
 | Step | SHA |
 |---|---|
 | 7e implementation | `f60a7a84c8f2cd7e34cf671344202152eb498102` |
-| 7f docs record implementation | *(this commit)* |
-| 7h merge `--no-ff` on `main` | *(pending)* |
-| 7i docs record merge | *(pending)* |
-| Final `main` HEAD | *(pending)* |
+| 7f docs record implementation | `718876a0f98755c22c506cffd249fdbc740c75bf` |
+| 7h merge `--no-ff` on `main` | `872e9eeabffacb6c7677d3f5eb57f52a3a3327dc` |
+| 7i docs record merge | *(this commit)* |
+| Final `main` HEAD | *(after this commit)* |
