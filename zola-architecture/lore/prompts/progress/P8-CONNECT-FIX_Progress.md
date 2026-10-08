@@ -561,10 +561,10 @@ Live plugin SHAs (match repo):
 | Step | SHA |
 |---|---|
 | 7e implementation | `a538ed4a5e7c9be7a7541e5cbba18f91553c55f0` |
-| 7f docs record implementation | *(this commit)* |
-| 7h merge `--no-ff` on `main` | *(after merge)* |
-| 7i docs record merge | *(after merge)* |
-| Final `main` HEAD | *(after the metadata commit)* |
+| 7f docs record implementation | `ac15faf7b3fa0ce886de8d603c586f484c595d51` |
+| 7h merge `--no-ff` on `main` | `744787821ee4253f9c120f53273ab4c0a5e871e1` |
+| 7i docs record merge | *(this commit)* |
+| Final `main` HEAD | *(after this commit)* |
 
 ### 7d
 
