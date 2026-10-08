@@ -116,16 +116,32 @@ def is_brian_turn(turn_id: Optional[str] = None) -> bool:
 
 
 def pre_llm_call_hook(**kwargs: Any) -> None:
-    """Hermes pre_llm_call: store turn context for later Brian-only checks."""
+    """Hermes pre_llm_call: store turn context; re-mark tip after compression."""
+    session_id = str(kwargs.get("session_id") or "")
+    task_id = str(kwargs.get("task_id") or "")
     try:
         record_pre_llm_call(
             turn_id=str(kwargs.get("turn_id") or ""),
-            task_id=str(kwargs.get("task_id") or ""),
-            session_id=str(kwargs.get("session_id") or ""),
+            task_id=task_id,
+            session_id=session_id,
             platform=str(kwargs.get("platform") or ""),
             parent_session_id=str(kwargs.get("parent_session_id") or ""),
             user_message=kwargs.get("user_message") if isinstance(kwargs.get("user_message"), str) else "",
         )
+    except Exception:
+        pass
+    # P8-CONNECT: post-compression tip inherits taint via lineage; also re-mark tip — P8-D09
+    try:
+        from . import taint
+    except ImportError:
+        try:
+            import taint  # type: ignore
+        except Exception:
+            return None
+    try:
+        if taint.is_tainted(session_id=session_id or None, task_id=task_id or None):
+            if session_id:
+                taint.mark_tainted(session_id, task_id=task_id or None)
     except Exception:
         pass
     return None
