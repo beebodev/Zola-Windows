@@ -20,7 +20,7 @@
 | 5 | STOP, Apply, Deploy | 5b COMPLETE — awaiting proceed to phase 6 |
 | 6 | Smoke Test | COMPLETE — smoke test passed (Brian, 2026-10-08) |
 | 4b | Wording, compress gate, digit label | COMPLETE — mirrored 15:24; reruns recorded |
-| 7 | Closeout | IN PROGRESS |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails (summary)
 
@@ -874,8 +874,8 @@ Live plugin SHAs (match repo):
 | Step | SHA |
 |---|---|
 | 7e implementation | `0ae3b36d5d79616f3e93bc85872c91b29e4fc1a6` |
-| 7f docs record implementation | *(pending)* |
-| 7h merge `--no-ff` on `main` | *(pending)* |
+| 7f docs record implementation | `1c8b404aa92e7ff5c4488977a53a259cb492e862` |
+| 7h merge `--no-ff` on `main` | `7f54b52c50022b3a553c58ceadb522f6a0fb021a` |
 | 7i docs record merge | *(this commit)* |
 | Final `main` HEAD | *(after this commit)* |
 
@@ -883,6 +883,10 @@ Live plugin SHAs (match repo):
 
 - **Triage quality.** `gmail_search` returned both smoke emails in R1, R8, and the R1 rerun. Her summaries omitted them, including after the summary sentence was added to the tool description. Brian accepted this and did not ask for a fix. The likely cause (self-sent, already-read mail versus "new") was not diagnosed. A later change may return a structured per-sender breakdown from `gmail_search`.
 - **Interrupted-turn note.** No interrupted-turn replay in this smoke window. The exposure remains: after a serve death, Hermes can replay Brian's message with a leading interrupted-turn note, and a match against his words (the save-request rule here; the passphrase match in Track 4) then fails closed. Record only. Do not fix it on this track.
+
+### 7j
+
+Scratch folder `C:\Users\test\Dev\zola-spikes\p8-read\` deleted after the merge. That folder held `plugin-backup`, `plugin-backup-wording`, the pypdf wheel, the offline PDF, and the side-folder client compile. It is gone. `token.dpapi` was not in it and was not deleted: still 926 B, mtime 2026-10-07T15:58:24. Brian's JSON was not in it: still 409 B, mtime 2026-10-07T14:22:25.
 
 ### 7d
 
