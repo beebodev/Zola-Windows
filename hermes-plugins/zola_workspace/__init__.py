@@ -1,4 +1,4 @@
-"""zola_workspace — boundary skeleton (P8-D01 / P8-D02). No Google code."""
+"""zola_workspace — Google Workspace boundary (P8-D01 / P8-D02 / P8-D03 / P8-D08)."""
 
 from __future__ import annotations
 
@@ -7,18 +7,23 @@ import time
 from typing import Any, Dict
 
 try:
+    from . import auth
+    from . import gcal
     from . import guards
     from . import log as wslog
     from . import posture
     from . import turn_context
 except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
+    import auth
+    import gcal
     import guards
     import log as wslog
     import posture
     import turn_context
 
-# P8-HARDEN: named tool / toolset constants — P8-D01
+# P8-HARDEN / P8-CONNECT: named tool / toolset constants — P8-D01 / P8-D08
 TOOL_NAME = "workspace_status"
+TOOL_CALENDAR_QUERY = gcal.TOOL_NAME
 TOOLSET_NAME = "zola_workspace"
 HOOK_PRE_LLM_CALL = "pre_llm_call"
 HOOK_PRE_TOOL_CALL = "pre_tool_call"
@@ -47,10 +52,13 @@ def workspace_status_handler(args: dict, **kwargs) -> str:
         turn_id = turn_context.current_turn_id_from_context()
         allowed = turn_context.is_brian_turn(turn_id) if turn_id else False
         ok_posture = posture.posture_ok()
-        # P8-HARDEN: connected always false in Track 1 — no Google — P8-D01
+        # P8-CONNECT: connected / needs_reconnect / missing_scopes from local store — P8-D03
+        store = auth.store_status()
         outcome = {
             "ok": True,
-            "connected": False,
+            "connected": bool(store.get("connected")),
+            "needs_reconnect": store.get("needs_reconnect"),
+            "missing_scopes": list(store.get("missing_scopes") or []),
             "allowed_here": bool(allowed),
             "posture_ok": bool(ok_posture),
         }
@@ -58,6 +66,8 @@ def workspace_status_handler(args: dict, **kwargs) -> str:
         outcome = {
             "ok": True,
             "connected": False,
+            "needs_reconnect": auth.REASON_MISSING_STORE,
+            "missing_scopes": [],
             "allowed_here": False,
             "posture_ok": False,
         }
@@ -66,6 +76,7 @@ def workspace_status_handler(args: dict, **kwargs) -> str:
         wslog.write_event(
             wslog.LOG_EVENT_WORKSPACE_STATUS,
             ok=bool(outcome.get("ok")),
+            connected=bool(outcome.get("connected")),
             allowed_here=bool(outcome.get("allowed_here")),
             posture_ok=bool(outcome.get("posture_ok")),
             ms=elapsed_ms,
@@ -76,16 +87,23 @@ def workspace_status_handler(args: dict, **kwargs) -> str:
         return json.dumps(outcome, ensure_ascii=False)
     except Exception:
         return json.dumps(
-            {"ok": True, "connected": False, "allowed_here": False, "posture_ok": False},
+            {
+                "ok": True,
+                "connected": False,
+                "needs_reconnect": auth.REASON_MISSING_STORE,
+                "missing_scopes": [],
+                "allowed_here": False,
+                "posture_ok": False,
+            },
             ensure_ascii=False,
         )
 
 
 def register(ctx) -> None:
-    """Register hooks and the workspace_status tool (synchronous)."""
+    """Register hooks, workspace_status, and calendar_query (synchronous)."""
     # P8-HARDEN: pre_llm_call stores turn_id-keyed context — P8-D02
     ctx.register_hook(HOOK_PRE_LLM_CALL, turn_context.pre_llm_call_hook)
-    # P8-HARDEN: config/.env self-edit guard + inert stubs — P8-D02
+    # P8-HARDEN / P8-CONNECT: config self-edit + memory-taint — P8-D02 / P8-D09
     ctx.register_hook(HOOK_PRE_TOOL_CALL, guards.pre_tool_call_hook)
     # P8-HARDEN: is_async=False required (Brian Phase 3 edit #4) — P8-D01
     ctx.register_tool(
@@ -94,5 +112,14 @@ def register(ctx) -> None:
         schema=_WORKSPACE_STATUS_SCHEMA,
         handler=workspace_status_handler,
         description=_WORKSPACE_STATUS_DESCRIPTION,
+        is_async=False,
+    )
+    # P8-CONNECT: register calendar_query synchronous — P8-D08
+    ctx.register_tool(
+        name=TOOL_CALENDAR_QUERY,
+        toolset=TOOLSET_NAME,
+        schema=gcal.calendar_schema(),
+        handler=gcal.calendar_query_handler,
+        description=gcal._CALENDAR_DESCRIPTION,
         is_async=False,
     )

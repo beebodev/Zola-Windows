@@ -1,4 +1,4 @@
 name: zola_workspace
-version: 0.1.0
-description: "Zola Workspace boundary skeleton — Brian-only turn context, config self-edit guard, posture (P8-D01/D02)."
+version: 0.2.0
+description: "Zola Workspace — OAuth (DPAPI), calendar_query, untrusted framing, taint + memory guard (P8-D01/D03/D08/D09)."
 author: Zola

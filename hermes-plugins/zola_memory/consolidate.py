@@ -63,6 +63,74 @@ Rules:
 - source_turn_range must use pending turn ids from the input list.
 - If nothing qualifies, return {"episodes": []}."""
 
+# P8-CONNECT: episode attribution when Workspace-tainted / unavailable — P8-D09
+WORKSPACE_ATTRIBUTION_LINE = (
+    'If any source turn is Workspace-tainted, attribute external content as something Zola read '
+    '(for example: "Zola read a calendar event that said…"), never as Brian\'s own statement.'
+)
+
+
+def _zola_workspace_plugin_enabled() -> bool:
+    """True when zola_workspace is allow-listed and not disabled. Fail → False."""
+    try:
+        from hermes_cli.plugins_discovery import (
+            _get_disabled_plugins,
+            _get_enabled_plugins,
+        )
+
+        disabled = _get_disabled_plugins() or set()
+        if "zola_workspace" in disabled:
+            return False
+        enabled = _get_enabled_plugins()
+        if enabled is None:
+            return False
+        return "zola_workspace" in enabled
+    except Exception:
+        return False
+
+
+def _needs_workspace_attribution(rows: Sequence[sqlite3.Row]) -> bool:
+    """Append attribution when workspace disabled, tainted, or import/read fails."""
+    # P8-CONNECT: fail toward caution — P8-D09
+    try:
+        if not _zola_workspace_plugin_enabled():
+            return True
+    except Exception:
+        return True
+    try:
+        from hermes_plugins.zola_workspace.taint import is_tainted
+    except Exception:
+        return True
+    session_ids = set()
+    try:
+        for row in rows:
+            try:
+                sid = row["session_id"]
+            except Exception:
+                sid = ""
+            if sid:
+                session_ids.add(str(sid))
+    except Exception:
+        return True
+    if not session_ids:
+        return False
+    for sid in session_ids:
+        try:
+            if is_tainted(sid):
+                return True
+        except Exception:
+            return True
+    return False
+
+
+def summarizer_instructions_for(rows: Sequence[sqlite3.Row]) -> str:
+    """SUMMARIZER_INSTRUCTIONS, plus Workspace attribution when required."""
+    base = SUMMARIZER_INSTRUCTIONS
+    if _needs_workspace_attribution(rows):
+        return base + "\n- " + WORKSPACE_ATTRIBUTION_LINE
+    return base
+
+
 EPISODE_JSON_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -414,8 +482,10 @@ def run_consolidation(provider: Any, trigger: str) -> bool:
 
         input_text = _build_model_input(conn, rows)
         try:
+            # P8-CONNECT: attribution line when Workspace-tainted / unavailable — P8-D09
+            instructions = summarizer_instructions_for(rows)
             result = llm.complete_structured(
-                instructions=SUMMARIZER_INSTRUCTIONS,
+                instructions=instructions,
                 input=[{"type": "text", "text": input_text}],
                 json_schema=EPISODE_JSON_SCHEMA,
                 timeout=CONSOLIDATE_LLM_TIMEOUT_S,

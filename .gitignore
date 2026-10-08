@@ -1,2 +1,8 @@
 # P6-CALC: ignore plugin bytecode under hermes-plugins — P6-D08
 hermes-plugins/**/__pycache__/
+
+# P8-CONNECT: Workspace token/taint stores live under %HERMES_HOME%/zola_workspace/
+# and are never in this repo. These names are ignored so a copy dropped into
+# the tree cannot be committed. The live Hermes profile tree is outside the repo.
+**/token.dpapi
+**/taint.sqlite

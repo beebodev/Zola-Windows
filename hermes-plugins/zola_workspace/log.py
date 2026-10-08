@@ -10,6 +10,8 @@ from typing import Any, Optional
 LOG_FILENAME = "zola_workspace.log"
 LOG_EVENT_GUARD = "zola_workspace.guard"
 LOG_EVENT_WORKSPACE_STATUS = "zola_workspace.workspace_status"
+# P8-CONNECT: calendar metadata-only log event — P8-D11
+LOG_EVENT_CALENDAR_QUERY = "zola_workspace.calendar_query"
 
 _logger = logging.getLogger("zola_workspace")
 _file_handler_ready = False

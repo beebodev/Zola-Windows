@@ -222,11 +222,18 @@ class GuardTests(unittest.TestCase):
             with self.subTest(tool=tool, args=args):
                 self.assertFalse(self._block(tool, args), f"expected allow for {tool}")
 
-    def test_10_inert_stubs_allow(self) -> None:
-        self.assertIsNone(guards.memory_taint_stub(tool_name="memory", args={}))
-        self.assertIsNone(guards.terminal_google_stub(tool_name="terminal", args={"command": "x"}))
-        self.assertFalse(guards.GUARD_MEMORY_TAINT_ENABLED)
+    def test_10_memory_taint_enabled_untainted_noop(self) -> None:
+        # P8-CONNECT: memory_taint live; untainted / no-session is a no-op — P8-D09
+        self.assertTrue(guards.GUARD_MEMORY_TAINT_ENABLED)
         self.assertFalse(guards.GUARD_TERMINAL_GOOGLE_ENABLED)
+        self.assertIsNone(
+            guards.memory_taint_stub(
+                tool_name="memory",
+                args={"action": "add", "content": "x"},
+                session_id="sess-untainted-track1",
+            )
+        )
+        self.assertIsNone(guards.terminal_google_stub(tool_name="terminal", args={"command": "x"}))
 
     def test_20_delete_env_and_other_profile_file(self) -> None:
         self.assertTrue(
@@ -346,21 +353,23 @@ class WorkspaceStatusTests(unittest.TestCase):
 
 class RegisterTests(unittest.TestCase):
     def test_register_sync_tool(self) -> None:
-        seen = {}
+        seen: dict = {"tools": []}
 
         class FakeCtx:
             def register_hook(self, name, fn):
                 seen.setdefault("hooks", []).append(name)
 
             def register_tool(self, **kwargs):
-                seen["tool"] = kwargs
+                seen["tools"].append(kwargs)
 
         plugin.register(FakeCtx())
         self.assertIn("pre_llm_call", seen["hooks"])
         self.assertIn("pre_tool_call", seen["hooks"])
-        self.assertEqual(seen["tool"]["name"], "workspace_status")
-        self.assertEqual(seen["tool"]["toolset"], "zola_workspace")
-        self.assertFalse(seen["tool"]["is_async"])
+        names = {t["name"] for t in seen["tools"]}
+        self.assertEqual(names, {"workspace_status", "calendar_query"})
+        for tool in seen["tools"]:
+            self.assertEqual(tool["toolset"], "zola_workspace")
+            self.assertFalse(tool["is_async"])
 
 
 class HookBlockMessageTests(unittest.TestCase):
