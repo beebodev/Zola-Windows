@@ -19,7 +19,7 @@
 | 4 | Implementation (repo only) | COMPLETE |
 | 5 | STOP, Apply, Deploy, Setup | COMPLETE |
 | 6 | Smoke Test | COMPLETE — smoke test passed |
-| 7 | Closeout | IN PROGRESS — 7a passed; commits next |
+| 7 | Closeout | IN PROGRESS — 7e committed; merge next |
 
 ## Guardrails summary
 
@@ -1002,12 +1002,12 @@ This smoke's plugin log has 220 event-list lines whose path includes a percent-e
 
 | Step | SHA |
 |---|---|
-| 7e implementation | *(this commit)* |
-| 7f docs record implementation | *(next)* |
+| 7e implementation | `ad20f8762ca68a1d10856142a54adb956a2afe9b` |
+| 7f docs record implementation | *(this commit)* |
 | 7h merge `--no-ff` on `main` | *(after merge)* |
 | 7i docs record merge | *(after merge)* |
 | Final `main` HEAD | *(after the metadata commit)* |
 
 ### Secrets scan before 7e
 
-Staged-tree scan is recorded with the 7e commit. Value-shaped patterns (`ya29.` plus 10+ token chars, `GOCSPX-` plus 10+, `1//` plus 20+, three-part `eyJ`, `googleusercontent.com`) were **0** in the plugin tree before staging. Documentation names and synthetic fixtures are not live secrets.
+Staged diff of `ad20f8762ca68a1d10856142a54adb956a2afe9b`: value-shaped patterns were **0** (`ya29.` plus 10+ token chars, `GOCSPX-` plus 8+, `1//` plus 20+, three-part `eyJ`, `AIza` plus 20+). The single `googleusercontent.com` string is this scan note, not a client id. Remaining `ya29.` / `GOCSPX-` / `Bearer` / `client_secret` occurrences are pattern names and synthetic fixtures.
