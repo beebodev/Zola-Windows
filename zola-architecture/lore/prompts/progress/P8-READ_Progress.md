@@ -873,7 +873,7 @@ Live plugin SHAs (match repo):
 
 | Step | SHA |
 |---|---|
-| 7e implementation | *(pending)* |
+| 7e implementation | `0ae3b36d5d79616f3e93bc85872c91b29e4fc1a6` |
 | 7f docs record implementation | *(pending)* |
 | 7h merge `--no-ff` on `main` | *(pending)* |
 | 7i docs record merge | *(this commit)* |
