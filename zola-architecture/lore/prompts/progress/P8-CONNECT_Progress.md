@@ -19,7 +19,7 @@
 | 4 | Implementation (repo only) | COMPLETE |
 | 5 | STOP, Apply, Deploy, Setup | COMPLETE |
 | 6 | Smoke Test | COMPLETE — smoke test passed |
-| 7 | Closeout | IN PROGRESS — 7e committed; merge next |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -1003,10 +1003,10 @@ This smoke's plugin log has 220 event-list lines whose path includes a percent-e
 | Step | SHA |
 |---|---|
 | 7e implementation | `ad20f8762ca68a1d10856142a54adb956a2afe9b` |
-| 7f docs record implementation | *(this commit)* |
-| 7h merge `--no-ff` on `main` | *(after merge)* |
-| 7i docs record merge | *(after merge)* |
-| Final `main` HEAD | *(after the metadata commit)* |
+| 7f docs record implementation | `8880c746a25ae164217a44cc72c54deb4fb0ff66` |
+| 7h merge `--no-ff` on `main` | `74255bb309ed71f6d480222de5ec2b0893c2e0e7` |
+| 7i docs record merge | *(this commit)* |
+| Final `main` HEAD | *(after this commit)* |
 
 ### Secrets scan before 7e
 
