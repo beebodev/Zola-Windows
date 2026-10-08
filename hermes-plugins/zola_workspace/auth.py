@@ -348,7 +348,12 @@ def _fetch_jwks(*, force: bool = False) -> Dict[str, Any]:
     except ImportError:
         import google_http  # type: ignore
 
-    resp = google_http.request("GET", GOOGLE_JWKS_URI, timeout=20.0)
+    resp = google_http.request(
+        "GET",
+        GOOGLE_JWKS_URI,
+        timeout=20.0,
+        route=google_http.ROUTE_OAUTH_CERTS,
+    )
     _jwks_cache = resp.json()
     return _jwks_cache
 
@@ -435,6 +440,7 @@ def _token_post(form: Dict[str, str]) -> Dict[str, Any]:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data=urlencode(form),
             timeout=30.0,
+            route=google_http.ROUTE_OAUTH_TOKEN,
         )
     except google_http.GoogleHttpStatusError as exc:
         # OAuth token endpoint returns 400 + {"error":"invalid_grant"} etc.

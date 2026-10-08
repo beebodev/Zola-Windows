@@ -1011,3 +1011,13 @@ This smoke's plugin log has 220 event-list lines whose path includes a percent-e
 ### Secrets scan before 7e
 
 Staged diff of `ad20f8762ca68a1d10856142a54adb956a2afe9b`: value-shaped patterns were **0** (`ya29.` plus 10+ token chars, `GOCSPX-` plus 8+, `1//` plus 20+, three-part `eyJ`, `AIza` plus 20+). The single `googleusercontent.com` string is this scan note, not a client id. Remaining `ya29.` / `GOCSPX-` / `Bearer` / `client_secret` occurrences are pattern names and synthetic fixtures.
+
+## Post-closeout correction (P8-CONNECT-FIX, 2026-10-08)
+
+Appended only. The sections above are unchanged.
+
+**C2 first wording.** The len-32 `memory` replace completed. It was not a new fact: it overwrote the active favorite-color entry (fact `0e1fb237-4db7-40c7-a07a-b90547ebf119`) through `on_memory_write`. Active facts stayed **18** because it was a replace. The len-46 replace before it was blocked. Log `zola_memory.fact_replace` at `2026-10-08 07:54:40` is that write. Brian later repaired the color entry through Zola; that repair is recorded on `P8-CONNECT-FIX_Progress.md`.
+
+**Past-event injection row.** The sentence "Orange was not saved as a new fact" is the wrong conclusion. The past-event title was not a separate smoke step, and the calendar result had no description, but the C2 first wording did save the color sentence by replacing the existing entry. Facts stayed **18** until C4b because the save was a replace, then C4b added one fact (**18 → 19**).
+
+**C5c.** Not proven. Brian skipped it. `/compress` in the client was a user message, not Hermes compression. Post-compression taint was not smoked. C5c moves to Track 3.

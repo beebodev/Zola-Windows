@@ -36,10 +36,46 @@ BLOCK_MESSAGE_CONFIG_OR_ENV = (
     "Blocked: editing the live Hermes config.yaml or .env is not allowed."
 )
 
-# P8-CONNECT: exact Brian block message — P8-D09
+# P8-CONNECT-FIX: exact words after the save phrase; one leading label ignored — P8-D09
 BLOCK_MESSAGE_MEMORY_TAINT = (
-    "Not saved: in this conversation, a memory can only use Brian's exact words "
-    "from his current message. Save his words as he said them, or ask him to state the fact."
+    'Not saved: in this conversation, the memory must be Brian\'s exact words that come after "Remember" (or "Save", "Note that") in his current message, with nothing added. Save those words, or ask him to state the fact.'
+)
+
+# One leading [label] is not part of the containment key. The stored text keeps it.
+_LEADING_LABEL_RE = re.compile(r"^\[[A-Za-z][A-Za-z _-]{0,30}\]\s*")
+
+# P8-CONNECT-FIX: tainted save must start with a save request — P8-D09
+BLOCK_MESSAGE_MEMORY_SAVE_REQUEST = (
+    'Not saved: in this conversation, a memory needs Brian to ask for it at the start '
+    'of his message, in his own words, like "Remember the test is at 3 PM." '
+    "Ask him to say it that way."
+)
+
+# Longest first so "note that" wins over "note" at the same token.
+SAVE_INTENT_PHRASES = (
+    "do not forget",
+    "don't forget",
+    "keep in mind",
+    "make a note",
+    "note that",
+    "remember",
+    "save",
+    "note",
+)
+
+SAVE_LEAD_IN_WORDS = frozenset(
+    {
+        "zola",
+        "hey",
+        "ok",
+        "okay",
+        "please",
+        "so",
+        "and",
+        "also",
+        "alright",
+        "oh",
+    }
 )
 
 BLOCK_MESSAGE_SKILL_MANAGE = (
@@ -294,9 +330,95 @@ def _user_message_for_turn(**kwargs: Any) -> Optional[str]:
     return rec.user_message if isinstance(rec.user_message, str) else ""
 
 
+def _normalize_apostrophes(text: str) -> str:
+    """Fold U+2019 / U+2018 via zola_memory.forget (package or flat import)."""
+    # P8-CONNECT-FIX: curly and straight apostrophes compare equal — P8-D09
+    raw = text if isinstance(text, str) else ""
+    try:
+        from hermes_plugins.zola_memory.forget import normalize_apostrophes
+
+        return normalize_apostrophes(raw)
+    except Exception:
+        pass
+    try:
+        from zola_memory.forget import normalize_apostrophes  # type: ignore
+
+        return normalize_apostrophes(raw)
+    except Exception:
+        pass
+    try:
+        import forget as forget_mod  # type: ignore
+
+        return forget_mod.normalize_apostrophes(raw)
+    except Exception:
+        return raw.replace("\u2019", "'").replace("\u2018", "'")
+
+
+def _compare_key(text: str) -> str:
+    """Disposition key, then apostrophe fold. Used by containment and the save-request parse."""
+    # P8-CONNECT-FIX: both normalizers on fact and message — P8-D09
+    return _normalize_apostrophes(_normalize_disposition_key(text))
+
+
+def _save_token_spans(compare_key: str) -> List[tuple]:
+    """Tokens of letters, digits, and U+0027, with spans into compare_key."""
+    spans: List[tuple] = []
+    i = 0
+    n = len(compare_key)
+    while i < n:
+        ch = compare_key[i]
+        if ch.isalnum() or ch == "'":
+            j = i + 1
+            while j < n and (compare_key[j].isalnum() or compare_key[j] == "'"):
+                j += 1
+            spans.append((compare_key[i:j], i, j))
+            i = j
+        else:
+            i += 1
+    return spans
+
+
+def _save_request_suffix(user_message: str) -> Optional[str]:
+    """Compare-key text after the first intent phrase.
+
+    None when no phrase appears, or a token before it is not a lead-in.
+    """
+    # P8-CONNECT-FIX: save request must lead the message — P8-D09
+    key = _compare_key(user_message)
+    spans = _save_token_spans(key)
+    tokens = [span[0] for span in spans]
+    phrase_tokens = [tuple(phrase.split(" ")) for phrase in SAVE_INTENT_PHRASES]
+    found: Optional[tuple] = None
+    for i in range(len(tokens)):
+        for phrase in phrase_tokens:
+            n = len(phrase)
+            if tuple(tokens[i : i + n]) == phrase:
+                found = (i, spans[i + n - 1][2])
+                break
+        if found is not None:
+            break
+    if found is None:
+        return None
+    start_index, end_offset = found
+    for token, _start, _end in spans[:start_index]:
+        if token not in SAVE_LEAD_IN_WORDS:
+            return None
+    return key[end_offset:]
+
+
+def _strip_one_leading_label(fact: str) -> str:
+    """Drop one leading [label] before the compare key. The saved text is unchanged."""
+    # P8-CONNECT-FIX: containment ignores one bracketed label — P8-D09
+    return _LEADING_LABEL_RE.sub("", fact or "", count=1)
+
+
+def _fact_compare_key(fact: str) -> str:
+    return _compare_key(_strip_one_leading_label(fact))
+
+
 def _fact_contained(fact: str, user_message: str) -> bool:
-    fact_key = _normalize_disposition_key(fact)
-    msg_key = _normalize_disposition_key(user_message)
+    fact_key = _fact_compare_key(fact)
+    msg_key = _compare_key(user_message)
     if not fact_key:
         return False
     return fact_key in msg_key
@@ -358,10 +480,19 @@ def evaluate_memory_taint(
         # P8-CONNECT: missing turn when tainted → block — P8-D09
         return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_MEMORY_TAINT}
 
+    # P8-CONNECT-FIX: phrase and lead-ins, then exact words after the phrase — P8-D09
+    try:
+        suffix = _save_request_suffix(user_message)
+    except Exception:
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_MEMORY_TAINT}
+    if suffix is None:
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_MEMORY_SAVE_REQUEST}
+
     # P8-CONNECT: operations[] — block WHOLE batch if any op fails — P8-D09
     for op in ops:
         fact = _fact_text_from_op(op)
-        if not _fact_contained(fact, user_message):
+        fact_key = _fact_compare_key(fact)
+        if not fact_key or fact_key not in suffix:
             return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_MEMORY_TAINT}
     return None
 

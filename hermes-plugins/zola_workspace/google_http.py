@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional
-from urllib.parse import urlsplit, urlunsplit
 
 # P8-CONNECT: named transport caps — P8-D03
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -13,6 +12,12 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0)
 RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 LOG_PREFIX = "zola_workspace.google_http"
+
+# P8-CONNECT-FIX: route labels; a missing label logs unlabeled, never a path — P8-D11
+ROUTE_CALENDAR_LIST = "calendar.calendarList.list"
+ROUTE_CALENDAR_EVENTS = "calendar.events.list"
+ROUTE_OAUTH_CERTS = "oauth.certs"
+ROUTE_OAUTH_TOKEN = "oauth.token"
 
 _logger = logging.getLogger("zola_workspace.google_http")
 
@@ -83,16 +88,6 @@ def reset_transport_for_tests() -> None:
     set_transport_for_tests(None)
 
 
-def _safe_url_for_log(url: str) -> str:
-    """Host + path only — never query, fragment, headers, or bodies."""
-    # P8-CONNECT: never log URLs with query — P8-D03
-    try:
-        parts = urlsplit(str(url or ""))
-        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
-    except Exception:
-        return "(unparseable)"
-
-
 def _log_event(event: str, **fields: Any) -> None:
     parts = [f"{LOG_PREFIX}.{event}"]
     for key, value in fields.items():
@@ -135,6 +130,13 @@ def _default_transport(
     return GoogleHttpResponse(resp.status_code, resp.text or "", dict(resp.headers))
 
 
+def _route_for_log(route: Optional[str]) -> str:
+    """Named route, or unlabeled. Never a URL path."""
+    # P8-CONNECT-FIX: missing route logs unlabeled — P8-D11
+    text = str(route or "").strip()
+    return text if text else "unlabeled"
+
+
 def request(
     method: str,
     url: str,
@@ -144,14 +146,16 @@ def request(
     data: Any = None,
     json: Any = None,
     timeout: Optional[float] = None,
+    route: Optional[str] = None,
 ) -> GoogleHttpResponse:
     """Perform one Google HTTP call with bounded 5xx/429 retry and backoff.
 
-    Never logs query strings, headers, or bodies.
+    Never logs query strings, headers, bodies, or URL paths.
     """
     # P8-CONNECT: sole Google HTTP entry; timeouts + bounded retry — P8-D03
+    # P8-CONNECT-FIX: log route= only — P8-D11
     timeout_s = float(DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout)
-    safe = _safe_url_for_log(url)
+    route_label = _route_for_log(route)
     transport = _transport or _default_transport
     last_status: Optional[int] = None
     attempts = 0
@@ -168,21 +172,27 @@ def request(
                 timeout=timeout_s,
             )
         except GoogleHttpTimeout:
-            _log_event("timeout", method=method.upper(), url=safe, attempt=attempts)
+            _log_event("timeout", method=method.upper(), route=route_label, attempt=attempts)
             raise
         except GoogleHttpTransportError:
-            _log_event("transport_error", method=method.upper(), url=safe, attempt=attempts)
+            _log_event(
+                "transport_error", method=method.upper(), route=route_label, attempt=attempts
+            )
             raise
         except GoogleHttpError:
             raise
         except Exception as exc:
-            _log_event("transport_error", method=method.upper(), url=safe, attempt=attempts)
+            _log_event(
+                "transport_error", method=method.upper(), route=route_label, attempt=attempts
+            )
             raise GoogleHttpTransportError("transport_error") from exc
 
         status = int(getattr(resp, "status_code", 0) or 0)
         last_status = status
         if 200 <= status < 300:
-            _log_event("ok", method=method.upper(), url=safe, status=status, attempt=attempts)
+            _log_event(
+                "ok", method=method.upper(), route=route_label, status=status, attempt=attempts
+            )
             if isinstance(resp, GoogleHttpResponse):
                 return resp
             text = getattr(resp, "text", "") or ""
@@ -194,7 +204,7 @@ def request(
             _log_event(
                 "status_error",
                 method=method.upper(),
-                url=safe,
+                route=route_label,
                 status=status,
                 attempt=attempts,
             )
@@ -210,7 +220,7 @@ def request(
         _log_event(
             "retry",
             method=method.upper(),
-            url=safe,
+            route=route_label,
             status=status,
             attempt=attempts,
             backoff_s=delay,

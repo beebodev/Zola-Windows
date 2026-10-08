@@ -254,13 +254,27 @@ def _shape_event(event: Dict[str, Any], *, calendar_name: str, tz) -> Dict[str, 
     }
 
 
-def _google_get(url: str, *, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    resp = google_http.request("GET", url, headers=headers, params=params, timeout=30.0)
+def _google_get(
+    url: str,
+    *,
+    headers: Dict[str, str],
+    route: str,
+    params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    # P8-CONNECT-FIX: every Google call passes a route constant — P8-D11
+    resp = google_http.request(
+        "GET", url, headers=headers, params=params, timeout=30.0, route=route
+    )
     return resp.json()
 
 
 def _calendar_list(headers: Dict[str, str]) -> List[Dict[str, Any]]:
-    body = _google_get(CALENDAR_LIST_URL, headers=headers, params={"maxResults": 250})
+    body = _google_get(
+        CALENDAR_LIST_URL,
+        headers=headers,
+        params={"maxResults": 250},
+        route=google_http.ROUTE_CALENDAR_LIST,
+    )
     items = body.get("items") or []
     return [c for c in items if isinstance(c, dict)]
 
@@ -317,7 +331,12 @@ def _list_events_for_calendar(
             params["pageToken"] = page_token
         url = EVENTS_URL_TMPL.format(calendar_id=calendar_id)
         try:
-            body = _google_get(url, headers=headers, params=params)
+            body = _google_get(
+                url,
+                headers=headers,
+                params=params,
+                route=google_http.ROUTE_CALENDAR_EVENTS,
+            )
         except Exception:
             return events, True
         pages += 1
@@ -378,6 +397,49 @@ def calendar_query_handler(args: dict, **kwargs) -> str:
         return _refuse(STATE_ERROR, "internal_error")
 
 
+def _collect_most_recent_with_query(
+    *,
+    calendars: List[Dict[str, Any]],
+    headers: Dict[str, str],
+    win_start: datetime,
+    win_end: datetime,
+    query: str,
+    tz,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """One full-window paged search per calendar. Caller keeps the latest."""
+    # P8-CONNECT-FIX: most_recent with q skips 30-day chunks — P8-D08
+    all_shaped: List[Dict[str, Any]] = []
+    incomplete = False
+    seen_keys: Set[Tuple[str, str]] = set()
+    from urllib.parse import quote
+
+    for cal in calendars:
+        cal_id = str(cal.get("id") or "")
+        if not cal_id:
+            continue
+        cal_name = str(cal.get("summary") or cal_id)
+        enc_id = quote(cal_id, safe="")
+        raw_events, page_incomplete = _list_events_for_calendar(
+            enc_id,
+            headers=headers,
+            time_min=win_start,
+            time_max=win_end,
+            query=query,
+        )
+        if page_incomplete:
+            incomplete = True
+        for ev in raw_events:
+            eid = str(ev.get("id") or "")
+            if eid:
+                key = (cal_id, eid)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+            all_shaped.append(_shape_event(ev, calendar_name=cal_name, tz=tz))
+    all_shaped.sort(key=_sort_key_dt, reverse=True)
+    return all_shaped, incomplete
+
+
 def _collect_most_recent(
     *,
     calendars: List[Dict[str, Any]],
@@ -388,8 +450,20 @@ def _collect_most_recent(
     max_results: int,
     tz,
 ) -> Tuple[List[Dict[str, Any]], bool]:
-    """Search backward in MOST_RECENT_CHUNK_DAYS windows until max_results filled."""
+    """Search backward in MOST_RECENT_CHUNK_DAYS windows until max_results filled.
+
+    A non-empty query uses one full-window search per calendar instead.
+    """
     # P8-CONNECT: most_recent backward 30-day chunks from now — P8-D08
+    if str(query or "").strip():
+        return _collect_most_recent_with_query(
+            calendars=calendars,
+            headers=headers,
+            win_start=win_start,
+            win_end=win_end,
+            query=str(query).strip(),
+            tz=tz,
+        )
     all_shaped: List[Dict[str, Any]] = []
     incomplete = False
     cursor = win_end

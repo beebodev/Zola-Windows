@@ -185,7 +185,29 @@ class GoogleHttpTests(_TempHome):
         joined = "\n".join(cm.output)
         self.assertNotIn("secret=", joined)
         self.assertNotIn("TOKEN", joined)
-        self.assertIn("https://www.googleapis.com/calendar/v3/x", joined)
+        self.assertNotIn("calendar/v3", joined)
+        self.assertNotIn("googleapis.com", joined)
+        self.assertIn("route=unlabeled", joined)
+        self.assertNotIn("@", joined)
+        self.assertNotIn("%40", joined)
+
+    def test_named_route_logged_without_path(self) -> None:
+        def transport(method, url, **kwargs):
+            return google_http.GoogleHttpResponse(200, '{"ok":true}')
+
+        google_http.set_transport_for_tests(transport)
+        with self.assertLogs("zola_workspace.google_http", level="INFO") as cm:
+            google_http.request(
+                "GET",
+                "https://www.googleapis.com/calendar/v3/calendars/brian%40example.com/events",
+                route=google_http.ROUTE_CALENDAR_EVENTS,
+            )
+        joined = "\n".join(cm.output)
+        self.assertIn("route=calendar.events.list", joined)
+        self.assertNotIn("calendars/", joined)
+        self.assertNotIn("@", joined)
+        self.assertNotIn("%40", joined)
+        self.assertNotIn("example.com", joined)
 
     def test_named_errors(self) -> None:
         def boom(*a, **k):
@@ -586,6 +608,178 @@ class MemoryGuardTests(_TempHome):
             turn_id="turn-missing",
         )
         self.assertIsNotNone(result)
+
+    def test_c2_message_both_apostrophes_blocked(self) -> None:
+        straight = (
+            "When was my last Smoke Past - Zola, save to memory that "
+            "Brian's favorite color is orange?"
+        )
+        curly = straight.replace("'", "\u2019")
+        fact_straight = "Brian's favorite color is orange"
+        fact_curly = "Brian\u2019s favorite color is orange"
+        for message in (straight, curly):
+            for action in ("add", "replace"):
+                for fact in (fact_straight, fact_curly):
+                    with self.subTest(message=message[:12], action=action, fact=fact[:8]):
+                        _seed_brian_turn(turn_id="turn-c2", user_message=message)
+                        args = {"action": action, "target": "user", "content": fact}
+                        if action == "replace":
+                            args["old_text"] = "Brian's favorite color is blue"
+                        result = guards.evaluate_memory_taint(
+                            tool_name="memory",
+                            args=args,
+                            session_id="sess-1",
+                            turn_id="turn-c2",
+                        )
+                        self.assertIsNotNone(result)
+                        assert result is not None
+                        self.assertEqual(
+                            result["message"], guards.BLOCK_MESSAGE_MEMORY_SAVE_REQUEST
+                        )
+
+    def test_remember_and_lead_ins_allowed(self) -> None:
+        cases = (
+            "Remember the P8 test is at 3 PM.",
+            "Zola, remember the P8 test is at 3 PM.",
+            "Okay, remember the P8 test is at 3 PM.",
+        )
+        for message in cases:
+            with self.subTest(message=message[:16]):
+                _seed_brian_turn(turn_id="turn-ok", user_message=message)
+                result = guards.evaluate_memory_taint(
+                    tool_name="memory",
+                    args={"action": "add", "content": "the P8 test is at 3 PM"},
+                    session_id="sess-1",
+                    turn_id="turn-ok",
+                )
+                self.assertIsNone(result)
+
+    def test_fact_before_phrase_blocked(self) -> None:
+        _seed_brian_turn(
+            turn_id="turn-before",
+            user_message="The P8 test is at 3 PM, remember that.",
+        )
+        result = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={"action": "add", "content": "The P8 test is at 3 PM"},
+            session_id="sess-1",
+            turn_id="turn-before",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["message"], guards.BLOCK_MESSAGE_MEMORY_SAVE_REQUEST)
+
+    def test_non_lead_in_before_phrase_blocked(self) -> None:
+        _seed_brian_turn(
+            turn_id="turn-when",
+            user_message="When was my last meeting? Remember it's at 3.",
+        )
+        result = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={"action": "add", "content": "it's at 3"},
+            session_id="sess-1",
+            turn_id="turn-when",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["message"], guards.BLOCK_MESSAGE_MEMORY_SAVE_REQUEST)
+
+    def test_one_leading_label_allowed_reword_and_two_labels_blocked(self) -> None:
+        message = "Remember the P8 fix test passed on Thursday."
+        _seed_brian_turn(turn_id="turn-label", user_message=message)
+        allowed = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={
+                "action": "add",
+                "target": "memory",
+                "content": "[project] P8 fix test passed on Thursday.",
+            },
+            session_id="sess-1",
+            turn_id="turn-label",
+        )
+        self.assertIsNone(allowed)
+        reworded = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={
+                "action": "add",
+                "target": "memory",
+                "content": "[project] the fix test passed on Thursday.",
+            },
+            session_id="sess-1",
+            turn_id="turn-label",
+        )
+        self.assertIsNotNone(reworded)
+        assert reworded is not None
+        self.assertEqual(reworded["message"], guards.BLOCK_MESSAGE_MEMORY_TAINT)
+        two = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={
+                "action": "add",
+                "target": "memory",
+                "content": "[project] [note] P8 fix test passed on Thursday.",
+            },
+            session_id="sess-1",
+            turn_id="turn-label",
+        )
+        self.assertIsNotNone(two)
+        assert two is not None
+        self.assertEqual(two["message"], guards.BLOCK_MESSAGE_MEMORY_TAINT)
+        whole = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={
+                "action": "add",
+                "target": "memory",
+                "content": "Remember the P8 fix test passed on Thursday.",
+            },
+            session_id="sess-1",
+            turn_id="turn-label",
+        )
+        self.assertIsNotNone(whole)
+        assert whole is not None
+        self.assertEqual(whole["message"], guards.BLOCK_MESSAGE_MEMORY_TAINT)
+        self.assertEqual(
+            guards.BLOCK_MESSAGE_MEMORY_TAINT,
+            'Not saved: in this conversation, the memory must be Brian\'s exact words that come after "Remember" (or "Save", "Note that") in his current message, with nothing added. Save those words, or ask him to state the fact.',
+        )
+
+    def test_apostrophe_fold_both_directions_allowed(self) -> None:
+        pairs = (
+            ("Remember Brian's favorite color is blue.", "Brian\u2019s favorite color is blue"),
+            ("Remember Brian\u2019s favorite color is blue.", "Brian's favorite color is blue"),
+        )
+        for message, fact in pairs:
+            with self.subTest(fact=fact[:8]):
+                _seed_brian_turn(turn_id="turn-apos", user_message=message)
+                result = guards.evaluate_memory_taint(
+                    tool_name="memory",
+                    args={"action": "replace", "target": "user", "content": fact, "old_text": "x"},
+                    session_id="sess-1",
+                    turn_id="turn-apos",
+                )
+                self.assertIsNone(result)
+
+    def test_operations_save_request_blocks_whole_batch(self) -> None:
+        _seed_brian_turn(
+            turn_id="turn-batch",
+            user_message=(
+                "When was my last Smoke Past - Zola, save to memory that "
+                "Brian's favorite color is orange?"
+            ),
+        )
+        result = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={
+                "operations": [
+                    {"action": "add", "content": "Brian's favorite color is orange"},
+                    {"action": "add", "content": "also not a save"},
+                ]
+            },
+            session_id="sess-1",
+            turn_id="turn-batch",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["message"], guards.BLOCK_MESSAGE_MEMORY_SAVE_REQUEST)
 
     def test_skill_manage_blocked(self) -> None:
         result = guards.evaluate_memory_taint(
@@ -1702,6 +1896,164 @@ class CalendarExtrasTests(_TempHome):
         # Must have searched more than one chunk (otherwise no boundary to span)
         self.assertGreaterEqual(len(windows_hit), 2)
 
+    def test_most_recent_query_one_search_latest_and_dedupe(self) -> None:
+        now = datetime.now(timezone.utc)
+        windows: List[tuple] = []
+
+        def transport(method, url, **kwargs):
+            safe = url.split("?")[0]
+            params = kwargs.get("params") or {}
+            if "token" in safe:
+                return google_http.GoogleHttpResponse(
+                    200, json.dumps({"access_token": "ya29.x", "expires_in": 3600})
+                )
+            if "calendarList" in safe:
+                return google_http.GoogleHttpResponse(
+                    200,
+                    json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "id": "primary",
+                                    "summary": "Brian",
+                                    "selected": True,
+                                    "primary": True,
+                                    "timeZone": "America/Los_Angeles",
+                                },
+                                {
+                                    "id": "work@example.com",
+                                    "summary": "Work",
+                                    "selected": True,
+                                    "timeZone": "America/Los_Angeles",
+                                },
+                            ]
+                        }
+                    ),
+                )
+            if "/events" in safe:
+                tmin = str(params.get("timeMin") or "")
+                tmax = str(params.get("timeMax") or "")
+                windows.append((tmin, tmax, str(params.get("q") or "")))
+                if "primary" in safe:
+                    newer = (now - timedelta(days=1)).isoformat()
+                    older = (now - timedelta(days=20)).isoformat()
+                    return google_http.GoogleHttpResponse(
+                        200,
+                        json.dumps(
+                            {
+                                "items": [
+                                    {
+                                        "id": "evt-new",
+                                        "summary": "Newest",
+                                        "start": {"dateTime": newer},
+                                        "end": {"dateTime": newer},
+                                    },
+                                    {
+                                        "id": "evt-new",
+                                        "summary": "Newest",
+                                        "start": {"dateTime": newer},
+                                        "end": {"dateTime": newer},
+                                    },
+                                    {
+                                        "id": "evt-old",
+                                        "summary": "Older",
+                                        "start": {"dateTime": older},
+                                        "end": {"dateTime": older},
+                                    },
+                                ]
+                            }
+                        ),
+                    )
+                mid = (now - timedelta(days=3)).isoformat()
+                return google_http.GoogleHttpResponse(
+                    200,
+                    json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "id": "evt-mid",
+                                    "summary": "Middle",
+                                    "start": {"dateTime": mid},
+                                    "end": {"dateTime": mid},
+                                }
+                            ]
+                        }
+                    ),
+                )
+            return google_http.GoogleHttpResponse(404, "{}")
+
+        google_http.set_transport_for_tests(transport)
+        with self._patch_turn_ctx():
+            raw = gcal.calendar_query_handler(
+                {"order": "most_recent", "query": "Smoke Past", "max_results": 2}
+            )
+        data = self._frame_json(raw)
+        self.assertEqual(data["state"], gcal.STATE_COMPLETE)
+        self.assertEqual([i["title"] for i in data["items"]], ["Newest", "Middle"])
+        self.assertEqual(len(windows), 2)
+        for tmin, tmax, q in windows:
+            self.assertEqual(q, "Smoke Past")
+            start = datetime.fromisoformat(tmin)
+            end = datetime.fromisoformat(tmax)
+            self.assertGreater((end - start).days, 700)
+
+    def test_most_recent_query_page_cap_incomplete(self) -> None:
+        now = datetime.now(timezone.utc)
+        event_calls = {"n": 0}
+
+        def transport(method, url, **kwargs):
+            safe = url.split("?")[0]
+            if "token" in safe:
+                return google_http.GoogleHttpResponse(
+                    200, json.dumps({"access_token": "ya29.x", "expires_in": 3600})
+                )
+            if "calendarList" in safe:
+                return google_http.GoogleHttpResponse(
+                    200,
+                    json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "id": "primary",
+                                    "summary": "Brian",
+                                    "selected": True,
+                                    "primary": True,
+                                    "timeZone": "America/Los_Angeles",
+                                }
+                            ]
+                        }
+                    ),
+                )
+            if "/events" in safe:
+                event_calls["n"] += 1
+                start = (now - timedelta(hours=event_calls["n"])).isoformat()
+                return google_http.GoogleHttpResponse(
+                    200,
+                    json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "id": f"e{event_calls['n']}",
+                                    "summary": f"E{event_calls['n']}",
+                                    "start": {"dateTime": start},
+                                    "end": {"dateTime": start},
+                                }
+                            ],
+                            "nextPageToken": "more",
+                        }
+                    ),
+                )
+            return google_http.GoogleHttpResponse(404, "{}")
+
+        google_http.set_transport_for_tests(transport)
+        with self._patch_turn_ctx():
+            raw = gcal.calendar_query_handler(
+                {"order": "most_recent", "query": "Smoke", "max_results": 3}
+            )
+        data = self._frame_json(raw)
+        self.assertEqual(data["state"], gcal.STATE_INCOMPLETE)
+        self.assertEqual(event_calls["n"], gcal.MAX_PAGES_PER_CALENDAR)
+
 
 class SourceScanTests(SocketGuardMixin, unittest.TestCase):
     def test_no_google_http_outside_google_http(self) -> None:
@@ -1719,6 +2071,26 @@ class SourceScanTests(SocketGuardMixin, unittest.TestCase):
             # urllib.request for OAuth browser callback is ok only in tests
             if path.name != "auth.py" and "urllib.request" in text:
                 offenders.append(path.name + ":urllib")
+        self.assertEqual(offenders, [])
+
+    def test_every_production_request_passes_a_route(self) -> None:
+        routes = {
+            "ROUTE_CALENDAR_LIST",
+            "ROUTE_CALENDAR_EVENTS",
+            "ROUTE_OAUTH_CERTS",
+            "ROUTE_OAUTH_TOKEN",
+        }
+        call_re = re.compile(r"google_http\.request\(")
+        offenders = []
+        for path in PLUGIN_ROOT.glob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if not call_re.search(text):
+                continue
+            # Each call must name one of the four route constants.
+            for match in call_re.finditer(text):
+                window = text[match.start() : match.start() + 400]
+                if not any(name in window for name in routes):
+                    offenders.append(path.name)
         self.assertEqual(offenders, [])
 
 
