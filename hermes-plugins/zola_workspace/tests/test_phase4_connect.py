@@ -742,6 +742,21 @@ class MemoryGuardTests(_TempHome):
             'Not saved: in this conversation, the memory must be Brian\'s exact words that come after "Remember" (or "Save", "Note that") in his current message, with nothing added. Save those words, or ask him to state the fact.',
         )
 
+    def test_digit_label_allowed(self) -> None:
+        message = "Remember the P8 compress test passed."
+        _seed_brian_turn(turn_id="turn-p8", user_message=message)
+        allowed = guards.evaluate_memory_taint(
+            tool_name="memory",
+            args={
+                "action": "add",
+                "target": "memory",
+                "content": "[p8] the P8 compress test passed.",
+            },
+            session_id="sess-1",
+            turn_id="turn-p8",
+        )
+        self.assertIsNone(allowed)
+
     def test_apostrophe_fold_both_directions_allowed(self) -> None:
         pairs = (
             ("Remember Brian's favorite color is blue.", "Brian\u2019s favorite color is blue"),
@@ -2079,6 +2094,12 @@ class SourceScanTests(SocketGuardMixin, unittest.TestCase):
             "ROUTE_CALENDAR_EVENTS",
             "ROUTE_OAUTH_CERTS",
             "ROUTE_OAUTH_TOKEN",
+            "ROUTE_GMAIL_LIST",
+            "ROUTE_GMAIL_GET",
+            "ROUTE_DRIVE_LIST",
+            "ROUTE_DRIVE_GET",
+            "ROUTE_DRIVE_EXPORT",
+            "ROUTE_CONTACTS_SEARCH",
         }
         call_re = re.compile(r"google_http\.request\(")
         offenders = []
@@ -2087,6 +2108,11 @@ class SourceScanTests(SocketGuardMixin, unittest.TestCase):
             if not call_re.search(text):
                 continue
             # Each call must name one of the four route constants.
+            if path.name == "read_common.py":
+                window_ok = "route=route" in text and "route=None" not in text
+                if not window_ok:
+                    offenders.append(path.name)
+                continue
             for match in call_re.finditer(text):
                 window = text[match.start() : match.start() + 400]
                 if not any(name in window for name in routes):
@@ -2140,7 +2166,9 @@ class LoadOrderTests(SocketGuardMixin, unittest.TestCase):
     def test_taint_importable_as_hermes_plugins(self) -> None:
         from hermes_plugins.zola_workspace.taint import is_tainted
 
-        self.assertFalse(is_tainted("no-such-session-load-order"))
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch("hermes_constants.get_hermes_home", return_value=Path(td)):
+                self.assertFalse(is_tainted("no-such-session-load-order"))
 
 
 if __name__ == "__main__":

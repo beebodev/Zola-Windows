@@ -12,6 +12,11 @@ LOG_EVENT_GUARD = "zola_workspace.guard"
 LOG_EVENT_WORKSPACE_STATUS = "zola_workspace.workspace_status"
 # P8-CONNECT: calendar metadata-only log event — P8-D11
 LOG_EVENT_CALENDAR_QUERY = "zola_workspace.calendar_query"
+LOG_EVENT_GMAIL_SEARCH = "zola_workspace.gmail_search"
+LOG_EVENT_GMAIL_READ = "zola_workspace.gmail_read"
+LOG_EVENT_DRIVE_SEARCH = "zola_workspace.drive_search"
+LOG_EVENT_DRIVE_READ = "zola_workspace.drive_read"
+LOG_EVENT_CONTACTS = "zola_workspace.contacts_lookup"
 
 _logger = logging.getLogger("zola_workspace")
 _file_handler_ready = False

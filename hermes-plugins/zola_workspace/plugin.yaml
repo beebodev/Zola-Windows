@@ -1,4 +1,4 @@
 name: zola_workspace
-version: 0.2.0
-description: "Zola Workspace — OAuth (DPAPI), calendar_query, untrusted framing, taint + memory guard (P8-D01/D03/D08/D09)."
+version: 0.3.0
+description: "Zola Workspace — read-only Gmail, Drive, Contacts, and Calendar; framing, taint, terminal Google guard (P8-D01/D03/D07/D08/D09)."
 author: Zola

@@ -62,7 +62,7 @@ EVENTS_URL_TMPL = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id
 _CALENDAR_DESCRIPTION = (
     "Search Brian's selected Google Calendars. Pass an optional text query and/or "
     "explicit ISO-8601 start/end with offsets. order is 'soonest' or 'most_recent'. "
-    "Does not parse natural-language dates."
+    "Does not parse natural-language dates. Event descriptions are not returned."
 )
 
 _CALENDAR_SCHEMA: Dict[str, Any] = {
@@ -250,6 +250,7 @@ def _shape_event(event: Dict[str, Any], *, calendar_name: str, tz) -> Dict[str, 
         "attendees": attendees,
         "calendar_name": calendar_name,
         "response_status": _brian_response_status(event),
+        "descriptions_included": False,
         "_start_dt": start_dt,
     }
 

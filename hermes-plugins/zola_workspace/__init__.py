@@ -8,14 +8,20 @@ from typing import Any, Dict
 
 try:
     from . import auth
+    from . import contacts
+    from . import drive
     from . import gcal
+    from . import gmail
     from . import guards
     from . import log as wslog
     from . import posture
     from . import turn_context
 except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import auth
+    import contacts
+    import drive
     import gcal
+    import gmail
     import guards
     import log as wslog
     import posture
@@ -123,3 +129,19 @@ def register(ctx) -> None:
         description=gcal._CALENDAR_DESCRIPTION,
         is_async=False,
     )
+    # P8-READ: five read-only tools, synchronous, same toolset — P8-D07 / P8-D08
+    for name, schema, handler, description in (
+        (gmail.TOOL_SEARCH, gmail.search_schema(), gmail.gmail_search_handler, gmail._SEARCH_DESCRIPTION),
+        (gmail.TOOL_READ, gmail.read_schema(), gmail.gmail_read_handler, gmail._READ_DESCRIPTION),
+        (drive.TOOL_SEARCH, drive.search_schema(), drive.drive_search_handler, drive._SEARCH_DESCRIPTION),
+        (drive.TOOL_READ, drive.read_schema(), drive.drive_read_handler, drive._READ_DESCRIPTION),
+        (contacts.TOOL_NAME, contacts.contacts_schema(), contacts.contacts_lookup_handler, contacts._DESCRIPTION),
+    ):
+        ctx.register_tool(
+            name=name,
+            toolset=TOOLSET_NAME,
+            schema=schema,
+            handler=handler,
+            description=description,
+            is_async=False,
+        )

@@ -315,6 +315,27 @@ sealed class ChatSocket : IDisposable
         InterruptAcknowledged?.Invoke(reply.Status ?? "");
     }
 
+    public async Task<string> ExecSlashAsync(string command)
+    {
+        // P8-READ: /compress is slash.exec, not prompt.submit — P8-D09
+        if (string.IsNullOrEmpty(SessionId))
+        {
+            throw new InvalidOperationException("session.create has not finished.");
+        }
+
+        var reply = await CallAsync("slash.exec", new Dictionary<string, string?>
+        {
+            ["session_id"] = SessionId,
+            ["command"] = command,
+        }).ConfigureAwait(false);
+        if (!reply.Ok)
+        {
+            throw new InvalidOperationException(reply.Error ?? "slash.exec failed.");
+        }
+
+        return reply.Output ?? "";
+    }
+
     public Task<RpcReply> InvokeAsync(string method, Dictionary<string, string?> parameters)
     {
         // P2-VOICE: voice methods use the same JSON-RPC send as chat, without a second socket — P2-D01
@@ -833,7 +854,9 @@ sealed class ChatSocket : IDisposable
             ReadString(result, FieldHint),
             // P4-REQUEST: typed open_requests only; pending_approval is a presence flag — P4-D11
             ReadOpenRequests(result),
-            result.TryGetProperty("pending_approval", out var pending) && pending.ValueKind == JsonValueKind.Object);
+            result.TryGetProperty("pending_approval", out var pending) && pending.ValueKind == JsonValueKind.Object,
+            // P8-READ: slash.exec compress returns output as one system line — P8-D09
+            ReadString(result, "output"));
     }
 
     private static string? DeltaChunk(JsonElement payload)
@@ -968,7 +991,8 @@ sealed class ChatSocket : IDisposable
         string? Hint = null,
         // P4-REQUEST: optional open_requests from resume/activate — P4-D11
         IReadOnlyList<OpenRequestSnapshot>? OpenRequests = null,
-        bool PendingApprovalPresent = false);
+        bool PendingApprovalPresent = false,
+        string? Output = null);
 
     // P4-REQUEST: one open_requests row cloned for the broker — P4-D11
     internal readonly record struct OpenRequestSnapshot(string Id, string Method, Dictionary<string, JsonElement> Params);

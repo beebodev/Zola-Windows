@@ -75,11 +75,12 @@ def lineage_root(session_id: str) -> Optional[str]:
     """Walk parent_session_id to compression lineage root.
 
     Returns:
-      - the root session id on a normal walk (including no parent / no row)
+      - the root session id on a normal walk (including a null parent)
       - None if session_id empty or state.db is absent (non-error)
 
     Raises:
-      LineageLookupError on state.db unreadable/locked/query failure, or walk-cap hit.
+      LineageLookupError on state.db unreadable/locked/query failure, a missing
+      sessions row, or walk-cap hit.
     """
     # P8-CONNECT: task_id is not stable across compression — use lineage root — P8-D09
     sid = str(session_id or "")
@@ -117,7 +118,9 @@ def lineage_root(session_id: str) -> Optional[str]:
                 except Exception as exc:
                     raise LineageLookupError("lineage_query_error") from exc
                 if row is None:
-                    break
+                    # P8-READ: a sessions row is committed before the first hook;
+                    # a missing row means the lineage cannot be established — P8-D09
+                    raise LineageLookupError("lineage_missing_row")
                 parent = row[0]
                 if not parent:
                     break

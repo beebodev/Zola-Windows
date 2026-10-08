@@ -15,9 +15,10 @@ GUARD_CONFIG_SELF_EDIT = "config_self_edit"
 GUARD_MEMORY_TAINT = "memory_taint"
 GUARD_TERMINAL_GOOGLE = "terminal_google"
 
-# P8-CONNECT: memory_taint enabled; terminal_google remains Track 3 inert — P8-D09
+# P8-READ: terminal Google guard and self-mod rows are live — P8-D02
 GUARD_MEMORY_TAINT_ENABLED = True
-GUARD_TERMINAL_GOOGLE_ENABLED = False
+GUARD_TERMINAL_GOOGLE_ENABLED = True
+GUARD_SELF_MOD = "self_mod"
 
 ACTION_ALLOW = "allow"
 ACTION_BLOCK = "block"
@@ -41,8 +42,8 @@ BLOCK_MESSAGE_MEMORY_TAINT = (
     'Not saved: in this conversation, the memory must be Brian\'s exact words that come after "Remember" (or "Save", "Note that") in his current message, with nothing added. Save those words, or ask him to state the fact.'
 )
 
-# One leading [label] is not part of the containment key. The stored text keeps it.
-_LEADING_LABEL_RE = re.compile(r"^\[[A-Za-z][A-Za-z _-]{0,30}\]\s*")
+# P8-READ: digits are allowed after the label's first letter; the stored text keeps the label — P8-D09
+_LEADING_LABEL_RE = re.compile(r"^\[[A-Za-z][A-Za-z0-9 _-]{0,30}\]\s*")
 
 # P8-CONNECT-FIX: tainted save must start with a save request — P8-D09
 BLOCK_MESSAGE_MEMORY_SAVE_REQUEST = (
@@ -80,6 +81,14 @@ SAVE_LEAD_IN_WORDS = frozenset(
 
 BLOCK_MESSAGE_SKILL_MANAGE = (
     "Blocked: skill_manage is not allowed in a Workspace-tainted conversation."
+)
+
+BLOCK_MESSAGE_TERMINAL_GOOGLE = (
+    "Blocked: that command is not allowed to reach Google or the Workspace store."
+)
+
+BLOCK_MESSAGE_SELF_MOD = (
+    "Blocked: changing the Workspace plugin or its store is not allowed."
 )
 
 TOOL_MEMORY = "memory"
@@ -122,6 +131,30 @@ WRITE_DELETE_VERB_RE = re.compile(
 )
 
 HERMES_CONFIG_CLI_RE = re.compile(r"(?i)\bhermes\b.*\bconfig\b\s+(set|edit)\b")
+
+# P8-READ: host suffix, not a substring of a lookalike domain — P8-D02
+GOOGLE_HOST_RE = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9.-])"
+    r"(?:(?:[A-Za-z0-9-]+\.)*googleapis\.com|accounts\.google\.com)"
+    r"(?![A-Za-z0-9.-])"
+)
+STORE_PATH_RE = re.compile(
+    r"(?i)(?:"
+    r"%localappdata%[/\\]hermes[/\\]profiles[/\\]zola[/\\]zola_workspace"
+    r"|%hermes_home%[/\\]zola_workspace"
+    r"|[/\\]hermes[/\\]profiles[/\\]zola[/\\]zola_workspace"
+    r")"
+)
+STORE_FILE_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])(?:token\.dpapi|taint\.sqlite|token~1\.dpa|taint~1\.sql)(?![A-Za-z0-9_])"
+)
+SETUP_MODULE_RE = re.compile(r"(?i)(?<![A-Za-z0-9_])zola_workspace\.setup(?![A-Za-z0-9_])")
+PLUGIN_TREE_RE = re.compile(
+    r"(?i)plugins[/\\]zola_(?:workspace|memory|tools)\b"
+)
+# P8-READ: SOUL.md in the live profile or zola-architecture\identity — P8-D02
+SOUL_RE = re.compile(r"(?i)(?<![A-Za-z0-9_])soul\.md(?![A-Za-z0-9_])")
+IDENTITY_RE = re.compile(r"(?i)zola-architecture[/\\]identity\b")
 
 V4A_FILE_HEADER_RE = re.compile(
     r"(?im)^\*\*\*\s+(?:Update|Add|Delete|Move)\s+File:\s*(.+)$"
@@ -504,12 +537,61 @@ def memory_taint_stub(tool_name: str = "", args: Any = None, **kwargs: Any) -> O
     return evaluate_memory_taint(tool_name=tool_name, args=args, **kwargs)
 
 
-def terminal_google_stub(tool_name: str = "", args: Any = None, **kwargs: Any) -> None:
-    """Track 3 stub — always allow while disabled."""
-    # P8-HARDEN: inert until Track 3 — P8-D02
+def _command_text(tool_name: str, args: Any) -> str:
+    payload = args if isinstance(args, dict) else {}
+    if tool_name == TOOL_TERMINAL:
+        return str(payload.get("command") or "")
+    parts = [str(payload.get("path") or ""), str(payload.get("patch") or "")]
+    return "\n".join(parts)
+
+
+def terminal_google_hit(command: str) -> bool:
+    text = command or ""
+    return bool(
+        GOOGLE_HOST_RE.search(text)
+        or STORE_PATH_RE.search(text)
+        or STORE_FILE_RE.search(text)
+        or SETUP_MODULE_RE.search(text)
+    )
+
+
+def self_mod_hit(text: str) -> bool:
+    raw = text or ""
+    return bool(
+        PLUGIN_TREE_RE.search(raw)
+        or STORE_PATH_RE.search(raw)
+        or STORE_FILE_RE.search(raw)
+        or SOUL_RE.search(raw)
+        or IDENTITY_RE.search(raw)
+    )
+
+
+def evaluate_terminal_google(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
+    """Block terminal commands that name Google or the Workspace store."""
+    # P8-READ: terminal Google guard live — P8-D02
     if not GUARD_TERMINAL_GOOGLE_ENABLED:
         return None
+    if str(tool_name or "") != TOOL_TERMINAL:
+        return None
+    if terminal_google_hit(_command_text(TOOL_TERMINAL, args)):
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_TERMINAL_GOOGLE}
     return None
+
+
+def evaluate_self_mod(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
+    """Block writes and commands that name the plugin tree or the store."""
+    # P8-READ: self-modification rows — P8-D02
+    name = str(tool_name or "")
+    if name not in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL):
+        return None
+    if self_mod_hit(_command_text(name, args)):
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_SELF_MOD}
+    return None
+
+
+def terminal_google_stub(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
+    """Delegates to evaluate_terminal_google."""
+    return evaluate_terminal_google(tool_name=tool_name, args=args, **kwargs)
 
 
 def pre_tool_call_hook(
@@ -561,7 +643,33 @@ def pre_tool_call_hook(
                 pass
             return blocked_taint
 
-        terminal_google_stub(tool_name=name, args=args, **kwargs)
+        terminal = evaluate_terminal_google(tool_name=name, args=args, **kwargs)
+        if terminal is not None:
+            try:
+                wslog.write_event(
+                    wslog.LOG_EVENT_GUARD,
+                    name=GUARD_TERMINAL_GOOGLE,
+                    action=ACTION_BLOCK,
+                    reason="terminal_google",
+                    tool=name,
+                )
+            except Exception:
+                pass
+            return terminal
+
+        self_mod = evaluate_self_mod(tool_name=name, args=args)
+        if self_mod is not None:
+            try:
+                wslog.write_event(
+                    wslog.LOG_EVENT_GUARD,
+                    name=GUARD_SELF_MOD,
+                    action=ACTION_BLOCK,
+                    reason="self_mod",
+                    tool=name,
+                )
+            except Exception:
+                pass
+            return self_mod
 
         blocked = evaluate_config_self_edit(name, args)
         if blocked is not None:
@@ -584,6 +692,10 @@ def pre_tool_call_hook(
     except Exception:
         # P8-HARDEN: on internal error, block if sensitive tool+token else allow — P8-D02
         raw = _raw_args_text(args)
+        if name == TOOL_TERMINAL and terminal_google_hit(raw):
+            return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_TERMINAL_GOOGLE}
+        if name in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL) and self_mod_hit(raw):
+            return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_SELF_MOD}
         sensitive = _text_has_sensitive_filename(raw)
         if name in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL) and sensitive:
             try:
