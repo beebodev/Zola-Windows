@@ -18,6 +18,12 @@ ROUTE_CALENDAR_LIST = "calendar.calendarList.list"
 ROUTE_CALENDAR_EVENTS = "calendar.events.list"
 ROUTE_OAUTH_CERTS = "oauth.certs"
 ROUTE_OAUTH_TOKEN = "oauth.token"
+ROUTE_GMAIL_LIST = "gmail.users.messages.list"
+ROUTE_GMAIL_GET = "gmail.users.messages.get"
+ROUTE_DRIVE_LIST = "drive.files.list"
+ROUTE_DRIVE_GET = "drive.files.get"
+ROUTE_DRIVE_EXPORT = "drive.files.export"
+ROUTE_CONTACTS_SEARCH = "people.people.searchContacts"
 
 _logger = logging.getLogger("zola_workspace.google_http")
 
@@ -67,10 +73,24 @@ class GoogleHttpTransportError(GoogleHttpError):
 class GoogleHttpResponse:
     """Minimal response object returned by the default requests transport."""
 
-    def __init__(self, status_code: int, text: str, headers: Optional[Mapping[str, str]] = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        text: str,
+        headers: Optional[Mapping[str, str]] = None,
+        content: Optional[bytes] = None,
+    ) -> None:
         self.status_code = int(status_code)
-        self.text = text if isinstance(text, str) else ""
         self.headers = dict(headers or {})
+        # P8-READ: raw bytes are the body. Text is a separate view and must not
+        # be re-encoded over content — that corrupts PDF media — P8-D08
+        if isinstance(content, (bytes, bytearray)):
+            self.content = bytes(content)
+        elif isinstance(text, str):
+            self.content = text.encode("utf-8")
+        else:
+            self.content = b""
+        self.text = text if isinstance(text, str) else ""
 
     def json(self) -> Any:
         import json as _json
@@ -127,7 +147,11 @@ def _default_transport(
         raise GoogleHttpTimeout("timeout") from exc
     except requests.RequestException as exc:
         raise GoogleHttpTransportError("transport_error") from exc
-    return GoogleHttpResponse(resp.status_code, resp.text or "", dict(resp.headers))
+    raw = getattr(resp, "content", None)
+    content = bytes(raw) if isinstance(raw, (bytes, bytearray)) else b""
+    # Decode only the text view. Never rebuild content from resp.text.
+    text = content.decode("utf-8", "replace")
+    return GoogleHttpResponse(resp.status_code, text, dict(resp.headers), content=content)
 
 
 def _route_for_log(route: Optional[str]) -> str:
@@ -195,9 +219,15 @@ def request(
             )
             if isinstance(resp, GoogleHttpResponse):
                 return resp
-            text = getattr(resp, "text", "") or ""
             hdrs = getattr(resp, "headers", {}) or {}
-            return GoogleHttpResponse(status, text, hdrs)
+            raw = getattr(resp, "content", None)
+            if isinstance(raw, (bytes, bytearray)):
+                content = bytes(raw)
+                text = content.decode("utf-8", "replace")
+            else:
+                text = getattr(resp, "text", "") or ""
+                content = text.encode("utf-8") if isinstance(text, str) else b""
+            return GoogleHttpResponse(status, text, hdrs, content=content)
 
         retryable = status in RETRY_STATUS_CODES
         if (not retryable) or attempts > MAX_RETRIES:

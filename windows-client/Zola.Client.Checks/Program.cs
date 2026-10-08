@@ -29,6 +29,8 @@ internal sealed class CheckRunner
     private int _clarifyPassed;
     private int _timingTotal;
     private int _timingPassed;
+    private int _compressTotal;
+    private int _compressPassed;
 
     public int Failed { get; private set; }
 
@@ -45,12 +47,13 @@ internal sealed class CheckRunner
         RunWiringRows();
         RunClarifyRows();
         RunTimingRows();
+        RunCompressRows();
     }
 
     public string CoverageLine()
     {
         return string.Format(
-            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}, timing rows {18}/{19}",
+            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}, timing rows {18}/{19}, compress rows {20}/{21}",
             _lifecyclePassed,
             _lifecycleTotal,
             _admissionPassed,
@@ -70,7 +73,9 @@ internal sealed class CheckRunner
             _clarifyPassed,
             _clarifyTotal,
             _timingPassed,
-            _timingTotal);
+            _timingTotal,
+            _compressPassed,
+            _compressTotal);
     }
 
     private void RunLifecycleRows()
@@ -1343,6 +1348,48 @@ internal sealed class CheckRunner
             if (pass)
             {
                 _clarifyPassed++;
+            }
+        });
+    }
+
+    private void RunCompressRows()
+    {
+        // P8-READ: exact /compress only; other slash text stays a normal message — P8-D09
+        Compress("exact", () => Zola.Client.CompressCommand.IsExactCompress("/compress"));
+        Compress("padded-case", () => Zola.Client.CompressCommand.IsExactCompress(" /COMPRESS "));
+        Compress("extra-word", () => !Zola.Client.CompressCommand.IsExactCompress("/compress now"));
+        Compress("help", () => !Zola.Client.CompressCommand.IsExactCompress("/help"));
+        Compress("please", () => !Zola.Client.CompressCommand.IsExactCompress("please /compress"));
+        Compress("in-flight-first", () =>
+        {
+            var inFlight = 0;
+            return Zola.Client.CompressCommand.TryBegin(ref inFlight) && inFlight == 1;
+        });
+        Compress("in-flight-second", () =>
+        {
+            var inFlight = 0;
+            var first = Zola.Client.CompressCommand.TryBegin(ref inFlight);
+            var second = Zola.Client.CompressCommand.TryBegin(ref inFlight);
+            return first && !second
+                && Zola.Client.CompressCommand.AlreadyRunningText == "Compression is already running.";
+        });
+        Compress("in-flight-after-end", () =>
+        {
+            var inFlight = 0;
+            Zola.Client.CompressCommand.TryBegin(ref inFlight);
+            Zola.Client.CompressCommand.End(ref inFlight);
+            return Zola.Client.CompressCommand.TryBegin(ref inFlight);
+        });
+    }
+
+    private void Compress(string name, Func<bool> body)
+    {
+        _compressTotal++;
+        Run(name, body, pass =>
+        {
+            if (pass)
+            {
+                _compressPassed++;
             }
         });
     }

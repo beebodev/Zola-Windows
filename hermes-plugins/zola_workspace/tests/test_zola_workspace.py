@@ -7,6 +7,7 @@ import importlib.util
 import json
 import socket
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -225,14 +226,16 @@ class GuardTests(unittest.TestCase):
     def test_10_memory_taint_enabled_untainted_noop(self) -> None:
         # P8-CONNECT: memory_taint live; untainted / no-session is a no-op — P8-D09
         self.assertTrue(guards.GUARD_MEMORY_TAINT_ENABLED)
-        self.assertFalse(guards.GUARD_TERMINAL_GOOGLE_ENABLED)
-        self.assertIsNone(
-            guards.memory_taint_stub(
-                tool_name="memory",
-                args={"action": "add", "content": "x"},
-                session_id="sess-untainted-track1",
-            )
-        )
+        self.assertTrue(guards.GUARD_TERMINAL_GOOGLE_ENABLED)
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch("hermes_constants.get_hermes_home", return_value=Path(td)):
+                self.assertIsNone(
+                    guards.memory_taint_stub(
+                        tool_name="memory",
+                        args={"action": "add", "content": "x"},
+                        session_id="sess-untainted-track1",
+                    )
+                )
         self.assertIsNone(guards.terminal_google_stub(tool_name="terminal", args={"command": "x"}))
 
     def test_20_delete_env_and_other_profile_file(self) -> None:
@@ -366,7 +369,19 @@ class RegisterTests(unittest.TestCase):
         self.assertIn("pre_llm_call", seen["hooks"])
         self.assertIn("pre_tool_call", seen["hooks"])
         names = {t["name"] for t in seen["tools"]}
-        self.assertEqual(names, {"workspace_status", "calendar_query"})
+        self.assertEqual(
+            names,
+            {
+                "workspace_status",
+                "calendar_query",
+                "gmail_search",
+                "gmail_read",
+                "drive_search",
+                "drive_read",
+                "contacts_lookup",
+            },
+        )
+        self.assertTrue(all(item["is_async"] is False for item in seen["tools"]))
         for tool in seen["tools"]:
             self.assertEqual(tool["toolset"], "zola_workspace")
             self.assertFalse(tool["is_async"])

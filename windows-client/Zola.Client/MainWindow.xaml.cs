@@ -29,6 +29,7 @@ public sealed partial class MainWindow : Window
     private bool _socketOwnsStatus;
     private bool _sessionReady;
     private bool _streaming;
+    private int _compressInFlight;
     private bool _turnFinalized = true;
     private bool _unreachable;
     private int _orphanInterruptedCompletes;
@@ -411,11 +412,47 @@ public sealed partial class MainWindow : Window
         await SubmitTurnAsync(text, Voice.TurnTiming.KindTyped);
     }
 
+    private async Task SubmitCompressAsync()
+    {
+        // P8-READ: no You bubble and no streaming turn; the gateway output is one system line — P8-D09
+        // P8-READ: a second /compress while slash.exec is in flight is one System line and no second send — P8-D09
+        if (!CompressCommand.TryBegin(ref _compressInFlight))
+        {
+            AddBubble("System", CompressCommand.AlreadyRunningText, mine: false);
+            return;
+        }
+
+        try
+        {
+            var output = await _chat.ExecSlashAsync(CompressCommand.CommandText).ConfigureAwait(false);
+            Dispatch(() => AddBubble("System", output, mine: false));
+        }
+        catch (ChatUnreachableException ex)
+        {
+            Dispatch(() => ShowUnreachable(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Dispatch(() => AddBubble("System", ex.Message, mine: false));
+        }
+        finally
+        {
+            CompressCommand.End(ref _compressInFlight);
+        }
+    }
+
     private async Task SubmitTurnAsync(string text, string turnKind)
     {
         // P2-VOICE: transcripts and typed sends share this prompt.submit; a live turn is not a reason to hold the transcript — P2-D05
         if (!_sessionReady || _unreachable || text.Length == 0)
         {
+            return;
+        }
+
+        if (turnKind == Voice.TurnTiming.KindTyped && CompressCommand.IsExactCompress(text))
+        {
+            // P8-READ: exact /compress is slash.exec and one system line — P8-D09
+            await SubmitCompressAsync().ConfigureAwait(false);
             return;
         }
 

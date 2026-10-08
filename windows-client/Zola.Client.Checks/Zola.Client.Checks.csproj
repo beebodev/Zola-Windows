@@ -17,5 +17,7 @@
     <Compile Include="..\Zola.Client\Voice\ClarifyLog.cs" Link="Voice\ClarifyLog.cs" />
     <!-- P7-LATENCY: pure turn timing helper — P7-D10 -->
     <Compile Include="..\Zola.Client\Voice\TurnTiming.cs" Link="Voice\TurnTiming.cs" />
+    <!-- P8-READ: /compress helper has no WinUI dependency — P8-D09 -->
+    <Compile Include="..\Zola.Client\CompressCommand.cs" Link="CompressCommand.cs" />
   </ItemGroup>
 </Project>
