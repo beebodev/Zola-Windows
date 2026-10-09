@@ -59,6 +59,7 @@ synthesis document.
   Workspace surface is being designed. OAuth consent has not been
   started: no Google Cloud project, OAuth client, consent screen, test
   user, or token exists for this profile.
+  **Phase 8: RESOLVED.** Shipped as `zola_workspace` across P8-HARDEN, P8-CONNECT, P8-READ, and P8-SEND. Calendar past and upcoming; read-only Gmail triage; Drive find and read, including PDF; Contacts lookup; Gmail drafts and passphrase-approved sends. SEND closeout: five `drafts.send`, zero `messages.send`. The send gate is the passphrase in P8-D06, not the card S16 recommended.
 - **S17 — Audio-driven lip sync and precise speaking end.**
   Partially resolved by `P3-D23` (mouth follows TTS playback presence) and
   Phase 4 monitor-driven follow-up / question release (`P4-D18`, `P4-D13`).
@@ -299,6 +300,7 @@ synthesis document.
   exit; fail-closed voice during restart). Upstream note for the native
   crash. **Brian (verbatim, 2026-10-06):** "Let's file both the hotfix and
   the crash issue and prioritize for a future phase."
+  **Phase 8 annotation (2026-10-08 ~11:07):** During CONNECT-FIX, a typed sentence landed at 11:07:48 on a process that died before the turn finished. After relaunch, Hermes replayed it with a leading interrupted-turn note. The memory guard failed closed on that note. A later message with the sentence alone was saved. The progress doc records a process death and that side effect. It does not record a new APPCRASH classification for this occurrence.
 
 - **S52 — Stop-vs-silence-STT race client guard.**
   Same forensic window as `S51`(b). Proposed client guard: once Hermes
@@ -329,6 +331,7 @@ synthesis document.
   protects; a broad regression test; possibly a `SOUL.md` replacement for
   the good parts. Upstream note: the time/date → terminal rule conflicts
   with a trusted time context, and `TZ=… date` is wrong on Windows.
+  **Phase 8 annotation:** Retiring `google-workspace`, `himalaya`, and `email-inbox-triage` removed the Gmail `skill_view` route. In CONNECT C9, asked to check email with Himalaya, she ran `command -v himalaya` (exit 1) and did not `skill_view` that skill. The terminal guard now blocks commands that name Google API hosts or the token store. That C9 command names neither. The `execution_guidance` decision stays open.
 
 - **S55 — Streaming TTS bake-off.**
   Raised by Brian during Track 3. ElevenLabs, OpenAI, Gemini and xAI
@@ -357,6 +360,7 @@ synthesis document.
   extends to **approvals** (P4-D07 / P4-D27; voice approval of commands
   carries echo and mis-hearing risk); (2) typed answers in Voice mode
   currently need the panel open (composer lives inside it).
+  **Phase 8: partly answered.** Workspace sends are approved by the passphrase in text and voice, with no card (P8-D06). Command approvals remain visual (P4-D07). Batch and multi-select by voice stay open. The two sub-questions stay open.
 
 - **S58 — Smaller Whisper models (P2-D17 install decision).**
   Download = install (`P2-D17`). AUD-26 / LT-G1: standalone entry ≈**1.0 s**,
@@ -371,17 +375,26 @@ synthesis document.
   recommendation** in Phase 7 (P7-D10: no silence change without new
   evidence).
 
-*S13 and S16 remain open. S17, S21, S26 updated at Phase 4 lore closeout.
-S20, S22, S32 resolved (see DESIGN_DECISIONS Phase 4). S33–S41 added at
-Phase 4 lore closeout. S42 added at Phase 5 kickoff (2026-10-01). S41
-resolved (see DESIGN_DECISIONS Phase 5). S42 and S43 resolved at Phase 6
-lore closeout (episodes + ambient time). S35 arithmetic resolved by
-P6-CALC; session/always scopes remain. S14 annotated (foundation
-complete, not resolved). S28 annotated (episodes exist; retirement
-evaluable). S45 and S37 resolved at Phase 7 lore closeout (P7-VOICEAUTH /
-P7-D06). S44 partly resolved (quiet card); remainder → S57. S38 updated
-(not resolved); S34/S36 annotated. S51–S59 added at Phase 7 lore closeout.
-Not open questions (one line): question quiet window withdrawn (B38); gap
-"no Stop" closed by P4-D29; AUD-37 closed by P4-D18 (residual in S36);
-external dictation tool is test hygiene (A20). Resolved items stay in
-DESIGN_DECISIONS.md.*
+- **S60 — Gmail triage actions.** Mark read, archive, and label. They need `gmail.modify`. Deferred by P8-D07. **Brian (verbatim):** "3. Read only for now."
+
+- **S61 — Calendar writes.** Create, then update and delete, including invitations. Deferred: side effects on other people, and enough new authority already in Phase 8.
+
+- **S62 — Gmail attachment content.** Phase 8 returns name, type, and size only. Attachment content was left out by the locked P8-D08 (Brian: "approved."). A later read would reuse the Drive reader.
+
+- **S63 — Provenance-aware memory.** Would allow P8-D09 Option B, an attributed save. Not chosen. **Brian (verbatim):** "Let's go with option A for now."
+
+- **S64 — Office extraction.** Word, Excel, and PowerPoint stay `unsupported_type`. PDF is installed (pypdf 6.19.0, P2-D17). The candidate Office libraries pull in compiled `lxml`. This is an install decision, not a default.
+
+- **S65 — An OS-level credential boundary.** A broker process or a separate Windows user, if the application boundary in P8-D02 proves insufficient. Phase 8 accepted the application boundary. Same-user code can still reach the token.
+
+- **S66 — Proactive Workspace surfacing.** Push, webhooks, and the brainstorm items (email or calendar raised without a question). Proactive behavior is its own phase.
+
+- **S67 — Summary selectivity.** R1, R8, and the R1 rerun left both smoke emails out of the triage summary. Asked for a gist of a reviewed draft, she omitted both addresses. That gist turn had no passphrase. The harness refused `not_reviewed` when a reply omitted the Bcc address. Candidate: a structured per-sender breakdown from `gmail_search`, after diagnosing read versus unread. **Brian (verbatim):** "I think this is a bit much. I can confirm that the smoke test passed." Accepted, not fixed.
+
+- **S68 — OAuth publishing.** The app is in Testing. Refresh tokens last about seven days, so setup is re-run until it is published. Production needs a homepage and a privacy-policy URL. Pages were drafted for GitHub Pages. **Brian (verbatim, 2026-10-07):** "I went with test for now to keep things moving. I will work on setting up the site later." After publishing, run setup once.
+
+- **S69 — Whole-message matches versus Hermes-injected text.** The interrupted-turn note in front of a replayed message blocked a valid save (CONNECT-FIX, 2026-10-08, fail-closed). The passphrase matcher has the same exposure: a message containing "previous turn was interrupted" anywhere never matches (`send_gate.py` L133). Decide whether to strip a known Hermes prefix, and how to prove the prefix is Hermes's, or keep failing closed with her explanation.
+
+- **S70 — Voice playback-completion signal.** A read-back interrupted mid-speech still counts as reviewed. There is no playback-completion signal. Ties to the voice I/O ownership study (`S56`).
+
+*S13 remains open. S16 resolved at Phase 8 lore closeout (P8-D01–P8-D12). S17, S21, S26 updated at Phase 4 lore closeout. S20, S22, S32 resolved (see DESIGN_DECISIONS Phase 4). S33–S41 added at Phase 4 lore closeout. S42 added at Phase 5 kickoff (2026-10-01). S41 resolved (see DESIGN_DECISIONS Phase 5). S42 and S43 resolved at Phase 6 lore closeout (episodes + ambient time). S35 arithmetic resolved by P6-CALC; session/always scopes remain. S14 annotated (foundation complete, not resolved). S28 annotated (episodes exist; retirement evaluable). S45 and S37 resolved at Phase 7 lore closeout (P7-VOICEAUTH / P7-D06). S44 partly resolved (quiet card); remainder → S57. S38 updated (not resolved); S34/S36 annotated. S51–S59 added at Phase 7 lore closeout. S51 annotated at Phase 8 (2026-10-08 process death and the interrupted-turn note). S54 annotated at Phase 8 (skill route removed; decision open). S57 partly answered at Phase 8 (Workspace sends); batch and command approvals stay open. S60–S70 added at Phase 8 lore closeout. Not open questions (one line): question quiet window withdrawn (B38); gap "no Stop" closed by P4-D29; AUD-37 closed by P4-D18 (residual in S36); external dictation tool is test hygiene (A20). Resolved items stay in DESIGN_DECISIONS.md.*
