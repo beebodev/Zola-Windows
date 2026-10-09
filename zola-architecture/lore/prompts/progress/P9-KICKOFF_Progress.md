@@ -20,7 +20,7 @@
 | 1 | Inputs, branch, progress document | COMPLETE (STOP) |
 | 2 | Read and confirm anchors | COMPLETE (STOP) |
 | 3 | Apply the edits, show the diff | COMPLETE (STOP) |
-| 4 | Closeout | IN PROGRESS — exit criteria met, not yet committed |
+| 4 | Closeout | IN PROGRESS — implementation committed |
 
 ## Guardrails summary
 
@@ -97,4 +97,6 @@ Applied E1–E8. E4 uses Amendment A1. Nothing committed. `DESIGN_DECISIONS.md` 
 - `zola-architecture/lore/ROADMAP.md`
 - `zola-architecture/Zola_Architecture_Distributed_Presence_Device_Capabilities.md`
 - `zola-architecture/lore/prompts/progress/P9-KICKOFF_Progress.md`
+
+Implementation commit: `86b96a7d70af56744724e6b59fc3c7443829ede9`
 
