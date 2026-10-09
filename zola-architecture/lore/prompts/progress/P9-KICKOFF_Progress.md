@@ -20,7 +20,7 @@
 | 1 | Inputs, branch, progress document | COMPLETE (STOP) |
 | 2 | Read and confirm anchors | COMPLETE (STOP) |
 | 3 | Apply the edits, show the diff | COMPLETE (STOP) |
-| 4 | Closeout | IN PROGRESS — implementation committed |
+| 4 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -99,4 +99,10 @@ Applied E1–E8. E4 uses Amendment A1. Nothing committed. `DESIGN_DECISIONS.md` 
 - `zola-architecture/lore/prompts/progress/P9-KICKOFF_Progress.md`
 
 Implementation commit: `86b96a7d70af56744724e6b59fc3c7443829ede9`
+
+Implementation-SHA metadata commit: `5bf38cc6b78b48eee12936012b526c2223b665fe`
+
+Merge (`--no-ff` `p9-kickoff` → `main`): `9d50ebcc7d6370c289419f7122536366b1e25df3`
+
+Branch `p9-kickoff` deleted locally and on `origin` after this metadata commit is pushed.
 
