@@ -19,7 +19,7 @@
 | 4 | Implementation | COMPLETE — re-check fix included |
 | 5 | STOP, Apply, Deploy | corrective 5b APPLIED |
 | 6 | Smoke Test | PASSED |
-| 7 | Closeout | IN PROGRESS |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails (summary)
 
@@ -735,8 +735,8 @@ Live plugin SHAs match the repo:
 | Step | SHA |
 |---|---|
 | 7e implementation | `cd3daf3c6f25b0be7a00f1cd909a4f21280cbf2a` |
-| 7f docs record implementation | *(following commit)* |
-| 7h merge `--no-ff` on `main` | *(after merge)* |
+| 7f docs record implementation | `13f1c6f8b44c804a72f2a04fbc169c81c1f65c28` |
+| 7h merge `--no-ff` on `main` | `89b41dfef585993d1d178590515e1ba602aad071` |
 | 7i docs record merge | *(this commit)* |
 | Final `main` HEAD | *(after this commit)* |
 
@@ -749,7 +749,7 @@ Live plugin SHAs match the repo:
 
 ### 7j
 
-Scratch folder `C:\Users\test\Dev\zola-spikes\p8-send\` is deleted after the merge. `token.dpapi` is not in that folder and is not deleted.
+Scratch folder `C:\Users\test\Dev\zola-spikes\p8-send\` was deleted after the merge. It held `plugin-backup`, `plugin-backup-corrective`, `s7-home`, and the scratch harnesses. It is gone. `token.dpapi` was not in it and was not deleted: still 926 B, mtime 2026-10-07T15:58:24. Brian's JSON was not in it: still 409 B, mtime 2026-10-07T14:22:25.
 
 `Next task: P8-LORE — await developer instruction.`
 
