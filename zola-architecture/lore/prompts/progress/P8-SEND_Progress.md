@@ -734,7 +734,7 @@ Live plugin SHAs match the repo:
 
 | Step | SHA |
 |---|---|
-| 7e implementation | *(next commit)* |
+| 7e implementation | `cd3daf3c6f25b0be7a00f1cd909a4f21280cbf2a` |
 | 7f docs record implementation | *(following commit)* |
 | 7h merge `--no-ff` on `main` | *(after merge)* |
 | 7i docs record merge | *(this commit)* |
