@@ -330,8 +330,15 @@ Candidates only (not a committed order); each with one line of evidence:
   approvals; UI polish; session UI retirement (episodes exist; evaluate).
 - **Also open from Phase 8: `S65`** — an OS-level credential boundary, if the
   application boundary proves insufficient.
+- **Brainstorm intake (P9-KICKOFF, 2026-10-09; candidates, nothing decided)** —
+  open loops (`S71`) as the foundation for proactive surfacing (`S66`; quiet
+  first, and the `P8-D02` Brian-only conflict to resolve); background agents
+  with HUD and spoken status (`S72`); Android companion and distributed
+  presence (`S73`, strawman committed); remote escalation (`S74`, late);
+  speaker and face recognition as signals (`S75`); Kasa lights (`S76`, small).
 
 
 ## Source documents
 - Audit series: `zola-architecture/audit/winh-hermes-gap/`
 - Master synthesis: `zola-architecture/audit/winh-hermes-gap/Zola_WINH00_MasterSynthesis.md`
+- Companion strawman (v0.1, proposals only): `zola-architecture/Zola_Architecture_Distributed_Presence_Device_Capabilities.md`
