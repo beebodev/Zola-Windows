@@ -368,6 +368,9 @@ class RegisterTests(unittest.TestCase):
         plugin.register(FakeCtx())
         self.assertIn("pre_llm_call", seen["hooks"])
         self.assertIn("pre_tool_call", seen["hooks"])
+        self.assertIn("post_llm_call", seen["hooks"])
+        self.assertIn("on_session_end", seen["hooks"])
+        self.assertIn("agent_loop_stopped", seen["hooks"])
         names = {t["name"] for t in seen["tools"]}
         self.assertEqual(
             names,
@@ -379,6 +382,8 @@ class RegisterTests(unittest.TestCase):
                 "drive_search",
                 "drive_read",
                 "contacts_lookup",
+                "gmail_draft",
+                "gmail_send_draft",
             },
         )
         self.assertTrue(all(item["is_async"] is False for item in seen["tools"]))

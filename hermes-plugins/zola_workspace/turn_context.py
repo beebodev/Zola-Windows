@@ -130,6 +130,19 @@ def pre_llm_call_hook(**kwargs: Any) -> None:
         )
     except Exception:
         pass
+    # P8-SEND: authorization is created here only, and only for a reviewed draft — P8-D02
+    try:
+        try:
+            from . import send_gate
+        except ImportError:
+            import send_gate  # type: ignore
+        send_gate.on_pre_llm_call(
+            session_id=session_id,
+            turn_id=str(kwargs.get("turn_id") or ""),
+            user_message=kwargs.get("user_message") if isinstance(kwargs.get("user_message"), str) else "",
+        )
+    except Exception:
+        pass
     # P8-CONNECT: post-compression tip inherits taint via lineage; also re-mark tip — P8-D09
     try:
         from . import taint

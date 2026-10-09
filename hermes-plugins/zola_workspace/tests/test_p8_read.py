@@ -799,7 +799,8 @@ class SourceScanTests(unittest.TestCase):
     def test_no_write_endpoints_and_routes(self) -> None:
         gmail_src = (PLUGIN_ROOT / "gmail.py").read_text(encoding="utf-8")
         drive_src = (PLUGIN_ROOT / "drive.py").read_text(encoding="utf-8")
-        for banned in ("messages/send", "/drafts", ".trash", ".modify", "/attachments", "batch"):
+        # P8-SEND: drafts create/update/get/delete/send are the Gmail writes — P8-D06
+        for banned in ("messages/send", ".trash", ".modify", "/attachments", "batch"):
             self.assertNotIn(banned, gmail_src)
         for banned in ("uploadType", "files.delete", "permissions"):
             self.assertNotIn(banned, drive_src)
