@@ -20,7 +20,7 @@
 | 3 | Implement the approved option | COMPLETE — stopped for review |
 | 4 | Review checkpoint | COMPLETE — stopped for review |
 | 5 | Deploy and smoke | COMPLETE — smoke test passed |
-| 6 | Closeout | IN PROGRESS — implementation committed |
+| 6 | Closeout | COMPLETE |
 
 ## Guardrails (summary)
 
@@ -560,5 +560,11 @@ Approved option, Brian, verbatim (2026-10-09): "Option 1 via a runtime wrap of p
 Fail closed, no ticket or no pending row: slash prompts, mid-turn steers and redirects, a merged busy-queue body, an `@` expansion that changes the hooked text, skill-prefix text whose sync string was stripped, and an image turn whose persist payload is a list.
 
 Implementation commit: `f348c2db25d908fad7ee95182a659840144efe59`
+
+Implementation-SHA metadata commit: `09184247212ced15a6d2cb47ceb4cba582e0d870`
+
+Merge (`--no-ff` `p9-fix-arm` → `main`): `18d4062a84c6ed37e6d9c4f22fbcdec81f1b207f`
+
+Branch `p9-fix-arm` deleted locally and on `origin` after this metadata commit is pushed.
 
 
