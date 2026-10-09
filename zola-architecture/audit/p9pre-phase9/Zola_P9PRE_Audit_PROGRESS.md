@@ -364,6 +364,6 @@ Phases 1–11 COMPLETE. Final findings: 45 (12 HIGH, 18 MEDIUM, 2 LOW, 13 MATCH)
 11a (2026-10-09): worktree changes are only `zola-architecture/audit/p9pre-phase9/`. hermes-agent porcelain empty at `345cd2b057a452236de401d3534b8502a7465e8d`. Live-profile hashes match Phase 1 (67 files; `.env` still missing). `token.dpapi` size 926, mtime `2026-10-07T22:58:24.2521851Z` (unchanged; contents not read).
 
 Audit content SHA (11c): `4bf9a32497efc5c589b2d7b792466bc98f6ab4b4`  
-Merge SHA (`--no-ff`): recorded after the merge.  
-Scratch `C:\Users\test\Dev\zola-spikes\p9pre\`: deleted at step 11i, after the merge-SHA commit.
+Merge SHA (`--no-ff` merge commit, not the HEAD after this metadata commit): `925fa2c7951e9415e09c156209270bb0d3504f7d`  
+Scratch `C:\Users\test\Dev\zola-spikes\p9pre\`: deleted at step 11i, after this commit.
 
