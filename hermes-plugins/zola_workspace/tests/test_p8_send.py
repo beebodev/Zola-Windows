@@ -309,6 +309,9 @@ class SendHome(_ReadHome):
             conn.close()
 
     def _authorize(self, text: str, *, turn_id: str = "turn-brian") -> None:
+        import origin
+
+        origin.grant_turn_for_tests(turn_id)
         turn_context.pre_llm_call_hook(
             session_id="sess-1",
             task_id="sess-1",
@@ -352,6 +355,10 @@ class SendHome(_ReadHome):
             turn_id="turn-brian",
             assistant_response=reply,
         )
+        # P9-FIX-ARM: post_llm ends the turn's origin; this helper is still the fixture turn — P8-D02
+        import origin
+
+        origin.grant_turn_for_tests("turn-brian")
 
     def _ready(self, **over) -> dict:
         data = self._create(**over)
@@ -377,6 +384,9 @@ class SendHome(_ReadHome):
             turn_context, "current_turn_id_from_context", return_value=turn_id
         )
         self._turn.start()
+        import origin
+
+        origin.grant_turn_for_tests(turn_id)
 
 
 class DraftAndSendTests(SendHome):
@@ -759,6 +769,9 @@ class DraftAndSendTests(SendHome):
             parent_session_id="",
             user_message=PASSPHRASE,
         )
+        import origin
+
+        origin.grant_turn_for_tests("turn-other-sess")
         send_gate.on_pre_llm_call(
             session_id="sess-2",
             turn_id="turn-other-sess",

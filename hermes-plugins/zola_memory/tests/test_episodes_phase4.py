@@ -101,8 +101,10 @@ class _TempHome(unittest.TestCase):
         consolidate.reset_for_tests()
         consolidate.set_background_enabled_for_tests(False)
         time_context.set_clock_for_tests(None, timezone=_LA)
+        forget.set_client_origin_override_for_tests(True)
 
     def tearDown(self) -> None:
+        forget.set_client_origin_override_for_tests(None)
         forget.set_erase_failure_hook(None)
         consolidate.reset_for_tests()
         time_context.set_clock_for_tests(None)

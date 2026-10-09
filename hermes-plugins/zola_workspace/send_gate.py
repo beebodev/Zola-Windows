@@ -617,6 +617,13 @@ def on_pre_llm_call(*, session_id: str, turn_id: str, user_message: str) -> None
     if not session_id or not turn_id:
         return
     _snapshot(session_id, turn_id)
+    # P9-FIX-ARM: a passphrase without a client-origin ticket writes no authorization — P8-D02
+    try:
+        from . import turn_context
+    except ImportError:
+        import turn_context  # type: ignore
+    if not turn_context.is_brian_turn(turn_id):
+        return
     with _lock:
         draft = _pending.get(session_id)
         if draft is None or not _live(draft):
@@ -723,8 +730,19 @@ def live_hash(session_id: str) -> Optional[str]:
         return draft.content_hash
 
 
+def _end_origin_turn(turn_id: str = "") -> None:
+    # P9-FIX-ARM: drop the thread flag and this turn's binding; the sync permit stays — P8-D02
+    try:
+        import origin
+
+        origin.end_turn(turn_id)
+    except Exception:
+        pass
+
+
 def post_llm_call_hook(**kwargs: Any) -> None:
     """Mark the presented draft reviewed when the reply covers it, then end the turn's authorization."""
+    _end_origin_turn(str(kwargs.get("turn_id") or ""))
     session_id = str(kwargs.get("session_id") or "")
     turn_id = str(kwargs.get("turn_id") or "")
     reply = kwargs.get("assistant_response")
@@ -764,7 +782,8 @@ def on_session_end_hook(**kwargs: Any) -> None:
     or an interrupt.
     """
     # P8-SEND: per-turn on_session_end must not drop the reviewed draft — P8-D05
-    _ = kwargs
+    # P9-FIX-ARM: this hook runs on the turn thread, including an interrupt — P8-D02
+    _end_origin_turn(str(kwargs.get("turn_id") or ""))
 
 
 def agent_loop_stopped_hook(**kwargs: Any) -> None:
@@ -776,6 +795,8 @@ def agent_loop_stopped_hook(**kwargs: Any) -> None:
     /new while an agent is running. A finished turn does not call it.
     """
     # P8-SEND: interrupt still drops the draft; turn end does not — P8-D05
+    # P9-FIX-ARM: clears this thread only; the turn thread is cleared in on_session_end — P8-D02
+    _end_origin_turn(str(kwargs.get("turn_id") or ""))
     session_id = str(kwargs.get("session_key") or kwargs.get("session_id") or "")
     try:
         clear_session(session_id)

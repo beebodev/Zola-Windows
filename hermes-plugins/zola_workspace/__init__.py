@@ -157,3 +157,9 @@ def register(ctx) -> None:
             description=description,
             is_async=False,
         )
+    # P9-FIX-ARM: wrap prompt.submit only in the serve process, before any turn — P8-D02
+    try:
+        from . import origin
+    except ImportError:
+        import origin  # type: ignore
+    origin.install_for_serve()

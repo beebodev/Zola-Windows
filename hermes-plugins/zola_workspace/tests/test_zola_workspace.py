@@ -20,6 +20,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 import guards  # noqa: E402
 import posture  # noqa: E402
 import turn_context  # noqa: E402
+import origin  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "zola_workspace_init",
@@ -52,6 +53,7 @@ class TurnContextTests(unittest.TestCase):
             parent_session_id="",
             user_message="synthetic A",
         )
+        origin.grant_turn_for_tests("turn-a")
         self.assertTrue(turn_context.is_brian_turn("turn-a"))
 
     def test_02_other_turn_same_session_not_confused_with_newest(self) -> None:
@@ -70,6 +72,8 @@ class TurnContextTests(unittest.TestCase):
             platform="tui",
             user_message="synthetic B",
         )
+        origin.grant_turn_for_tests("turn-a")
+        origin.grant_turn_for_tests("turn-b")
         with mock.patch.object(
             turn_context, "current_turn_id_from_context", return_value="turn-a"
         ):
@@ -302,6 +306,7 @@ class WorkspaceStatusTests(unittest.TestCase):
             parent_session_id="",
             user_message="synthetic",
         )
+        tc._origin().grant_turn_for_tests("turn-brian")
         with mock.patch.object(plugin.posture, "posture_ok", return_value=True):
             with mock.patch.object(
                 tc, "current_turn_id_from_context", return_value="turn-brian"
@@ -481,6 +486,7 @@ class ClaudeReviewPhase4Tests(unittest.TestCase):
             parent_session_id="",
             user_message="synthetic",
         )
+        tc._origin().grant_turn_for_tests(turn_id)
         tokens = set_current_observability_context(
             turn_id=turn_id, tool_call_id="call-1", session_id="sess-1"
         )

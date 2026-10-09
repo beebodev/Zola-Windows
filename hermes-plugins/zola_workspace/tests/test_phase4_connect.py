@@ -139,6 +139,10 @@ def _seed_brian_turn(
         parent_session_id="",
         user_message=user_message,
     )
+    # P9-FIX-ARM: these tests are Brian's turn, so they carry a client-origin grant — P8-D02
+    import origin
+
+    origin.grant_turn_for_tests(turn_id)
 
 
 class FramingTests(SocketGuardMixin, unittest.TestCase):
