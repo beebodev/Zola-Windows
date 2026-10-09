@@ -22,8 +22,8 @@
 | 3 | Draft OPEN_QUESTIONS.md | APPROVED (two wording fixes applied) |
 | 4 | Draft ROADMAP.md | APPROVED (three additions applied) |
 | 5 | Identity and deploy verification | COMPLETE (STOP) |
-| 6 | Apply, verify, STOP | APPLIED — STOP, no commit |
-| 7 | Commit and merge | PENDING |
+| 6 | Apply, verify, STOP | APPLIED |
+| 7 | Commit and merge | COMPLETE |
 
 ## Guardrails summary
 
@@ -669,4 +669,18 @@ Remaining hits, classified:
 
 ### Discrepancy at this STOP
 None against the expected hashes. The scan hits above are documentation, logs, font URLs, and a catalog entry.
+
+## Phase 7 — Commit and merge
+
+| Item | SHA |
+|---|---|
+| Lore commit | `04f4aa7a85b630f2daa4c3e75f75750257550951` |
+| Merge (`--no-ff` `p8-lore` → `main`) | `c4ab94c7388d8e502339b99af1dd203d73470cfd` |
+
+Branch `p8-lore` deleted locally and on `origin` after this metadata commit is pushed.
+
+### Phase 8 CLOSED
+
+Phase 8 lore closeout merged. New OQs: S60 Gmail triage actions; S61 Calendar writes; S62 Gmail attachment content; S63 Provenance-aware memory; S64 Office extraction; S65 An OS-level credential boundary; S66 Proactive Workspace surfacing; S67 Summary selectivity; S68 OAuth publishing; S69 Whole-message matches versus Hermes-injected text; S70 Voice playback-completion signal. Phase 9 candidates are in `ROADMAP.md`.
+
 
