@@ -242,25 +242,94 @@ One-line track results:
   Everyday reverted; closed on findings.
 - **P7-VOICEPROSE** — cut (S-sentence ≈4%; depends on streaming-TTS choice).
 
-## Current stage — Phase 8 (scope is Brian's call)
+## Phase 8 — COMPLETE: Google Workspace, Inside a Boundary
+Phase 8 shipped Google Workspace through `zola_workspace` only. "Complete"
+means the planned phase shipped. The boundary is the application, not the
+operating system. `S16` is resolved. Send is a passphrase, not a card.
+
+Shipped:
+- the boundary: config and `.env` self-edit guard, terminal Google guard,
+  self-modification rows, memory-taint guard, Brian-only (`platform == "tui"`,
+  empty `parent_session_id`), cron exclusion, `code_execution` off `cli`,
+  and `google-workspace`, `himalaya`, and `email-inbox-triage` retired;
+- Calendar past and upcoming;
+- read-only Gmail triage;
+- Drive find and read (Docs, Sheets, Slides, text, PDF);
+- Contacts lookup;
+- Gmail drafts plus passphrase-approved sends;
+- session taint and the memory guard, with the save-phrase amendment;
+- the client `/compress` (`slash.exec`; a second press is held).
+
+Recorded limits: residual terminal and self-modification paths were tested
+as not blocked; summary selectivity was accepted and not fixed (`S67`);
+the self-modification guard and the C2 replay were unit-tested, not live;
+a long gist was not verified; a read-back interrupted mid-speech can already
+count as reviewed; late cancel was proven by harness only, and after
+`drafts.send` cancel is the Gmail round trip; a delete phrase followed by a
+merged "don't delete" in the same turn still deletes; CONNECT C2 overwrote
+a fact and the closeout line was wrong until P8-CONNECT-FIX. OAuth is in
+Testing (about 7-day refresh tokens; weekly re-setup until published).
+
+1. ✅ **AUDIT** — P8PRE, merge `26a8f0063dfe8f0919707b05cdf56d9fddbc8138`
+   (audit content `fba2663d0fbb030b42a925b58e6de960e21327f6`).
+2. ✅ **DECISIONS LOCKED** — `P8-D01`–`P8-D12` (Appendix A). Brian
+   (verbatim, 2026-10-07): "approved." Publishing deviation (verbatim):
+   "I went with test for now to keep things moving. I will work on setting
+   up the site later."
+3. ✅ **BUILD PLAN WRITTEN** — `PHASE8_BUILD_PLAN.md` v1.1, commit
+   `49a3b86aee9d3c9401292a6bc1742ad92af197c7`, merge
+   `89d395a60d8c9ece1252400e52ab51d1fa7c678b`.
+4. ✅ **TRACKS EXECUTED** — HARDEN, CONNECT, CONNECT-FIX, READ, SEND merged.
+5. ✅ **VERIFICATION / SMOKE TEST** — per-track. SEND closeout: five
+   `drafts.send`, zero `messages.send`. Recorded ⚠️: C2 failed after its
+   first closeout; R1 accepted, not fixed; S9 harness only.
+6. ✅ **TRACK MERGED**
+   - Plan: `89d395a60d8c9ece1252400e52ab51d1fa7c678b`
+   - P8-HARDEN: `872e9eeabffacb6c7677d3f5eb57f52a3a3327dc`
+   - P8-CONNECT: `74255bb309ed71f6d480222de5ec2b0893c2e0e7`
+   - P8-CONNECT-FIX: `744787821ee4253f9c120f53273ab4c0a5e871e1`
+   - P8-READ: `7f54b52c50022b3a553c58ceadb522f6a0fb021a`
+   - P8-SEND: `89b41dfef585993d1d178590515e1ba602aad071`
+7. ✅ **LORE CLOSEOUT** — this pass.
+
+One-line track results:
+- **P8-HARDEN** — posture veto, config guard, Brian-only, cron exclusion,
+  `turn_id`.
+- **P8-CONNECT** — OAuth in Testing, Calendar, taint, memory guard.
+- **P8-CONNECT-FIX** — save phrase must lead; C2 repair; route labels.
+- **P8-READ** — Gmail, Drive, Contacts, PDF; Office fail-closed; `/compress`.
+- **P8-SEND** — drafts, passphrase send, 900 s review, send-time re-check.
+
+## Current stage — Phase 9 (scope is Brian's call)
 Candidates only (not a committed order); each with one line of evidence:
+- **Workspace expansions (`S60`, `S61`, `S62`, `S64`, `S66`)** — mark read / archive
+  / label, calendar writes, attachment bytes, Office extraction (an install
+  decision), and proactive surfacing were deferred on purpose.
+- **Summary selectivity (`S67`)** — triage summaries and one gist omitted
+  addresses; Brian accepted the smoke and did not ask for a fix.
+- **OAuth publishing (`S68`)** — Testing, about 7-day refresh tokens; production
+  needs a homepage and a privacy-policy URL.
 - **Voice I/O ownership study (`S56`)** — every upstream-blocked voice item
-  sits in the voice/audio layer; Brian asked whether to fork.
+  sits in the voice/audio layer; Brian asked whether to fork. Related: `S69`
+  (Hermes-injected text versus whole-message matches) and `S70` (no
+  playback-completion signal).
 - **`agent.execution_guidance` decision (`S54`)** — largest measured latency
-  lever (tool rounds ≈ +8–12 s/turn; 17.8 s vs 5.4 s submit→audio).
-- **Streaming TTS bake-off (`S55`)** — Edge has no streamer; ~2.0 s S-tts;
-  Brian raised; re-validate monitor + Track 1/2 on any new path.
+  lever (tool rounds ≈ +8–12 s/turn; 17.8 s vs 5.4 s submit→audio). The
+  Gmail skill route is gone; the decision stays open.
 - **Backend crash / recovery (`S51`)** — five APPCRASHes in two days after
-  zero 09-01→10-04; no automatic relaunch.
-- **Stop-vs-silence-STT race guard (`S52`)** — forensic (b); client guard +
-  duplicate-stop no-op proposed.
-- **Voice mode with no cards (`S57`)** — Brian: "I want the only time a card
-  is necessary is when in text mode.  No need in voice mode."
-- **Memory round two (`S46`, P6-D01 migration, `S48`–`S50`)** — associative
-  recall 0/4; fact-authority migration evidence-based; don't-note / skill
-  policy / tunables after real use.
-- **`S35` scopes, `S40`, `S28`** — session/always approvals; UI polish;
-  session UI retirement (episodes exist; evaluate).
+  zero 09-01→10-04; no automatic relaunch. Phase 8 added a process death on
+  2026-10-08 whose replay carried an interrupted-turn note.
+- **Memory round two (`S46`–`S50`, P6-D01 migration, `S63`)** — associative
+  recall, fact-authority migration, and provenance that would allow an
+  attributed save. Option B was not chosen.
+- **Phase 7 voice items still open** — `S52` (stop-vs-silence race), `S55`
+  (streaming TTS bake-off), `S57` (no cards in voice; Workspace sends are
+  done, batch and command approvals are not), `S58` (smaller Whisper models),
+  `S59` (`silence_duration`, data only).
+- **Carried, not closed by Phase 8 (`S35`, `S40`, `S28`)** — session/always
+  approvals; UI polish; session UI retirement (episodes exist; evaluate).
+- **Also open from Phase 8: `S65`** — an OS-level credential boundary, if the
+  application boundary proves insufficient.
 
 
 ## Source documents
