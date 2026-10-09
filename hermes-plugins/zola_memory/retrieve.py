@@ -252,7 +252,8 @@ def retrieve_episodes(
     parent_session_id: str = "",
 ) -> str:
     t0 = time.perf_counter()
-    if not forget.is_brian_conversation(platform, parent_session_id):
+    # P9-FIX-ARM: no client ticket, no episode text — P8-D02
+    if not forget.is_brian_conversation(platform, parent_session_id) or not forget.client_origin_active():
         memlog.write_event(
             memlog.LOG_EVENT_RETRIEVE,
             candidates=0,

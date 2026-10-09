@@ -26,9 +26,22 @@ class TurnRecord:
     created_at: float
 
 
+def _origin():
+    try:
+        from . import origin
+    except ImportError:
+        import origin  # type: ignore
+    return origin
+
+
 def clear_all_for_tests() -> None:
     """Drop all authority records (simulates restart / fresh module)."""
     _records_by_turn_id.clear()
+    # P9-FIX-ARM: a restart drops client-origin tickets with the turn records — P8-D02
+    try:
+        _origin().clear_for_tests()
+    except Exception:
+        pass
 
 
 def _prune_expired(now: Optional[float] = None) -> None:
@@ -112,6 +125,17 @@ def is_brian_turn(turn_id: Optional[str] = None) -> bool:
         return False
     if rec.parent_session_id:
         return False
+    # P9-FIX-ARM: tui + empty parent is not origin; the prompt.submit ticket is — P8-D02
+    try:
+        reason = _origin().refusal_reason(tid)
+    except Exception:
+        reason = "origin_check_error"
+    if reason:
+        try:
+            _origin().log_refuse(reason, tid)
+        except Exception:
+            pass
+        return False
     return True
 
 
@@ -130,6 +154,19 @@ def pre_llm_call_hook(**kwargs: Any) -> None:
         )
     except Exception:
         pass
+    # P9-FIX-ARM: bind the ticket before send authorization; a miss fails closed — P8-D02
+    try:
+        reason = _origin().consume_for_hook(
+            str(kwargs.get("turn_id") or ""),
+            kwargs.get("user_message") if isinstance(kwargs.get("user_message"), str) else "",
+        )
+        if reason:
+            _origin().log_refuse(reason, str(kwargs.get("turn_id") or ""))
+    except Exception:
+        try:
+            _origin().log_refuse("origin_check_error", str(kwargs.get("turn_id") or ""))
+        except Exception:
+            pass
     # P8-SEND: authorization is created here only, and only for a reviewed draft — P8-D02
     try:
         try:

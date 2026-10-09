@@ -68,8 +68,10 @@ class _TempHome(unittest.TestCase):
         forget.set_erase_failure_hook(None)
         consolidate.reset_for_tests()
         consolidate.set_background_enabled_for_tests(False)
+        forget.set_client_origin_override_for_tests(True)
 
     def tearDown(self) -> None:
+        forget.set_client_origin_override_for_tests(None)
         forget.set_erase_failure_hook(None)
         consolidate.reset_for_tests()
         memlog.reset_log_handler_for_tests()

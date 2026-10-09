@@ -170,7 +170,9 @@ class ZolaMemoryProvider(MemoryProvider):
         if tool_name != forget.TOOL_NAME:
             return '{"ok":false,"refused_reason":"unknown_tool"}'
         with self._lock:
-            return forget.handle_forget_memory(self, args if isinstance(args, dict) else {})
+            return forget.handle_forget_memory(
+                self, args if isinstance(args, dict) else {}, **kwargs
+            )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         text = ""
@@ -222,7 +224,11 @@ class ZolaMemoryProvider(MemoryProvider):
                 turn_number=turn_number,
                 msg_len=len(self._current_user_message),
             )
-            forget.on_turn_start_forget_hooks(self, self._current_user_message)
+            # P9-FIX-ARM: Hermes does not pass turn_id; the pre_llm context does — P8-D02
+            tid = str(kwargs.get("turn_id") or "") or forget.current_origin_turn_id()
+            forget.on_turn_start_forget_hooks(
+                self, self._current_user_message, turn_id=tid
+            )
             if self._conn is not None and self._hermes_home is not None:
                 # P6-EPISODES: retry deferred G-ERASE WAL TRUNCATE — P6-D04
                 try:
@@ -265,6 +271,8 @@ class ZolaMemoryProvider(MemoryProvider):
                 and forget.is_brian_conversation(
                     self._platform, self._parent_session_id
                 )
+                # P9-FIX-ARM: the permit matches this text; a remembered turn id is not used — P8-D02
+                and forget.sync_turn_allowed(user_content or "")
                 and decision == "keep"
             ):
                 sid = session_id or self._session_id or ""

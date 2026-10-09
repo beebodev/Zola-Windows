@@ -254,6 +254,113 @@ def is_brian_conversation(platform: Optional[str], parent_session_id: Optional[s
     return (platform or "").lower() in USER_TURN_PLATFORMS and not (parent_session_id or "")
 
 
+# P9-FIX-ARM: tests that build a Brian turn set this; production reads the workspace ticket — P8-D02
+_origin_override: Optional[bool] = None
+_origin_mod: Any = None
+
+MSG_ORIGIN_REFUSE = (
+    "This turn was not sent from Brian's app, so memory changes and forget_memory are refused."
+)
+
+
+def set_client_origin_override_for_tests(value: Optional[bool]) -> None:
+    global _origin_override, _origin_mod
+    _origin_override = value
+    if value is None:
+        _origin_mod = None
+
+
+def _origin_module() -> Any:
+    global _origin_mod
+    if _origin_mod is not None:
+        return _origin_mod
+    import sys
+
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "ORIGIN_MODULE_MARKER", None) == "p9-fix-arm":
+            _origin_mod = mod
+            return mod
+    return None
+
+
+def current_origin_turn_id() -> str:
+    """Turn id bound on this thread by pre_llm. Empty when the turn has ended."""
+    if _origin_override is not None:
+        return ""
+    mod = _origin_module()
+    if mod is None:
+        return ""
+    try:
+        return str(mod.current_turn_id() or "")
+    except Exception:
+        return ""
+
+
+def client_origin_active() -> bool:
+    """True when this thread's current turn_id is bound.
+
+    The thread flag is the fallback only when no turn_id is on this thread.
+    That fallback is reached from retrieve_episodes, which has no turn_id argument.
+    """
+    if _origin_override is not None:
+        return bool(_origin_override)
+    mod = _origin_module()
+    if mod is None:
+        return False
+    try:
+        tid = str(mod.current_turn_id() or "")
+        if tid:
+            return bool(mod.turn_is_bound(tid))
+        # P9-FIX-ARM: no turn_id here; retrieve is the caller — P8-D02
+        return bool(mod.thread_turn_is_client())
+    except Exception:
+        return False
+
+
+def origin_allows(turn_id: str = "", **kwargs: Any) -> bool:
+    """A bound turn_id passes. The thread flag is used only when no turn_id exists.
+
+    Callers are handle_forget_memory and pre_tool_call_hook. turn_id comes from
+    kwargs, then tools.approval_context, then the pre_llm context. The thread
+    flag is last, and only if all three are empty.
+    """
+    if _origin_override is not None:
+        return bool(_origin_override)
+    tid = str(turn_id or kwargs.get("turn_id") or "")
+    if not tid:
+        try:
+            from tools.approval_context import _approval_turn_id
+
+            tid = str(_approval_turn_id.get() or "")
+        except Exception:
+            tid = ""
+    mod = _origin_module()
+    if mod is None:
+        return False
+    try:
+        if not tid:
+            tid = str(mod.current_turn_id() or "")
+        if tid:
+            return bool(mod.turn_is_bound(tid))
+        # P9-FIX-ARM: tool call with no turn_id anywhere; flag dies at turn end — P8-D02
+        return bool(mod.thread_turn_is_client())
+    except Exception:
+        return False
+
+
+def sync_turn_allowed(user_content: str) -> bool:
+    """One pending-row write when this text matches a consumed turn. Tests use the override."""
+    if _origin_override is not None:
+        return bool(_origin_override)
+    mod = _origin_module()
+    if mod is None:
+        return False
+    try:
+        return bool(mod.take_sync_for_text(user_content))
+    except Exception:
+        return False
+
+
 def normalize_disposition_key(text: str) -> str:
     """Normalize user text for disposition keys (skill-strip best-effort + casefold)."""
     raw = text if isinstance(text, str) else ""
@@ -989,6 +1096,7 @@ def group_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def handle_forget_memory(
     provider: Any,
     args: Dict[str, Any],
+    **kwargs: Any,
 ) -> str:
     """Dispatch forget_memory for a provider instance. Returns JSON string."""
     t0 = time.perf_counter()
@@ -1017,6 +1125,16 @@ def handle_forget_memory(
                 "message": "Forget is only available in Brian's interactive conversation.",
             },
             refused="platform",
+        )
+    # P9-FIX-ARM: platform tui is not a ticket; refuse instead of running the tool — P8-D02
+    if not origin_allows(**kwargs):
+        return _done(
+            {
+                "ok": False,
+                "refused_reason": "origin",
+                "message": MSG_ORIGIN_REFUSE,
+            },
+            refused="origin",
         )
 
     if conn is None:
@@ -1250,8 +1368,17 @@ def expire_orphan_hold_on_restart(provider: Any) -> None:
             )
 
 
-def on_turn_start_forget_hooks(provider: Any, message: str) -> None:
+def on_turn_start_forget_hooks(provider: Any, message: str, turn_id: str = "") -> None:
     """E2/E3: mark forget-intent drops; maintain hold turn budget; expiry checks."""
+    # P9-FIX-ARM: a turn with no client ticket does not start a forget hold — P8-D02
+    if _origin_override is not None:
+        if not _origin_override:
+            return
+    elif turn_id:
+        if not origin_allows(turn_id):
+            return
+    elif not client_origin_active():
+        return
     state: ForgetSessionState = provider._forget_state
     expire_disposition_drops(state)
     expire_orphan_hold_on_restart(provider)
@@ -1347,6 +1474,18 @@ def pre_tool_call_hook(
     sid = str(kwargs.get("session_id") or "")
     provider = _registry.get(sid)
     if provider is None:
+        return None
+    name = str(tool_name or "")
+    # P9-FIX-ARM: no ticket refuses forget and memory writes; it does not skip the hook — P8-D02
+    if not origin_allows(**kwargs):
+        if name in (TOOL_NAME, MEMORY_TOOL_NAME):
+            memlog.write_event(
+                memlog.LOG_EVENT_FORGET_GUARD,
+                action="blocked",
+                tool=name,
+                ok=False,
+            )
+            return {"action": "block", "message": MSG_ORIGIN_REFUSE}
         return None
     if not is_brian_conversation(
         getattr(provider, "_platform", "") or "",

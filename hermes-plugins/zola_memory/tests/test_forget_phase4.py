@@ -68,8 +68,10 @@ class _TempHome(unittest.TestCase):
         forget.set_erase_failure_hook(None)
         consolidate.reset_for_tests()
         consolidate.set_background_enabled_for_tests(False)
+        forget.set_client_origin_override_for_tests(True)
 
     def tearDown(self) -> None:
+        forget.set_client_origin_override_for_tests(None)
         forget.set_erase_failure_hook(None)
         consolidate.reset_for_tests()
         registry.clear_for_tests()
@@ -1171,6 +1173,186 @@ class TestForgetGuardAskBrian(_TempHome):
         )
         p.shutdown()
         p2.shutdown()
+
+
+class TestNonTicketTurns(_TempHome):
+    """P9-FIX-ARM: a tui turn with no client ticket writes, retrieves, and forgets nothing."""
+
+    def test_no_pending_no_episodes_and_forget_refuses(self) -> None:
+        forget.set_client_origin_override_for_tests(False)
+        p = self._provider()
+        p.sync_turn("synthetic ordinary note", "synthetic reply", session_id="s1")
+        import pending
+        import retrieve
+
+        self.assertEqual(pending.count_pending(p._conn), 0)
+        self.assertEqual(
+            retrieve.retrieve_episodes(
+                p._conn, "synthetic ordinary", platform="tui", parent_session_id=""
+            ),
+            "",
+        )
+        refused = json.loads(
+            p.handle_tool_call(
+                "forget_memory",
+                {"description": "synthetic", "confirm": False},
+            )
+        )
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["refused_reason"], "origin")
+        blocked = forget.pre_tool_call_hook(
+            tool_name="forget_memory",
+            args={"confirm": False, "description": "synthetic"},
+            session_id="s1",
+        )
+        self.assertIsNotNone(blocked)
+        self.assertEqual(blocked["action"], "block")
+        blocked_mem = forget.pre_tool_call_hook(
+            tool_name="memory",
+            args={"action": "add", "content": "[note] synthetic"},
+            session_id="s1",
+        )
+        self.assertEqual(blocked_mem["action"], "block")
+        self.assertIsNone(
+            forget.pre_tool_call_hook(
+                tool_name="terminal",
+                args={"command": "echo synthetic"},
+                session_id="s1",
+            )
+        )
+        p.shutdown()
+
+    def test_brian_turn_then_same_thread_without_pre_llm_refuses(self) -> None:
+        ws = str(Path(__file__).resolve().parents[2] / "zola_workspace")
+        sys.path.insert(0, ws)
+        import origin
+
+        forget.set_client_origin_override_for_tests(None)
+        origin.clear_for_tests()
+        p = self._provider()
+        try:
+            origin.grant_turn_for_tests("turn-brian", "synthetic brian line")
+            p.on_turn_start(1, "synthetic brian line", turn_id="turn-brian")
+            allowed = json.loads(
+                p.handle_tool_call(
+                    "forget_memory",
+                    {"description": "synthetic", "confirm": False},
+                    turn_id="turn-brian",
+                )
+            )
+            self.assertTrue(allowed["ok"], allowed)
+            origin.end_turn("turn-brian")
+            self.assertFalse(origin.thread_turn_is_client())
+            self.assertFalse(origin.turn_is_bound("turn-brian"))
+            self.assertFalse(forget.client_origin_active())
+            p.on_turn_start(2, "synthetic persist-disabled follow-up")
+            refused = json.loads(
+                p.handle_tool_call(
+                    "forget_memory",
+                    {"description": "synthetic", "confirm": False},
+                )
+            )
+            self.assertFalse(refused["ok"])
+            self.assertEqual(refused["refused_reason"], "origin")
+            blocked = forget.pre_tool_call_hook(
+                tool_name="forget_memory",
+                args={"confirm": False, "description": "synthetic"},
+                session_id="s1",
+            )
+            self.assertEqual(blocked["action"], "block")
+            import pending
+            import retrieve
+
+            self.assertEqual(
+                retrieve.retrieve_episodes(
+                    p._conn,
+                    "synthetic persist-disabled",
+                    platform="tui",
+                    parent_session_id="",
+                ),
+                "",
+            )
+            p.sync_turn("synthetic brian line", "synthetic reply", session_id="s1")
+            self.assertEqual(pending.count_pending(p._conn), 1)
+            row = p._conn.execute("SELECT user_text FROM pending_turns").fetchone()
+            self.assertEqual(row[0], "synthetic brian line")
+            p.sync_turn(
+                "synthetic persist-disabled follow-up",
+                "synthetic reply two",
+                session_id="s1",
+            )
+            self.assertEqual(pending.count_pending(p._conn), 1)
+        finally:
+            origin.clear_for_tests()
+            forget.set_client_origin_override_for_tests(None)
+            if sys.path and sys.path[0] == ws:
+                sys.path.pop(0)
+            p.shutdown()
+
+    def _open_origin(self):
+        ws = str(Path(__file__).resolve().parents[2] / "zola_workspace")
+        sys.path.insert(0, ws)
+        import origin
+
+        forget.set_client_origin_override_for_tests(None)
+        origin.clear_for_tests()
+        return origin, ws
+
+    def _close_origin(self, origin, ws: str) -> None:
+        origin.clear_for_tests()
+        forget.set_client_origin_override_for_tests(None)
+        if sys.path and sys.path[0] == ws:
+            sys.path.pop(0)
+
+    def test_synthetic_sync_cannot_spend_brians_permit(self) -> None:
+        origin, ws = self._open_origin()
+        p = self._provider()
+        try:
+            origin.grant_turn_for_tests("turn-brian", "synthetic brian line")
+            p.sync_turn("synthetic other line", "synthetic reply", session_id="s1")
+            import pending
+
+            self.assertEqual(pending.count_pending(p._conn), 0)
+            p.sync_turn("synthetic brian line", "synthetic brian reply", session_id="s1")
+            self.assertEqual(pending.count_pending(p._conn), 1)
+            row = p._conn.execute("SELECT user_text FROM pending_turns").fetchone()
+            self.assertEqual(row[0], "synthetic brian line")
+        finally:
+            self._close_origin(origin, ws)
+            p.shutdown()
+
+    def test_two_brian_turns_each_write_once(self) -> None:
+        origin, ws = self._open_origin()
+        p = self._provider()
+        try:
+            origin.grant_turn_for_tests("turn-one", "synthetic brian one")
+            origin.grant_turn_for_tests("turn-two", "synthetic brian two")
+            p.sync_turn("synthetic brian one", "synthetic reply one", session_id="s1")
+            p.sync_turn("synthetic brian two", "synthetic reply two", session_id="s1")
+            import pending
+
+            self.assertEqual(pending.count_pending(p._conn), 2)
+            rows = p._conn.execute(
+                "SELECT user_text FROM pending_turns ORDER BY turn_index"
+            ).fetchall()
+            self.assertEqual([row[0] for row in rows], ["synthetic brian one", "synthetic brian two"])
+        finally:
+            self._close_origin(origin, ws)
+            p.shutdown()
+
+    def test_sync_permit_is_one_shot(self) -> None:
+        origin, ws = self._open_origin()
+        p = self._provider()
+        try:
+            origin.grant_turn_for_tests("turn-brian", "synthetic brian line")
+            p.sync_turn("synthetic brian line", "synthetic reply one", session_id="s1")
+            p.sync_turn("synthetic brian line", "synthetic reply two", session_id="s1")
+            import pending
+
+            self.assertEqual(pending.count_pending(p._conn), 1)
+        finally:
+            self._close_origin(origin, ws)
+            p.shutdown()
 
 
 if __name__ == "__main__":

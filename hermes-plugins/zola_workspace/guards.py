@@ -19,6 +19,19 @@ GUARD_TERMINAL_GOOGLE = "terminal_google"
 GUARD_MEMORY_TAINT_ENABLED = True
 GUARD_TERMINAL_GOOGLE_ENABLED = True
 GUARD_SELF_MOD = "self_mod"
+# P9-FIX-ARM: state.db writes, hermes cron, and cron files are defense in depth — P8-D02
+GUARD_STATE_DB = "state_db_write"
+GUARD_SCHEDULE = "schedule_write"
+TOOL_CRONJOB = "cronjob_manage"
+
+BLOCK_MESSAGE_STATE_DB = "Blocked: writing Hermes state.db is not allowed."
+BLOCK_MESSAGE_SCHEDULE = "Blocked: creating or editing a schedule is not allowed."
+BLOCK_MESSAGE_CRON_FILE = "Blocked: writing the cron jobs file is not allowed."
+
+_HERMES_CRON_RE = re.compile(r"(^|[^\w.-])hermes(?:\.exe)?\s+cron\b", re.IGNORECASE)
+_STATE_DB_RE = re.compile(r"state\.db", re.IGNORECASE)
+_SQLITE3_RE = re.compile(r"\bsqlite3\b", re.IGNORECASE)
+_STATE_META_WRITE_RE = re.compile(r"\b(?:update|insert)\b", re.IGNORECASE)
 
 ACTION_ALLOW = "allow"
 ACTION_BLOCK = "block"
@@ -566,6 +579,68 @@ def self_mod_hit(text: str) -> bool:
     )
 
 
+def _path_text(args: Any) -> str:
+    if not isinstance(args, dict):
+        return ""
+    return str(args.get("path") or "")
+
+
+def path_is_state_db(path: str) -> bool:
+    name = path.replace("\\", "/").rstrip("/").split("/")[-1]
+    return name.lower() == "state.db"
+
+
+def state_db_write_hit(command: str) -> bool:
+    # P9-FIX-ARM: a bare import sqlite3 does not name state.db — P8-D02
+    text = command or ""
+    if not _STATE_DB_RE.search(text):
+        return False
+    low = text.lower()
+    if _SQLITE3_RE.search(text):
+        return True
+    if "sqlite3" in low and "connect" in low:
+        return True
+    if _STATE_META_WRITE_RE.search(text) and "state_meta" in low:
+        return True
+    return False
+
+
+def path_is_cron_file(path: str) -> bool:
+    norm = (path or "").replace("\\", "/").lower()
+    return "cron/jobs.json" in norm or "cron/" in norm
+
+
+def hermes_cron_hit(command: str) -> bool:
+    return bool(_HERMES_CRON_RE.search(command or ""))
+
+
+def evaluate_state_db(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
+    """Block terminal and file writes that name state.db with a write verb."""
+    name = str(tool_name or "")
+    if name in (TOOL_WRITE_FILE, TOOL_PATCH):
+        blob = _command_text(name, args)
+        if path_is_state_db(_path_text(args)) or path_is_state_db(blob):
+            return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_STATE_DB}
+        for token in re.split(r"[\s\"']+", blob.replace("\\", "/")):
+            if token and path_is_state_db(token):
+                return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_STATE_DB}
+    if name == TOOL_TERMINAL and state_db_write_hit(_command_text(TOOL_TERMINAL, args)):
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_STATE_DB}
+    return None
+
+
+def evaluate_schedule(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
+    """Block hermes cron, cronjob_manage, and writes under cron/."""
+    name = str(tool_name or "")
+    if name == TOOL_CRONJOB:
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_SCHEDULE}
+    if name == TOOL_TERMINAL and hermes_cron_hit(_command_text(TOOL_TERMINAL, args)):
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_SCHEDULE}
+    if name in (TOOL_WRITE_FILE, TOOL_PATCH) and path_is_cron_file(_command_text(name, args)):
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_CRON_FILE}
+    return None
+
+
 def evaluate_terminal_google(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
     """Block terminal commands that name Google or the Workspace store."""
     # P8-READ: terminal Google guard live — P8-D02
@@ -671,6 +746,34 @@ def pre_tool_call_hook(
                 pass
             return self_mod
 
+        state_db = evaluate_state_db(tool_name=name, args=args)
+        if state_db is not None:
+            try:
+                wslog.write_event(
+                    wslog.LOG_EVENT_GUARD,
+                    name=GUARD_STATE_DB,
+                    action=ACTION_BLOCK,
+                    reason="state_db_write",
+                    tool=name,
+                )
+            except Exception:
+                pass
+            return state_db
+
+        schedule = evaluate_schedule(tool_name=name, args=args)
+        if schedule is not None:
+            try:
+                wslog.write_event(
+                    wslog.LOG_EVENT_GUARD,
+                    name=GUARD_SCHEDULE,
+                    action=ACTION_BLOCK,
+                    reason="schedule_write",
+                    tool=name,
+                )
+            except Exception:
+                pass
+            return schedule
+
         blocked = evaluate_config_self_edit(name, args)
         if blocked is not None:
             cmd = ""
@@ -696,6 +799,11 @@ def pre_tool_call_hook(
             return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_TERMINAL_GOOGLE}
         if name in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL) and self_mod_hit(raw):
             return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_SELF_MOD}
+        if state_db_write_hit(raw) or path_is_state_db(raw):
+            return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_STATE_DB}
+        if hermes_cron_hit(raw) or path_is_cron_file(raw) or name == TOOL_CRONJOB:
+            message = BLOCK_MESSAGE_CRON_FILE if path_is_cron_file(raw) else BLOCK_MESSAGE_SCHEDULE
+            return {"action": ACTION_BLOCK, "message": message}
         sensitive = _text_has_sensitive_filename(raw)
         if name in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL) and sensitive:
             try:
