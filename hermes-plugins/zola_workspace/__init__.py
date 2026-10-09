@@ -15,6 +15,7 @@ try:
     from . import guards
     from . import log as wslog
     from . import posture
+    from . import send_gate
     from . import turn_context
 except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import auth
@@ -25,6 +26,7 @@ except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import guards
     import log as wslog
     import posture
+    import send_gate
     import turn_context
 
 # P8-HARDEN / P8-CONNECT: named tool / toolset constants — P8-D01 / P8-D08
@@ -33,6 +35,10 @@ TOOL_CALENDAR_QUERY = gcal.TOOL_NAME
 TOOLSET_NAME = "zola_workspace"
 HOOK_PRE_LLM_CALL = "pre_llm_call"
 HOOK_PRE_TOOL_CALL = "pre_tool_call"
+# P8-SEND: review on the finalized reply; clear the draft when the session ends — P8-D05
+HOOK_POST_LLM_CALL = "post_llm_call"
+HOOK_ON_SESSION_END = "on_session_end"
+HOOK_AGENT_LOOP_STOPPED = "agent_loop_stopped"
 
 _WORKSPACE_STATUS_DESCRIPTION = (
     "Report whether Google Workspace is connected for Zola and whether this "
@@ -109,6 +115,10 @@ def register(ctx) -> None:
     """Register hooks, workspace_status, and calendar_query (synchronous)."""
     # P8-HARDEN: pre_llm_call stores turn_id-keyed context — P8-D02
     ctx.register_hook(HOOK_PRE_LLM_CALL, turn_context.pre_llm_call_hook)
+    # P8-SEND: review the read-back, then drop this turn's authorization — P8-D05
+    ctx.register_hook(HOOK_POST_LLM_CALL, send_gate.post_llm_call_hook)
+    ctx.register_hook(HOOK_ON_SESSION_END, send_gate.on_session_end_hook)
+    ctx.register_hook(HOOK_AGENT_LOOP_STOPPED, send_gate.agent_loop_stopped_hook)
     # P8-HARDEN / P8-CONNECT: config self-edit + memory-taint — P8-D02 / P8-D09
     ctx.register_hook(HOOK_PRE_TOOL_CALL, guards.pre_tool_call_hook)
     # P8-HARDEN: is_async=False required (Brian Phase 3 edit #4) — P8-D01
@@ -136,6 +146,8 @@ def register(ctx) -> None:
         (drive.TOOL_SEARCH, drive.search_schema(), drive.drive_search_handler, drive._SEARCH_DESCRIPTION),
         (drive.TOOL_READ, drive.read_schema(), drive.drive_read_handler, drive._READ_DESCRIPTION),
         (contacts.TOOL_NAME, contacts.contacts_schema(), contacts.contacts_lookup_handler, contacts._DESCRIPTION),
+        (gmail.TOOL_DRAFT, gmail.draft_schema(), gmail.gmail_draft_handler, gmail._DRAFT_DESCRIPTION),
+        (gmail.TOOL_SEND, gmail.send_schema(), gmail.gmail_send_draft_handler, gmail._SEND_DESCRIPTION),
     ):
         ctx.register_tool(
             name=name,

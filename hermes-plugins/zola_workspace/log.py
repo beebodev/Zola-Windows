@@ -17,6 +17,8 @@ LOG_EVENT_GMAIL_READ = "zola_workspace.gmail_read"
 LOG_EVENT_DRIVE_SEARCH = "zola_workspace.drive_search"
 LOG_EVENT_DRIVE_READ = "zola_workspace.drive_read"
 LOG_EVENT_CONTACTS = "zola_workspace.contacts_lookup"
+# P8-SEND: send-gate metadata only — P8-D11
+LOG_EVENT_SEND_GATE = "zola_workspace.send_gate"
 
 _logger = logging.getLogger("zola_workspace")
 _file_handler_ready = False
