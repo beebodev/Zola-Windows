@@ -74,7 +74,7 @@ INFO: `S13` still lists Phone Link and Twilio as research candidates beside the 
 ## Closeout SHAs
 
 - Audit tip SHA (12c): `99c799d3d4cd542106279f5ba39c35220ee90e5f`
-- Merge SHA (12h): not yet recorded.
+- Merge SHA (12h): `f07ae366238e5b99df5d045b90d528fed831359a`
 
 ## Running findings
 
