@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Zola.Client.Supervision;
 using Zola.Client.Voice;
 
 namespace Zola.Client;
@@ -310,10 +311,25 @@ sealed class VoiceController
     private readonly object _turnTimingGate = new();
     private int _turnTimingSeq;
     private DateTimeOffset? _pendingTranscriptAt;
+    private long _admittedEpoch = long.MinValue;
     private CancellationTokenSource? _turnTimingFinalizeCts;
 
-    public VoiceController(ChatSocket chat)
+    public long AdmittedConnectionEpoch => Interlocked.Read(ref _admittedEpoch);
+
+    public bool? TtsBeforeGap { get; private set; }
+
+    public bool PreserveTtsAcrossNextSync { get; set; }
+
+    private readonly Func<long> _processGeneration;
+    private readonly Func<int> _restartAttempts;
+
+    private long _generationAtOutage = -1;
+
+    public VoiceController(ChatSocket chat, Func<long>? processGeneration = null, Func<int>? restartAttempts = null)
     {
+        // P9-SUPERVISE: same-generation reconnect is the only time the live recorder is still running — P9-D02
+        _processGeneration = processGeneration ?? (() => -1);
+        _restartAttempts = restartAttempts ?? (() => 0);
         // P2-VOICE: one controller listens on the window's existing socket — P2-D01
         _chat = chat;
         _chat.VoiceStatusChanged += OnVoiceStatus;
@@ -1554,11 +1570,140 @@ sealed class VoiceController
             return;
         }
 
+        if (PreserveTtsAcrossNextSync)
+        {
+            // P9-SUPERVISE: voice on first, then set TTS to the saved target; do not force it on — P9-D02
+            PreserveTtsAcrossNextSync = false;
+            await RestoreTtsAfterVoiceOnAsync().ConfigureAwait(false);
+            if (Mode == ModeVoice && IsAvailable)
+            {
+                await ArmWakeAsync().ConfigureAwait(false);
+            }
+
+            return;
+        }
+
         // P2-WAKE: every new socket and Voice-mode entry syncs voice, then arms wake — P2-D04
         await SyncVoiceModeAsync().ConfigureAwait(false);
         if (Mode == ModeVoice && IsAvailable)
         {
             await ArmWakeAsync().ConfigureAwait(false);
+        }
+    }
+
+    public void InvalidateCaptureForOutage()
+    {
+        // P9-SUPERVISE: snapshot TTS, then invalidate capture, before a restart is awaited — P9-D02
+        TtsBeforeGap = _ttsOn;
+        InvalidateCapture(SupervisionConstants.GapReason);
+        AbandonPendingQuestion(SupervisionConstants.GapReason);
+        // P9-SUPERVISE: drop the local latch; a same-generation reconnect stops the live recorder before wake — P9-D02
+        _generationAtOutage = _processGeneration();
+        CaptureActive = false;
+        RecorderState = StateIdle;
+        StateChanged?.Invoke();
+    }
+
+    public void DropPendingTranscriptForOutage()
+    {
+        // P9-SUPERVISE: a deferred transcript must not call prompt.submit or AnswerClarify — P9-D02
+        lock (_lifecycleGate)
+        {
+            var dropped = _lifecycle.DiscardPending(SupervisionConstants.GapReason);
+            if (!string.IsNullOrEmpty(dropped.LogLine))
+            {
+                WriteTimeline(dropped.LogLine);
+            }
+        }
+
+        _pendingTranscriptAt = null;
+        Interlocked.Exchange(ref _admittedEpoch, long.MinValue);
+    }
+
+    public void StopLocalSpeechForOutage()
+    {
+        // P9-SUPERVISE: local Speaking ends in the gap; ffplay is killed by the playback monitor — P9-D02
+        _replyReleaseArmed = false;
+        _speechStoppedThisTurn = true;
+        SetSpeaking(false);
+        StateChanged?.Invoke();
+    }
+
+    private async Task RestoreTtsAfterVoiceOnAsync()
+    {
+        // P9-SUPERVISE: a null snapshot does not run this path and does not force TTS off — P9-D02
+        if (Mode != ModeVoice || RefuseIfGated(GateRefuseSyncVoiceWake) || TtsBeforeGap is null)
+        {
+            return;
+        }
+
+        var sameProcess = TtsRestore.IsSameProcessGeneration(_generationAtOutage, _processGeneration());
+        var session = new TtsRestoreSession(sameProcess, TtsBeforeGap.Value);
+        for (var step = 0; step < TtsRestore.MaxDecisions; step++)
+        {
+            switch (session.Next())
+            {
+                case TtsRestore.Action.ReadStatus:
+                    var status = await ToggleAsync(ActionStatus).ConfigureAwait(false);
+                    if (!status.Ok)
+                    {
+                        MarkUnavailable(status.Error ?? status.Details ?? "");
+                        return;
+                    }
+
+                    IsAvailable = status.Available == true && status.AudioAvailable == true && status.SttAvailable == true;
+                    UnavailableDetails = status.Details ?? "";
+                    if (!IsAvailable)
+                    {
+                        MarkUnavailable(UnavailableDetails);
+                        return;
+                    }
+
+                    session.NoteStatus(status.Enabled == true, status.Tts);
+                    break;
+                case TtsRestore.Action.EnableVoice:
+                    var enabled = await ToggleAsync(ActionOn).ConfigureAwait(false);
+                    if (!enabled.Ok || enabled.Enabled == false)
+                    {
+                        MarkUnavailable(enabled.Error ?? enabled.Details ?? UnavailableDetails);
+                        return;
+                    }
+
+                    break;
+                case TtsRestore.Action.StopLeftoverAudio:
+                    // P9-SUPERVISE: off then on calls stop_playback, then voice is on again — P9-D02
+                    await ToggleAsync(ActionOff).ConfigureAwait(false);
+                    var restored = await ToggleAsync(ActionOn).ConfigureAwait(false);
+                    if (!restored.Ok || restored.Enabled == false)
+                    {
+                        MarkUnavailable(restored.Error ?? restored.Details ?? UnavailableDetails);
+                        return;
+                    }
+
+                    break;
+                case TtsRestore.Action.SetTts:
+                    await ToggleAsync(ActionTts).ConfigureAwait(false);
+                    break;
+                case TtsRestore.Action.LogMismatch:
+                    SupervisionLog.Write(
+                        SupervisionConstants.ProcServe,
+                        SupervisionConstants.EventTtsRestoreMismatch,
+                        _restartAttempts(),
+                        _processGeneration());
+                    break;
+                case TtsRestore.Action.LogSecondMismatch:
+                    SupervisionLog.Write(
+                        SupervisionConstants.ProcServe,
+                        SupervisionConstants.EventTtsRestoreMismatch,
+                        _restartAttempts(),
+                        _processGeneration());
+                    WriteTimeline("event=" + SupervisionConstants.EventTtsRestoreMismatch);
+                    StateChanged?.Invoke();
+                    return;
+                case TtsRestore.Action.Done:
+                    StateChanged?.Invoke();
+                    return;
+            }
         }
     }
 
@@ -2086,8 +2231,15 @@ sealed class VoiceController
         StateChanged?.Invoke();
     }
 
-    private void OnVoiceTranscript(ChatSocket.VoiceTranscript transcript)
+    private void OnVoiceTranscript(ChatSocket.VoiceTranscript transcript, long connectionEpoch)
     {
+        // P9-SUPERVISE: a transcript stamped with an earlier connection epoch is not admitted — P9-D02
+        if (!ConnectionEpochGuard.Allows(connectionEpoch, _chat.CurrentConnectionEpoch))
+        {
+            WriteTimeline("transcript drop reason=stale_epoch");
+            return;
+        }
+
         // P7-VOICEAUTH: admit on snapshot BEFORE ApplyTranscript changes state — P7-D01
         CaptureSnapshot snap;
         AdmissionVerdict verdict;
@@ -2228,6 +2380,8 @@ sealed class VoiceController
         }
 
         CancelFollowUp(CancelReasonVoiceTranscript);
+        // P9-SUPERVISE: stamp the epoch that admitted this transcript so a later submit can refuse it — P9-D02
+        Interlocked.Exchange(ref _admittedEpoch, connectionEpoch);
         // P2-VOICE: a non-empty admitted transcript is submitted once by the window — P2-D05
         TranscriptReady?.Invoke(text, admit.ClarifyId);
         if (tr.ReleasePendingNow)
@@ -2503,6 +2657,19 @@ sealed class VoiceController
             if (tr.NeedsHermesStop)
             {
                 _ = SendRecordStopAsync();
+            }
+
+            if (RecordingLatch.ClearAfterSettledTick(
+                tr.Snapshot.HasOutstanding,
+                tr.Snapshot.HermesBusyUntilIdle,
+                tr.Snapshot.State,
+                CaptureActive,
+                RecorderState == StateIdle))
+            {
+                // P9-SUPERVISE: a settled capture with no idle event drops the local recording latch so wake can start again — P9-D02
+                CaptureActive = false;
+                RecorderState = StateIdle;
+                StateChanged?.Invoke();
             }
 
             if (tr.ReleasePendingNow)
@@ -3590,6 +3757,17 @@ sealed class VoiceController
         if (Mode != ModeVoice || !IsAvailable || string.IsNullOrEmpty(_chat.SessionId))
         {
             return;
+        }
+
+        if (RecordingLatch.StopRecordBeforeRearm(_generationAtOutage, _processGeneration()))
+        {
+            // P9-SUPERVISE: the same process may still be recording after the local latch was cleared — P9-D02
+            _generationAtOutage = -1;
+            await SendRecordStopAsync().ConfigureAwait(false);
+        }
+        else if (_generationAtOutage >= 0)
+        {
+            _generationAtOutage = -1;
         }
 
         WakeSettingUp = true;

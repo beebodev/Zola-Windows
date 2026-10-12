@@ -16,11 +16,29 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // P9-SUPERVISE: prune old local dumps on startup; the folder may be absent — P9-D02
+        DumpPruner.PruneOnStartup();
         // P1-CLIENT: own the backend for this window; chat socket stays closed until health passes — P1-D01
         _backend = new HermesProcessManager();
         _window = new MainWindow(_backend);
         _window.Closed += (_, _) => _backend.Shutdown();
         _window.Activate();
-        _ = _backend.StartAsync();
+        _ = StartBackendAsync();
+    }
+
+    private async Task StartBackendAsync()
+    {
+        var backend = _backend;
+        var window = _window;
+        if (backend is null)
+        {
+            return;
+        }
+
+        var ok = await backend.StartAsync().ConfigureAwait(false);
+        if (!ok && window is MainWindow main && !backend.IsShutdown)
+        {
+            main.BeginBackendRecovery();
+        }
     }
 }

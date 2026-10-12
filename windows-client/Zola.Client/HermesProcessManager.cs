@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Zola.Client.Supervision;
 
 namespace Zola.Client;
 
@@ -16,8 +17,19 @@ public sealed partial class HermesProcessManager : IDisposable
 
     private readonly object _gate = new();
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private readonly ServeStderrLog _stderr = new();
     private Process? _child;
     private bool _shutdown;
+    private long _ignoreExitGeneration = -1;
+
+    // P9-SUPERVISE: one policy and one pair of counters for this client process — P9-D02
+    public ServeGenerations Generations { get; } = new();
+
+    public RestartPolicy Policy { get; } = new();
+
+    public event Action<long>? UnexpectedExit;
+
+    public bool IsShutdown => _shutdown;
 
     public HermesProcessManager()
     {
@@ -64,36 +76,53 @@ public sealed partial class HermesProcessManager : IDisposable
 
     public event EventHandler? StateChanged;
 
-    public async Task StartAsync()
+    public async Task<bool> StartAsync(bool replace = false)
     {
+        if (_shutdown)
+        {
+            return false;
+        }
+
         try
         {
+            if (replace)
+            {
+                // P9-SUPERVISE: tree-kill the previous generation before every replacement spawn — P9-D02
+                KillGenerationForRestart();
+            }
+
             // P1-CLIENT: empty profile dir lets -p zola resolve; Hermes seeds files, this client does not write SOUL.md — P1-D01
             Directory.CreateDirectory(ProfileDirectory);
             if (!HermesLaunchResolver.TryResolve(out var pythonPath, out var hermesRoot, out var error))
             {
                 Fail(error);
-                return;
+                return false;
             }
 
-            var existing = await FindDedicatedServeAsync().ConfigureAwait(false);
-            if (existing is not null)
+            if (!replace)
             {
-                await AttachAsync(existing.Value).ConfigureAwait(false);
-                return;
+                var existing = await FindDedicatedServeAsync().ConfigureAwait(false);
+                if (existing is not null)
+                {
+                    return await AttachAsync(existing.Value).ConfigureAwait(false);
+                }
             }
 
-            await SpawnAsync(pythonPath, hermesRoot).ConfigureAwait(false);
+            return await SpawnAsync(pythonPath, hermesRoot).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             // P1-CLIENT: surface startup failure instead of hanging on a missing backend — P1-D01
             Fail(ex.Message);
+            return false;
         }
     }
 
     public void Shutdown()
     {
+        // P9-SUPERVISE: app close is deliberate, so the exit must not count or restart — P9-D02
+        Policy.NoteDeliberateStop();
+        Volatile.Write(ref _ignoreExitGeneration, Generations.ProcessGeneration);
         Process? child;
         var owns = false;
         lock (_gate)
@@ -146,8 +175,10 @@ public sealed partial class HermesProcessManager : IDisposable
         _http.Dispose();
     }
 
-    private async Task AttachAsync((int Pid, int Port, string CommandLine) existing)
+    private async Task<bool> AttachAsync((int Pid, int Port, string CommandLine) existing)
     {
+        // P9-SUPERVISE: an attached serve still gets a process generation so later callbacks can be stale — P9-D02
+        Generations.BumpProcessGeneration();
         // P1-CLIENT: an already-running dedicated serve is attached and never killed on close — P1-D01
         Publish(
             "Attached to an already-running hermes serve. This window will not stop it.",
@@ -160,13 +191,13 @@ public sealed partial class HermesProcessManager : IDisposable
         if (!health.Ok)
         {
             Fail($"Attached process on {baseUrl} did not pass GET /api/health. WebSocket stays closed.");
-            return;
+            return false;
         }
 
         if (health.AuthRequired)
         {
             Fail("GET /api/health passed, but auth_required is true, so the loopback session token will be rejected. WebSocket stays closed.");
-            return;
+            return false;
         }
 
         SessionToken = await DashboardSessionToken.ReadServedTokenAsync(_http, baseUrl, CancellationToken.None)
@@ -174,14 +205,18 @@ public sealed partial class HermesProcessManager : IDisposable
         if (string.IsNullOrEmpty(SessionToken))
         {
             Fail("Attached backend is healthy, but GET / did not publish a session token. WebSocket stays closed.");
-            return;
+            return false;
         }
 
         NoteReady(baseUrl, spawned: false);
+        return true;
     }
 
-    private async Task SpawnAsync(string pythonPath, string hermesRoot)
+    private async Task<bool> SpawnAsync(string pythonPath, string hermesRoot)
     {
+        // P9-SUPERVISE: process generation bumps on every spawn, before the child is published — P9-D02
+        var generation = Generations.BumpProcessGeneration();
+        Volatile.Write(ref _ignoreExitGeneration, generation);
         // P1-CLIENT: parent mints the token; Hermes reads HERMES_DASHBOARD_SESSION_TOKEN and does not print it — P1-D01
         var spawnToken = DashboardSessionToken.Mint();
         var start = new ProcessStartInfo
@@ -217,8 +252,14 @@ public sealed partial class HermesProcessManager : IDisposable
         var blocked = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var output = new StringBuilder();
 
-        void OnLine(string? line)
+        void OnLine(string? line, bool fromError)
         {
+            if (fromError)
+            {
+                // P9-SUPERVISE: keep draining stderr into the rotating log so the pipe cannot block serve — P9-D02
+                _stderr.WriteLine(line);
+            }
+
             // P1-CLIENT: HERMES_BACKEND_READY port=n is the spawn sentinel; port-in-use must not be killed — P1-D01
             if (string.IsNullOrEmpty(line))
             {
@@ -246,20 +287,33 @@ public sealed partial class HermesProcessManager : IDisposable
             }
         }
 
-        child.OutputDataReceived += (_, e) => OnLine(e.Data);
-        child.ErrorDataReceived += (_, e) => OnLine(e.Data);
+        child.OutputDataReceived += (_, e) => OnLine(e.Data, fromError: false);
+        child.ErrorDataReceived += (_, e) => OnLine(e.Data, fromError: true);
         child.Exited += (_, _) =>
         {
             // P1-CLIENT: an exit before the ready sentinel is a failed start, not an attach — P1-D01
             ready.TrySetCanceled();
             blocked.TrySetResult("hermes serve exited before HERMES_BACKEND_READY.");
+            // P9-SUPERVISE: ignore a stale generation and a deliberate tree-kill; a live generation is unexpected — P9-D02
+            if (!Generations.IsCurrentProcess(generation))
+            {
+                SupervisionLog.Write(SupervisionConstants.ProcServe, SupervisionConstants.EventStale, Policy.AttemptsInWindow(DateTimeOffset.Now), generation);
+                return;
+            }
+
+            if (_shutdown || generation == Volatile.Read(ref _ignoreExitGeneration))
+            {
+                return;
+            }
+
+            UnexpectedExit?.Invoke(generation);
         };
 
         if (!child.Start())
         {
             Fail("Failed to start python for hermes serve.");
             child.Dispose();
-            return;
+            return false;
         }
 
         lock (_gate)
@@ -267,7 +321,7 @@ public sealed partial class HermesProcessManager : IDisposable
             if (_shutdown)
             {
                 TryKill(child);
-                return;
+                return false;
             }
 
             _child = child;
@@ -295,18 +349,19 @@ public sealed partial class HermesProcessManager : IDisposable
 
             // P1-CLIENT: a port conflict belongs to another process; do not kill it — P1-D01
             // P1-CLIENT: stop only the child this client spawned; the process holding the port is left alone — P1-D01
-            Shutdown();
+            // P9-SUPERVISE: do not latch app shutdown, or the next restart cannot spawn — P9-D02
+            StopSpawnedChild();
 
             Fail(string.IsNullOrWhiteSpace(tail) ? reason : reason + Environment.NewLine + tail.Trim());
-            return;
+            return false;
         }
 
         var announcedPort = ready.Task.Result;
         if (announcedPort <= 0)
         {
-            Shutdown();
+            StopSpawnedChild();
             Fail("HERMES_BACKEND_READY did not include a local port. WebSocket stays closed.");
-            return;
+            return false;
         }
 
         Port = announcedPort;
@@ -314,16 +369,16 @@ public sealed partial class HermesProcessManager : IDisposable
         var health = await WaitForHealthAsync(baseUrl).ConfigureAwait(false);
         if (!health.Ok)
         {
-            Shutdown();
+            StopSpawnedChild();
             Fail($"HERMES_BACKEND_READY arrived, but GET {baseUrl}/api/health did not return ok. WebSocket stays closed.");
-            return;
+            return false;
         }
 
         if (health.AuthRequired)
         {
-            Shutdown();
+            StopSpawnedChild();
             Fail("GET /api/health passed, but auth_required is true, so the loopback session token will be rejected. WebSocket stays closed.");
-            return;
+            return false;
         }
 
         var served = await DashboardSessionToken.ReadServedTokenAsync(_http, baseUrl, CancellationToken.None)
@@ -333,11 +388,18 @@ public sealed partial class HermesProcessManager : IDisposable
         {
             // P1-CLIENT: a different token from a dead child is a foreign backend; refuse it — P1-D01
             Fail("The spawned process exited and GET / is served by a different token. WebSocket stays closed.");
-            return;
+            return false;
         }
 
         SessionToken = string.IsNullOrEmpty(served) ? spawnToken : served;
         NoteReady(baseUrl, spawned: true);
+        // P9-SUPERVISE: a ready process's later exit is unexpected and may count — P9-D02
+        if (Generations.IsCurrentProcess(generation))
+        {
+            Volatile.Write(ref _ignoreExitGeneration, -1);
+        }
+
+        return true;
     }
 
     private async Task<(bool Ok, bool AuthRequired)> WaitForHealthAsync(string baseUrl)

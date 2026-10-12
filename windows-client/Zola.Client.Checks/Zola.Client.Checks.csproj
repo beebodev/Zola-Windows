@@ -19,5 +19,15 @@
     <Compile Include="..\Zola.Client\Voice\TurnTiming.cs" Link="Voice\TurnTiming.cs" />
     <!-- P8-READ: /compress helper has no WinUI dependency — P8-D09 -->
     <Compile Include="..\Zola.Client\CompressCommand.cs" Link="CompressCommand.cs" />
+    <!-- P9-SUPERVISE: pure restart, hung, reconnect, and epoch checks — P9-D02 -->
+    <Compile Include="..\Zola.Client\Supervision\SupervisionConstants.cs" Link="Supervision\SupervisionConstants.cs" />
+    <Compile Include="..\Zola.Client\Supervision\RestartPolicy.cs" Link="Supervision\RestartPolicy.cs" />
+    <Compile Include="..\Zola.Client\Supervision\ServeGenerations.cs" Link="Supervision\ServeGenerations.cs" />
+    <Compile Include="..\Zola.Client\Supervision\OutageGap.cs" Link="Supervision\OutageGap.cs" />
+    <Compile Include="..\Zola.Client\Supervision\StderrAcl.cs" Link="Supervision\StderrAcl.cs" />
+    <Compile Include="..\Zola.Client\Supervision\SupervisionLog.cs" Link="Supervision\SupervisionLog.cs" />
+    <Compile Include="..\Zola.Client\Supervision\RecordingLatch.cs" Link="Supervision\RecordingLatch.cs" />
+    <Compile Include="..\Zola.Client\Supervision\ResumeReconnect.cs" Link="Supervision\ResumeReconnect.cs" />
+    <Compile Include="..\Zola.Client\Supervision\TtsRestore.cs" Link="Supervision\TtsRestore.cs" />
   </ItemGroup>
 </Project>

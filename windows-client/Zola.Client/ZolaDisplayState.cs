@@ -1,4 +1,5 @@
 using Microsoft.UI.Dispatching;
+using Zola.Client.Supervision;
 
 namespace Zola.Client;
 
@@ -336,10 +337,15 @@ public sealed class ZolaDisplayStateModel : IDisposable
         }
 
         // P3-STATE: voice-label priority stays the P2 order from Audit 01 §3 — P3-D03
+        // P9-SUPERVISE: an unreachable backend says Offline before Listening or Speaking — P9-D02
         // P4-ASK: Waiting inserts after Text/unavailable and before Thinking — P4-D15
-        // Priority: unavailable(+details) → Text mode → Waiting for your answer → Thinking → Speaking → Transcribing → Listening → Idle
+        // Priority: unreachable → unavailable(+details) → Text mode → Waiting for your answer → Thinking → Speaking → Transcribing → Listening → Idle
         string voiceLabel;
-        if (!_voice.IsAvailable && _voice.Mode == VoiceController.ModeText)
+        if (_unreachable)
+        {
+            voiceLabel = SupervisionConstants.VoiceOfflineLabel;
+        }
+        else if (!_voice.IsAvailable && _voice.Mode == VoiceController.ModeText)
         {
             var details = _voice.UnavailableDetails;
             voiceLabel = details.Length == 0 ? VoiceUnavailableLabel : VoiceUnavailablePrefix + details;

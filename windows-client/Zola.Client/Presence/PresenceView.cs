@@ -227,6 +227,11 @@ internal sealed class PresenceView : UserControl, IDisposable
         _animator.AttachPlaybackMonitor(serveProcessId);
     }
 
+    internal void KillOwnedPlayback()
+    {
+        _animator.KillOwnedPlayback();
+    }
+
     // P4-ASK: forward monitor bout signals and availability for question speech release — P4-D13
     internal bool PlaybackMonitorAvailable => _animator.PlaybackMonitorAvailable;
 

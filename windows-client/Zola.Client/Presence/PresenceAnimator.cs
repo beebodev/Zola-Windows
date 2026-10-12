@@ -111,6 +111,11 @@ internal sealed class PresenceAnimator
         _playback.SegmentStopped += OnPlaybackSegmentStopped;
     }
 
+    internal void KillOwnedPlayback()
+    {
+        _playback?.KillOwnedPlayers();
+    }
+
     internal void AttachDisplay(ZolaDisplayStateModel model)
     {
         if (_display is not null)

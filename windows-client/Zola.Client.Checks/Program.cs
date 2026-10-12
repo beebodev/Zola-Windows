@@ -7,7 +7,7 @@ runner.RunAll();
 Console.WriteLine(runner.CoverageLine());
 Environment.Exit(runner.Failed > 0 ? 1 : 0);
 
-internal sealed class CheckRunner
+internal sealed partial class CheckRunner
 {
     private int _lifecycleTotal;
     private int _lifecyclePassed;
@@ -31,6 +31,8 @@ internal sealed class CheckRunner
     private int _timingPassed;
     private int _compressTotal;
     private int _compressPassed;
+    private int _supervisionTotal;
+    private int _supervisionPassed;
 
     public int Failed { get; private set; }
 
@@ -48,12 +50,13 @@ internal sealed class CheckRunner
         RunClarifyRows();
         RunTimingRows();
         RunCompressRows();
+        RunSupervisionRows();
     }
 
     public string CoverageLine()
     {
         return string.Format(
-            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}, timing rows {18}/{19}, compress rows {20}/{21}",
+            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}, timing rows {18}/{19}, compress rows {20}/{21}, supervision rows {22}/{23}",
             _lifecyclePassed,
             _lifecycleTotal,
             _admissionPassed,
@@ -75,7 +78,9 @@ internal sealed class CheckRunner
             _timingPassed,
             _timingTotal,
             _compressPassed,
-            _compressTotal);
+            _compressTotal,
+            _supervisionPassed,
+            _supervisionTotal);
     }
 
     private void RunLifecycleRows()

@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Zola.Client.Supervision;
 
 namespace Zola.Client;
 
@@ -65,6 +66,13 @@ sealed class ChatSocket : IDisposable
     private int _faulted;
     private int _suppressFault;
     private int _healthStarted;
+    private int _connectionSerial;
+    private int _boundSerial;
+    private long _boundConnectionEpoch;
+    private long _boundProcessGeneration;
+
+    // P9-SUPERVISE: runs after the socket is open and before session.create or session.resume — P9-D02
+    public Func<Task>? BeforeSessionGreeting { get; set; }
 
     public ChatSocket(HermesProcessManager backend)
     {
@@ -76,12 +84,17 @@ sealed class ChatSocket : IDisposable
 
     public string? StoredSessionId { get; private set; }
 
-    public event Action<string, string>? SessionReady;
+    public event Action<string, string, long>? SessionReady;
 
     // P4-REQUEST: last open_requests snapshot from create/resume/activate — P4-D11
     public IReadOnlyList<OpenRequestSnapshot> LastOpenRequests { get; private set; } = Array.Empty<OpenRequestSnapshot>();
 
     public bool LastPendingApprovalPresent { get; private set; }
+
+    public bool IsSessionUsable =>
+        _socket is { State: WebSocketState.Open } && !string.IsNullOrEmpty(SessionId);
+
+    public long CurrentConnectionEpoch => _backend.Generations.ConnectionEpoch;
 
     public event Action<string>? SubmitAcknowledged;
 
@@ -97,10 +110,15 @@ sealed class ChatSocket : IDisposable
 
     public event Action<string>? Unreachable;
 
+    // P9-SUPERVISE: stamped with the epoch and process generation captured for this socket — P9-D02
+    public readonly record struct ConnectionLoss(long ConnectionEpoch, long ProcessGeneration, string Reason);
+
+    public event Action<ConnectionLoss>? ConnectionLost;
+
     // P2-VOICE: voice.status, voice.transcript, voice.interrupted, and wake.detected become typed events — P2-D01
     public event Action<string>? VoiceStatusChanged;
 
-    public event Action<VoiceTranscript>? VoiceTranscriptReceived;
+    public event Action<VoiceTranscript, long>? VoiceTranscriptReceived;
 
     public event Action? VoiceInterrupted;
 
@@ -165,6 +183,12 @@ sealed class ChatSocket : IDisposable
         await _open.WaitAsync(_lifetime.Token).ConfigureAwait(false);
         try
         {
+            // P9-SUPERVISE: a new socket serial makes a late fault from the previous reader stale — P9-D02
+            var serial = Interlocked.Increment(ref _connectionSerial);
+            Volatile.Write(ref _boundSerial, serial);
+            _boundConnectionEpoch = _backend.Generations.ConnectionEpoch;
+            _boundProcessGeneration = _backend.Generations.ProcessGeneration;
+
             // P4-REQUEST: signal replace before aborting so mid-resume requests are not tombstoned — P4-D11
             Replacing?.Invoke();
 
@@ -212,16 +236,22 @@ sealed class ChatSocket : IDisposable
             {
                 // P1-SESSION: a failed upgrade still means the backend is unreachable — P1-D04
                 Interlocked.Exchange(ref _suppressFault, 0);
-                Fault(ex.Message);
+                Fault(ex.Message, serial, _boundConnectionEpoch, _boundProcessGeneration);
                 throw new ChatUnreachableException("Backend unreachable. /api/ws did not connect.");
             }
 
             Interlocked.Exchange(ref _suppressFault, 0);
             _socket = socket;
-            _reader = Task.Run(() => ReadLoopAsync());
+            _reader = Task.Run(() => ReadLoopAsync(serial, _boundConnectionEpoch, _boundProcessGeneration));
             if (Interlocked.Exchange(ref _healthStarted, 1) == 0)
             {
                 _ = Task.Run(WatchHealthAsync);
+            }
+
+            if (BeforeSessionGreeting is { } beforeGreeting)
+            {
+                // P9-SUPERVISE: hook before session.create; TTS restore does not run here — P9-D02
+                await beforeGreeting().ConfigureAwait(false);
             }
 
             RpcReply greeted;
@@ -235,7 +265,7 @@ sealed class ChatSocket : IDisposable
             }
             catch (Exception ex)
             {
-                Fault(ex.Message);
+                Fault(ex.Message, serial, _boundConnectionEpoch, _boundProcessGeneration);
                 throw new ChatUnreachableException("Backend unreachable. " + method + " was not answered.");
             }
 
@@ -250,7 +280,8 @@ sealed class ChatSocket : IDisposable
             // P4-REQUEST: surface open_requests; ignore pending_approval (no srq id) — P4-D11
             LastOpenRequests = greeted.OpenRequests ?? Array.Empty<OpenRequestSnapshot>();
             LastPendingApprovalPresent = greeted.PendingApprovalPresent;
-            SessionReady?.Invoke(SessionId, StoredSessionId);
+            // P9-SUPERVISE: the ready event carries this socket's epoch so a late ready cannot clear a newer outage — P9-D02
+            SessionReady?.Invoke(SessionId, StoredSessionId, _boundConnectionEpoch);
         }
         finally
         {
@@ -404,10 +435,20 @@ sealed class ChatSocket : IDisposable
         return CallAsync(method, parameters, TimeSpan.FromMilliseconds(RpcTimeoutMs), faultOnTimeout: true);
     }
 
+    public void PrepareReconnect()
+    {
+        // P9-SUPERVISE: a new socket must be able to fault; the previous health watch has exited — P9-D02
+        Interlocked.Exchange(ref _faulted, 0);
+        Interlocked.Exchange(ref _healthStarted, 0);
+    }
+
     private async Task<RpcReply> CallAsync(string method, Dictionary<string, string?> parameters, TimeSpan timeout, bool faultOnTimeout)
     {
         // P1-CLIENT: integer ids stay clear of server srq- request ids on the same socket — P1-D01
         var id = Interlocked.Increment(ref _nextId);
+        var serial = Volatile.Read(ref _boundSerial);
+        var epoch = _boundConnectionEpoch;
+        var generation = _boundProcessGeneration;
         var pending = new TaskCompletionSource<RpcReply>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_pendingGate)
         {
@@ -438,7 +479,7 @@ sealed class ChatSocket : IDisposable
                 return new RpcReply(false, ErrorTimeout, null, null, null);
             }
 
-            Fault("the request was not answered");
+            Fault("the request was not answered", serial, epoch, generation);
             throw new ChatUnreachableException("Backend unreachable. The request was not answered.");
         }
         finally
@@ -452,11 +493,14 @@ sealed class ChatSocket : IDisposable
 
     private async Task SendTextAsync(string json)
     {
+        var serial = Volatile.Read(ref _boundSerial);
+        var epoch = _boundConnectionEpoch;
+        var generation = _boundProcessGeneration;
         var socket = _socket;
         if (socket is null || socket.State != WebSocketState.Open)
         {
             // P1-CLIENT: a send after the socket drops is unreachable, not a silent retry — P1-D01
-            Fault("the socket is not open");
+            Fault("the socket is not open", serial, epoch, generation);
             throw new ChatUnreachableException("Backend unreachable. The socket is not open.");
         }
 
@@ -468,7 +512,7 @@ sealed class ChatSocket : IDisposable
         }
         catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or ObjectDisposedException)
         {
-            Fault(ex.Message);
+            Fault(ex.Message, serial, epoch, generation);
             throw new ChatUnreachableException("Backend unreachable. The socket closed.");
         }
         finally
@@ -477,7 +521,7 @@ sealed class ChatSocket : IDisposable
         }
     }
 
-    private async Task ReadLoopAsync()
+    private async Task ReadLoopAsync(int serial, long epoch, long generation)
     {
         // P1-CLIENT: one read loop demuxes events, RPC replies, and server requests — P1-D01
         var socket = _socket;
@@ -499,14 +543,14 @@ sealed class ChatSocket : IDisposable
                     result = await socket.ReceiveAsync(buffer, _lifetime.Token).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        Fault("the socket closed");
+                        Fault("the socket closed", serial, epoch, generation);
                         return;
                     }
 
                     message.Write(buffer, 0, result.Count);
                     if (message.Length > 8_000_000)
                     {
-                        Fault("a frame was too large");
+                        Fault("a frame was too large", serial, epoch, generation);
                         return;
                     }
                 }
@@ -518,7 +562,7 @@ sealed class ChatSocket : IDisposable
                 }
 
                 var json = Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
-                Dispatch(json);
+                Dispatch(json, epoch);
             }
         }
         catch (OperationCanceledException)
@@ -527,11 +571,11 @@ sealed class ChatSocket : IDisposable
         }
         catch (WebSocketException ex)
         {
-            Fault(ex.Message);
+            Fault(ex.Message, serial, epoch, generation);
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            Fault(ex.Message);
+            Fault(ex.Message, serial, epoch, generation);
         }
     }
 
@@ -543,6 +587,21 @@ sealed class ChatSocket : IDisposable
             try
             {
                 await Task.Delay(HealthIntervalMs, _lifetime.Token).ConfigureAwait(false);
+                var epoch = _boundConnectionEpoch;
+                var generation = _boundProcessGeneration;
+                var serial = Volatile.Read(ref _boundSerial);
+                if (epoch != _backend.Generations.ConnectionEpoch
+                    || generation != _backend.Generations.ProcessGeneration)
+                {
+                    // P9-SUPERVISE: this watch belongs to an earlier connection epoch — P9-D02
+                    SupervisionLog.Write(
+                        SupervisionConstants.ProcServe,
+                        SupervisionConstants.EventStale,
+                        _backend.Policy.AttemptsInWindow(DateTimeOffset.Now),
+                        generation);
+                    return;
+                }
+
                 var ok = await _backend.CheckHealthAsync(_lifetime.Token).ConfigureAwait(false);
                 if (_lifetime.IsCancellationRequested)
                 {
@@ -557,7 +616,7 @@ sealed class ChatSocket : IDisposable
                         continue;
                     }
 
-                    Fault("GET /api/health failed");
+                    Fault("GET /api/health failed", serial, epoch, generation);
                     return;
                 }
             }
@@ -569,7 +628,11 @@ sealed class ChatSocket : IDisposable
             {
                 if (!_lifetime.IsCancellationRequested)
                 {
-                    Fault(ex.Message);
+                    Fault(
+                        ex.Message,
+                        Volatile.Read(ref _boundSerial),
+                        _boundConnectionEpoch,
+                        _boundProcessGeneration);
                 }
 
                 return;
@@ -577,7 +640,7 @@ sealed class ChatSocket : IDisposable
         }
     }
 
-    private void Dispatch(string json)
+    private void Dispatch(string json, long connectionEpoch)
     {
         try
         {
@@ -587,7 +650,7 @@ sealed class ChatSocket : IDisposable
             if (method == "event")
             {
                 // P1-CLIENT: method event is a notification; only message.* turns change the reply — P1-D01
-                DispatchEvent(root);
+                DispatchEvent(root, connectionEpoch);
                 return;
             }
 
@@ -630,7 +693,7 @@ sealed class ChatSocket : IDisposable
         }
     }
 
-    private void DispatchEvent(JsonElement root)
+    private void DispatchEvent(JsonElement root, long connectionEpoch)
     {
         if (!root.TryGetProperty("params", out var eventParams) || eventParams.ValueKind != JsonValueKind.Object)
         {
@@ -686,7 +749,7 @@ sealed class ChatSocket : IDisposable
                     hasPayload ? ReadString(payload, FieldText) ?? "" : "",
                     hasPayload && ReadBool(payload, FieldStopPhrase) == true,
                     hasPayload && ReadBool(payload, FieldNoSpeechLimit) == true,
-                    hasPayload && ReadBool(payload, FieldFiltered) == true));
+                    hasPayload && ReadBool(payload, FieldFiltered) == true), connectionEpoch);
                 return;
             case EventVoiceInterrupted:
                 // P2-VOICE: barge-in is parsed now; Track 2 is what acts on it beyond a status line — P2-D01
@@ -778,11 +841,20 @@ sealed class ChatSocket : IDisposable
         }
     }
 
-    private void Fault(string reason)
+    private void Fault(string reason, int serial, long epoch, long generation)
     {
         // P1-SESSION: aborting the previous socket for create or resume is not a dead backend — P1-D04
         if (Volatile.Read(ref _suppressFault) != 0)
         {
+            return;
+        }
+
+        if (serial != Volatile.Read(ref _boundSerial)
+            || epoch != _backend.Generations.ConnectionEpoch
+            || generation != _backend.Generations.ProcessGeneration)
+        {
+            // P9-SUPERVISE: a callback from an earlier process generation or connection epoch is ignored — P9-D02
+            SupervisionLog.Write(SupervisionConstants.ProcServe, SupervisionConstants.EventStale, _backend.Policy.AttemptsInWindow(DateTimeOffset.Now), generation);
             return;
         }
 
@@ -812,7 +884,9 @@ sealed class ChatSocket : IDisposable
         {
         }
 
-        Unreachable?.Invoke(string.IsNullOrWhiteSpace(reason) ? "Backend unreachable." : "Backend unreachable. " + reason);
+        var message = string.IsNullOrWhiteSpace(reason) ? "Backend unreachable." : "Backend unreachable. " + reason;
+        ConnectionLost?.Invoke(new ConnectionLoss(epoch, generation, message));
+        Unreachable?.Invoke(message);
     }
 
     private static RpcReply ReadReply(JsonElement root)
