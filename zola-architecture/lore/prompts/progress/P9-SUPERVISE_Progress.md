@@ -34,7 +34,7 @@
 | 4 | Implement | COMPLETE |
 | 5 | Review checkpoint | COMPLETE — four review fixes applied |
 | 6 | Deploy, WER setting, smoke | COMPLETE — smoke test passed 2026-10-12 |
-| 7 | Closeout | IN PROGRESS — implementation committed; merge SHA not yet recorded |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails (summary)
 
@@ -653,6 +653,12 @@ Approved live-config edits sit outside the commit: `desktop.auto_continue.enable
 All criteria met: YES
 
 Implementation commit: `48ec49b90ed92ea312ad2409decb95134d0c9503`
+
+Implementation-SHA metadata commit: `487f72ae4f591f984ceef45e69636b44a882b213`
+
+Merge (`--no-ff` `p9-supervise` → `main`): `574fe43fb4532878eaff32c2c9f6e4baa9291c9a`
+
+Branch `p9-supervise` deleted locally and on `origin` after this metadata commit is pushed.
 
 ## Discrepancies
 
