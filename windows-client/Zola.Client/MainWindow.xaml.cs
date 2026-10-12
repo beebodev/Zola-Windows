@@ -12,6 +12,7 @@ using Windows.System;
 using Windows.UI.Core;
 using Windows.UI.ViewManagement;
 using Zola.Client.Presence;
+using Zola.Client.Supervision;
 using Zola.Client.Voice;
 
 namespace Zola.Client;
@@ -32,6 +33,7 @@ public sealed partial class MainWindow : Window
     private int _compressInFlight;
     private bool _turnFinalized = true;
     private bool _unreachable;
+    private bool _keepsFailing;
     private int _orphanInterruptedCompletes;
     private string _sessionDetail = "";
     private string? _routedNote;
@@ -165,7 +167,10 @@ public sealed partial class MainWindow : Window
         _backend = backend;
         _chat = new ChatSocket(backend);
         // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
-        _voice = new VoiceController(_chat);
+        _voice = new VoiceController(
+            _chat,
+            () => _backend.Generations.ProcessGeneration,
+            () => _backend.Policy.AttemptsInWindow(DateTimeOffset.Now));
         // P4-REQUEST: one broker owns open server requests — P4-D06
         _requests = new ServerRequestBroker(_chat);
         // P4-LOCK: one lock/sleep watcher, app-level — P4-D01
@@ -210,7 +215,7 @@ public sealed partial class MainWindow : Window
         _voice.ClarifyAnswerCaptureEndedWithoutAnswer += id => Dispatch(() => OnClarifyNoAnswer(id));
         _voice.VoiceChatEnded += () => Dispatch(OnVoiceChatEnded);
         _voice.StatusMessage += message => Dispatch(() => OnVoiceStatusMessage(message));
-        _chat.SessionReady += (sessionId, storedId) => Dispatch(() => OnSessionReady(sessionId, storedId));
+        _chat.SessionReady += (sessionId, storedId, epoch) => Dispatch(() => OnSessionReady(sessionId, storedId, epoch));
         _chat.SubmitAcknowledged += status => Dispatch(() => OnSubmitAcknowledged(status));
         _chat.MessageStarted += () => Dispatch(OnMessageStarted);
         _chat.MessageDelta += chunk => Dispatch(() => OnMessageDelta(chunk));
@@ -218,6 +223,8 @@ public sealed partial class MainWindow : Window
         _chat.InterruptAcknowledged += status => Dispatch(() => OnInterruptAcknowledged(status));
         _chat.Routed += note => Dispatch(() => OnRouted(note));
         _chat.Unreachable += reason => Dispatch(() => ShowUnreachable(reason));
+        _chat.ConnectionLost += loss => Supervisor.NoteLoss(loss.ProcessGeneration, loss.ConnectionEpoch, processExit: false);
+        _backend.UnexpectedExit += generation => Supervisor.NoteLoss(generation, _backend.Generations.ConnectionEpoch, processExit: true);
         // P4-FEEDBACK: tool lifecycle → display activity line — P4-D16
         _chat.ToolStarted += (id, name, _) => Dispatch(() => OnToolStarted(id, name));
         _chat.ToolCompleted += (id, name, _) => Dispatch(() => OnToolCompleted(id, name));
@@ -309,8 +316,21 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnSessionReady(string sessionId, string storedId)
+    private void OnSessionReady(string sessionId, string storedId, long connectionEpoch)
     {
+        if (!ConnectionEpochGuard.Allows(connectionEpoch, _backend.Generations.ConnectionEpoch))
+        {
+            // P9-SUPERVISE: only the current connection epoch may leave the outage state — P9-D02
+            return;
+        }
+
+        if (_backend.Policy.IsTerminal)
+        {
+            // P9-SUPERVISE: a late session ready must not clear the keeps-failing stop — P9-D02
+            ShowSupervisionStatus(keepsFailing: true);
+            return;
+        }
+
         // P2-SPEAK: every SessionReady cancels a leftover follow-up from the previous session — P2-D06
         _voice.OnSessionReady();
         // P4-REQUEST: reconcile parked/open requests against this session's open_requests — P4-D11
@@ -327,6 +347,7 @@ public sealed partial class MainWindow : Window
         DetailText.Text = _routedNote is null ? _sessionDetail : _routedNote + Environment.NewLine + _sessionDetail;
         // P1-SESSION: show the stored id as soon as session.create or session.resume acknowledges it — P1-D04
         NoteAcknowledgedSession(storedId);
+        _unreachable = false;
         // P2-VOICE: every new socket re-syncs Voice mode, including new session and resume — P2-D07
         if (_voice.Mode == VoiceController.ModeVoice)
         {
@@ -449,6 +470,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // P9-SUPERVISE: a voice transcript from an earlier connection epoch is not submitted — P9-D02
+        if (turnKind == Voice.TurnTiming.KindVoice
+            && !ConnectionEpochGuard.Allows(_voice.AdmittedConnectionEpoch, _backend.Generations.ConnectionEpoch))
+        {
+            return;
+        }
+
         if (turnKind == Voice.TurnTiming.KindTyped && CompressCommand.IsExactCompress(text))
         {
             // P8-READ: exact /compress is slash.exec and one system line — P8-D09
@@ -468,6 +496,13 @@ public sealed partial class MainWindow : Window
         }
 
         UpdateChrome();
+        // P9-SUPERVISE: re-check the epoch immediately before prompt.submit — P9-D02
+        if (turnKind == Voice.TurnTiming.KindVoice
+            && !ConnectionEpochGuard.Allows(_voice.AdmittedConnectionEpoch, _backend.Generations.ConnectionEpoch))
+        {
+            return;
+        }
+
         try
         {
             await _chat.SubmitAsync(text).ConfigureAwait(false);
@@ -626,6 +661,12 @@ public sealed partial class MainWindow : Window
 
     private void OnTranscriptReady(string text, string? boundClarifyId)
     {
+        // P9-SUPERVISE: clarify answers and voice submits refuse an earlier connection epoch — P9-D02
+        if (!ConnectionEpochGuard.Allows(_voice.AdmittedConnectionEpoch, _backend.Generations.ConnectionEpoch))
+        {
+            return;
+        }
+
         if (_voice.VoiceGated)
         {
             _voice.NoteGateRefusal(VoiceController.GateRefuseVoiceSubmitReason);
@@ -670,6 +711,11 @@ public sealed partial class MainWindow : Window
             FillFirstUnansweredBatchRow(id, text);
             if (!BatchHasUnansweredRows(id))
             {
+                if (!ConnectionEpochGuard.Allows(_voice.AdmittedConnectionEpoch, _backend.Generations.ConnectionEpoch))
+                {
+                    return;
+                }
+
                 var answers = CollectBatchAnswers(id);
                 if (answers.Count > 0)
                 {
@@ -679,6 +725,11 @@ public sealed partial class MainWindow : Window
             }
 
             UpdateChrome();
+            return;
+        }
+
+        if (!ConnectionEpochGuard.Allows(_voice.AdmittedConnectionEpoch, _backend.Generations.ConnectionEpoch))
+        {
             return;
         }
 
@@ -1038,23 +1089,28 @@ public sealed partial class MainWindow : Window
 
     private void ShowUnreachable(string reason)
     {
-        // P1-CLIENT: socket close and health failure share one visible stop, with input turned off — P1-D01
-        if (_unreachable)
+        if (_keepsFailing)
         {
             return;
         }
 
+        // P9-SUPERVISE: the visible line during a restart is the approved status, not a wait-forever notice — P9-D02
+        ShowSupervisionStatus(keepsFailing: false);
+        _ = reason;
+    }
+
+    private void ShowSupervisionStatus(bool keepsFailing)
+    {
+        _keepsFailing = keepsFailing;
         _unreachable = true;
         _streaming = false;
         _sessionReady = false;
-        // P4-ASK: disconnect abandons pending question speech/capture — P4-D13
-        _voice.AbandonPendingQuestion("unreachable");
-        // P4-FEEDBACK: disconnect clears the activity set — P4-D16
+        _voice.AbandonPendingQuestion(SupervisionConstants.GapReason);
         _display.ClearToolActivity();
-        StatusText.Text = reason.StartsWith("Backend unreachable", StringComparison.Ordinal)
-            ? reason
-            : "Backend unreachable. " + reason;
-        DetailText.Text = "hermes serve is not reachable. This window will not keep waiting.";
+        StatusText.Text = keepsFailing
+            ? SupervisionConstants.StatusKeepsFailing
+            : SupervisionConstants.StatusRestarting;
+        DetailText.Text = "";
         UpdateChrome();
     }
 

@@ -351,6 +351,46 @@ internal sealed class TtsPlaybackMonitor : IDisposable
         _pendingInactiveUtc = null;
     }
 
+    // P9-SUPERVISE: kill owned ffplay immediately; sounddevice has no pid and waits for stop_playback — P9-D02
+    internal void KillOwnedPlayers()
+    {
+        Process[] players;
+        try
+        {
+            players = Process.GetProcessesByName("ffplay");
+        }
+        catch
+        {
+            players = Array.Empty<Process>();
+        }
+
+        foreach (var player in players)
+        {
+            try
+            {
+                if (IsHermesOwned(player.Id))
+                {
+                    player.Kill(entireProcessTree: true);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+            }
+            finally
+            {
+                player.Dispose();
+            }
+        }
+
+        lock (_gate)
+        {
+            ForceInactiveLocked("backend-unreachable");
+        }
+    }
+
     private bool IsHermesOwned(int ffplayPid)
     {
         var root = _rootPid;
