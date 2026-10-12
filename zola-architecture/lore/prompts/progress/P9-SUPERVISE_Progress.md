@@ -34,7 +34,7 @@
 | 4 | Implement | COMPLETE |
 | 5 | Review checkpoint | COMPLETE — four review fixes applied |
 | 6 | Deploy, WER setting, smoke | COMPLETE — smoke test passed 2026-10-12 |
-| 7 | Closeout | IN PROGRESS — exit table written; stopped before the implementation commit |
+| 7 | Closeout | IN PROGRESS — implementation committed; merge SHA not yet recorded |
 
 ## Guardrails (summary)
 
@@ -652,7 +652,7 @@ Approved live-config edits sit outside the commit: `desktop.auto_continue.enable
 
 All criteria met: YES
 
-Stopped before the first commit. No implementation SHA. No merge SHA.
+Implementation commit: `48ec49b90ed92ea312ad2409decb95134d0c9503`
 
 ## Discrepancies
 
