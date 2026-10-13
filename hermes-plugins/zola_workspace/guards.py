@@ -28,6 +28,13 @@ BLOCK_MESSAGE_STATE_DB = "Blocked: writing Hermes state.db is not allowed."
 BLOCK_MESSAGE_SCHEDULE = "Blocked: creating or editing a schedule is not allowed."
 BLOCK_MESSAGE_CRON_FILE = "Blocked: writing the cron jobs file is not allowed."
 
+# P9-FIX-TTS: key file and the script that reads it — P9-FIX-TTS
+GUARD_DEEPGRAM_KEY = "deepgram_key"
+BLOCK_MESSAGE_DEEPGRAM_KEY = "Blocked: reading or writing the Deepgram key is not allowed."
+BLOCK_MESSAGE_TTS_SCRIPT = "Blocked: changing the Deepgram speech script is not allowed."
+_DEEPGRAM_KEY_RE = re.compile(r"(?i)(?:zolaclient[/\\]+secrets|deepgram_api_key)")
+_TTS_SCRIPT_DIR_RE = re.compile(r"(?i)profiles[/\\]+zola[/\\]+zola-tts")
+
 _HERMES_CRON_RE = re.compile(r"(^|[^\w.-])hermes(?:\.exe)?\s+cron\b", re.IGNORECASE)
 _STATE_DB_RE = re.compile(r"state\.db", re.IGNORECASE)
 _SQLITE3_RE = re.compile(r"\bsqlite3\b", re.IGNORECASE)
@@ -641,6 +648,31 @@ def evaluate_schedule(tool_name: str = "", args: Any = None, **kwargs: Any) -> O
     return None
 
 
+def deepgram_key_hit(text: str) -> bool:
+    # P9-FIX-TTS: folder fragment or key file name, either slash — P9-FIX-TTS
+    return bool(_DEEPGRAM_KEY_RE.search(text or ""))
+
+
+def tts_script_dir_hit(text: str) -> bool:
+    # P9-FIX-TTS: live zola-tts folder; read_file of the script stays allowed — P9-FIX-TTS
+    return bool(_TTS_SCRIPT_DIR_RE.search(text or ""))
+
+
+def evaluate_deepgram_key(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
+    """Block tools that name the Deepgram key, and writes that name the speech script."""
+    name = str(tool_name or "")
+    if name not in (TOOL_TERMINAL, TOOL_READ_FILE, TOOL_WRITE_FILE, TOOL_PATCH):
+        return None
+    blob = _command_text(name, args)
+    if deepgram_key_hit(blob):
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_DEEPGRAM_KEY}
+    if name == TOOL_READ_FILE:
+        return None
+    if name in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL) and tts_script_dir_hit(blob):
+        return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_TTS_SCRIPT}
+    return None
+
+
 def evaluate_terminal_google(tool_name: str = "", args: Any = None, **kwargs: Any) -> Optional[Dict[str, str]]:
     """Block terminal commands that name Google or the Workspace store."""
     # P8-READ: terminal Google guard live — P8-D02
@@ -774,6 +806,20 @@ def pre_tool_call_hook(
                 pass
             return schedule
 
+        deepgram = evaluate_deepgram_key(tool_name=name, args=args)
+        if deepgram is not None:
+            try:
+                wslog.write_event(
+                    wslog.LOG_EVENT_GUARD,
+                    name=GUARD_DEEPGRAM_KEY,
+                    action=ACTION_BLOCK,
+                    reason="deepgram_key",
+                    tool=name,
+                )
+            except Exception:
+                pass
+            return deepgram
+
         blocked = evaluate_config_self_edit(name, args)
         if blocked is not None:
             cmd = ""
@@ -804,6 +850,11 @@ def pre_tool_call_hook(
         if hermes_cron_hit(raw) or path_is_cron_file(raw) or name == TOOL_CRONJOB:
             message = BLOCK_MESSAGE_CRON_FILE if path_is_cron_file(raw) else BLOCK_MESSAGE_SCHEDULE
             return {"action": ACTION_BLOCK, "message": message}
+        # P9-FIX-TTS: fail closed on the key path and on script writes — P9-FIX-TTS
+        if name in (TOOL_TERMINAL, TOOL_READ_FILE, TOOL_WRITE_FILE, TOOL_PATCH) and deepgram_key_hit(raw):
+            return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_DEEPGRAM_KEY}
+        if name in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL) and tts_script_dir_hit(raw):
+            return {"action": ACTION_BLOCK, "message": BLOCK_MESSAGE_TTS_SCRIPT}
         sensitive = _text_has_sensitive_filename(raw)
         if name in (TOOL_WRITE_FILE, TOOL_PATCH, TOOL_TERMINAL) and sensitive:
             try:
