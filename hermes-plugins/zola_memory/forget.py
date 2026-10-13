@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import re
+import secrets
 import sqlite3
+import threading
 import time
 import unicodedata
 import uuid
@@ -56,6 +60,17 @@ ERASE_REASON_HOLD_EXECUTE = "hold_execute"
 META_PENDING_ERASURES = "pending_erasures"
 META_CONSOLIDATION_GENERATION = "consolidation_generation"
 META_FORGET_HOLD = "forget_hold"
+# P9-STORE: proactive.db cannot share this transaction, so the retry token lives here — P9-D06
+META_PENDING_PROACTIVE = "pending_proactive_forget"
+MSG_PROACTIVE_UNMAPPED = (
+    "I couldn't link that to one person, so I did not change your pending list."
+)
+MSG_PROACTIVE_PARTIAL = (
+    "I forgot it in memory, but I could not finish the pending list. "
+    "I will retry. It is not fully forgotten yet."
+)
+MSG_PROACTIVE_INCLUDED = " The pending list was included."
+RECORD_KIND_ENTITY = "entity"
 
 # P6-FORGET: hold / disposition tunables — P6-D06
 FORGET_HOLD_MAX_MINUTES = 30
@@ -67,6 +82,11 @@ USER_TURN_PLATFORMS = frozenset({"tui"})
 
 TOOL_NAME = "forget_memory"
 MEMORY_TOOL_NAME = "memory"
+# P9-STORE: execution-args key; stripped if the model supplies it — P8-D02
+_ORIGIN_TOKEN_KEY = "_zola_origin_token"
+_TOKEN_TTL_SECONDS = 60.0
+_tokens: Dict[str, Tuple[str, str, str, str, float]] = {}
+_token_lock = threading.Lock()
 
 # P6-EPISODES: G3 confirm=false / ask_brian=true + confirm=true guard block — P6-D04
 MSG_ASK_BRIAN_MULTI = (
@@ -283,46 +303,12 @@ def _origin_module() -> Any:
     return None
 
 
-def current_origin_turn_id() -> str:
-    """Turn id bound on this thread by pre_llm. Empty when the turn has ended."""
-    if _origin_override is not None:
-        return ""
-    mod = _origin_module()
-    if mod is None:
-        return ""
-    try:
-        return str(mod.current_turn_id() or "")
-    except Exception:
-        return ""
-
-
-def client_origin_active() -> bool:
-    """True when this thread's current turn_id is bound.
-
-    The thread flag is the fallback only when no turn_id is on this thread.
-    That fallback is reached from retrieve_episodes, which has no turn_id argument.
-    """
-    if _origin_override is not None:
-        return bool(_origin_override)
-    mod = _origin_module()
-    if mod is None:
-        return False
-    try:
-        tid = str(mod.current_turn_id() or "")
-        if tid:
-            return bool(mod.turn_is_bound(tid))
-        # P9-FIX-ARM: no turn_id here; retrieve is the caller — P8-D02
-        return bool(mod.thread_turn_is_client())
-    except Exception:
-        return False
-
-
 def origin_allows(turn_id: str = "", **kwargs: Any) -> bool:
     """A bound turn_id passes. The thread flag is used only when no turn_id exists.
 
-    Callers are handle_forget_memory and pre_tool_call_hook. turn_id comes from
-    kwargs, then tools.approval_context, then the pre_llm context. The thread
-    flag is last, and only if all three are empty.
+    Callers pass turn_id. The pre_llm ContextVar is not on this thread, so it
+    is not read. The thread flag is last, and only when kwargs and the approval
+    context are both empty.
     """
     if _origin_override is not None:
         return bool(_origin_override)
@@ -338,14 +324,151 @@ def origin_allows(turn_id: str = "", **kwargs: Any) -> bool:
     if mod is None:
         return False
     try:
-        if not tid:
-            tid = str(mod.current_turn_id() or "")
         if tid:
             return bool(mod.turn_is_bound(tid))
         # P9-FIX-ARM: tool call with no turn_id anywhere; flag dies at turn end — P8-D02
         return bool(mod.thread_turn_is_client())
     except Exception:
         return False
+
+
+def _turn_context_module() -> Any:
+    import sys
+
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "PLATFORM_TUI", None) == "tui" and callable(
+            getattr(mod, "resolve_turn_from_permit", None)
+        ):
+            return mod
+    return None
+
+
+def _log_origin_unresolved(path: str, reason: str) -> None:
+    tc = _turn_context_module()
+    if tc is not None and callable(getattr(tc, "log_origin_unresolved", None)):
+        tc.log_origin_unresolved(path, reason)
+        return
+    logging.getLogger("zola_workspace").warning(
+        "origin_unresolved path=%s reason=%s", path, reason
+    )
+
+
+def _canonical_args_hash(args: Dict[str, Any]) -> str:
+    clean = {key: value for key, value in args.items() if key != _ORIGIN_TOKEN_KEY}
+    payload = json.dumps(clean, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _purge_tokens_locked(now: float) -> None:
+    expired = [key for key, row in _tokens.items() if row[4] <= now]
+    for key in expired:
+        _tokens.pop(key, None)
+
+
+def clear_origin_tokens_for_tests() -> None:
+    with _token_lock:
+        _tokens.clear()
+
+
+def _strip_model_token(args: Any) -> None:
+    if isinstance(args, dict):
+        args.pop(_ORIGIN_TOKEN_KEY, None)
+
+
+def _log_origin_token(action: str, reason: str = "") -> None:
+    # P9-STORE: the token value is never a log field — P8-D02
+    fields: Dict[str, Any] = {"action": action}
+    if reason:
+        fields["reason"] = reason
+    memlog.write_event(memlog.LOG_EVENT_ORIGIN_TOKEN, **fields)
+
+
+def _mint_origin_token(turn_id: str, tool_call_id: str, args: Dict[str, Any]) -> str:
+    token = secrets.token_urlsafe(32)
+    expiry = time.monotonic() + _TOKEN_TTL_SECONDS
+    row = (
+        str(turn_id or ""),
+        str(tool_call_id or ""),
+        TOOL_NAME,
+        _canonical_args_hash(args),
+        expiry,
+    )
+    now = time.monotonic()
+    with _token_lock:
+        _purge_tokens_locked(now)
+        _tokens[token] = row
+    _log_origin_token("minted")
+    return token
+
+
+def _permit_turn_ids(message: str) -> List[str]:
+    mod = _origin_module()
+    if mod is None or not callable(getattr(mod, "unexpired_sync_turn_ids", None)):
+        return []
+    try:
+        return [str(item) for item in mod.unexpired_sync_turn_ids(message)]
+    except Exception:
+        return []
+
+
+def _take_origin_token(args: Dict[str, Any], provider: Any) -> bool:
+    """Pop the token and require one match. The row is deleted on every outcome."""
+    # P9-STORE: the handler never receives turn_id; the token is the map key — P8-D02
+    raw = args.pop(_ORIGIN_TOKEN_KEY, None)
+    token = raw if isinstance(raw, str) and raw else ""
+    now = time.monotonic()
+    with _token_lock:
+        row = _tokens.pop(token, None) if token else None
+        _purge_tokens_locked(now)
+    if row is None:
+        reason = "unknown" if token else "absent"
+        _log_origin_token("refused", reason)
+        message = getattr(provider, "_current_user_message", "") or ""
+        if _permit_turn_ids(message if isinstance(message, str) else ""):
+            _log_origin_unresolved("forget_memory", reason)
+        return False
+    turn_id, _call_id, name, digest, expiry = row
+    if expiry <= now:
+        reason = "expired"
+    elif name != TOOL_NAME:
+        reason = "name"
+    elif digest != _canonical_args_hash(args):
+        reason = "args"
+    else:
+        tc = _turn_context_module()
+        try:
+            still_brian = bool(tc is not None and tc.is_brian_turn(turn_id))
+        except Exception:
+            still_brian = False
+        if still_brian:
+            _log_origin_token("consumed")
+            return True
+        reason = "not_brian"
+    _log_origin_token("refused", reason)
+    _log_origin_unresolved("forget_memory", reason)
+    return False
+
+
+def _mint_modify(kwargs: Dict[str, Any], args: Any) -> Optional[Dict[str, str]]:
+    if not isinstance(args, dict):
+        return None
+    tid = str(kwargs.get("turn_id") or "")
+    tc = _turn_context_module()
+    try:
+        brian = bool(tc is not None and tc.is_brian_turn(tid))
+    except Exception:
+        brian = False
+    if not brian:
+        mod = _origin_module()
+        try:
+            bound = bool(tid and mod is not None and mod.turn_is_bound(tid))
+        except Exception:
+            bound = False
+        if bound:
+            _log_origin_unresolved("forget_memory", "not_brian")
+        return None
+    token = _mint_origin_token(tid, str(kwargs.get("tool_call_id") or ""), args)
+    return {"action": "modify", "args": {_ORIGIN_TOKEN_KEY: token}}
 
 
 def sync_turn_allowed(user_content: str) -> bool:
@@ -1093,6 +1216,183 @@ def group_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return result
 
 
+def _proactive_module() -> Any:
+    # P9-STORE: same marker scan as the origin ticket, so this plugin does not import workspace at load — P9-D06
+    import sys
+
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "PROACTIVE_STORE_MARKER", None) == "p9-store":
+            return mod
+    return None
+
+
+def entities_matching(conn: sqlite3.Connection, description: str) -> List[Dict[str, str]]:
+    """Entities whose name or alias appears in the description. Empty when none match."""
+    text = description or ""
+    found: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+    for entity in conn.execute("SELECT id, name FROM entities"):
+        surfaces = [entity["name"] or ""]
+        for alias in conn.execute(
+            "SELECT alias FROM entity_aliases WHERE entity_id = ?",
+            (entity["id"],),
+        ):
+            surfaces.append(alias["alias"] or "")
+        if any(_surface_in_text(surface, text) for surface in surfaces):
+            if entity["id"] in seen:
+                continue
+            seen.add(entity["id"])
+            found.append({"id": entity["id"], "name": entity["name"] or ""})
+    return found
+
+
+def _surface_in_text(surface: str, text: str) -> bool:
+    token = (surface or "").strip().casefold()
+    if len(token) < 3:
+        return False
+    if token in (text or "").casefold():
+        return True
+    try:
+        from . import retrieve as _retrieve
+    except ImportError:
+        import retrieve as _retrieve
+    return bool(_retrieve.surface_matches_text(surface, text))
+
+
+def _alias_hashes(conn: sqlite3.Connection, entity_id: str) -> List[str]:
+    mod = _proactive_module()
+    hashes: List[str] = []
+    for alias in conn.execute(
+        "SELECT alias FROM entity_aliases WHERE entity_id = ?",
+        (entity_id,),
+    ):
+        value = alias["alias"] or ""
+        if "@" not in value or mod is None:
+            continue
+        hashes.append(mod.address_hash(value))
+    return hashes
+
+
+def _write_pending_and_delete_entity(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    payload: Dict[str, Any],
+) -> bool:
+    """Delete one entity and record the proactive retry in the same transaction."""
+    try:
+        from . import store as _store
+    except ImportError:
+        import store as _store
+
+    with _store.locked(conn):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM entity_aliases WHERE entity_id = ?", (entity_id,))
+            try:
+                conn.execute("DELETE FROM entities_fts WHERE entity_id = ?", (entity_id,))
+            except sqlite3.Error:
+                pass
+            conn.execute("DELETE FROM episode_entities WHERE entity_id = ?", (entity_id,))
+            conn.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
+            _store.meta_set(conn, META_PENDING_PROACTIVE, json.dumps(payload, separators=(",", ":")))
+            conn.execute("COMMIT")
+            return True
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            return False
+
+
+def _clear_pending_proactive(conn: sqlite3.Connection) -> None:
+    try:
+        from . import store as _store
+    except ImportError:
+        import store as _store
+
+    with _store.locked(conn):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM meta WHERE key = ?", (META_PENDING_PROACTIVE,))
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+
+
+def retry_pending_proactive(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """Run a proactive forget left behind by a crash or a lock. Idempotent."""
+    try:
+        from . import store as _store
+    except ImportError:
+        import store as _store
+
+    raw = _store.meta_get(conn, META_PENDING_PROACTIVE)
+    if not raw:
+        return {"ok": True, "retried": False}
+    mod = _proactive_module()
+    if mod is None:
+        return {"ok": False, "refused_reason": "missing", "retried": False}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "refused_reason": "error", "retried": False}
+    path = mod.profile_db_path()
+    if path is None or not path.exists():
+        return {"ok": False, "refused_reason": "missing", "retried": False}
+    try:
+        proactive = mod.connect(path, retry=False)
+    except Exception:
+        return {"ok": False, "refused_reason": "locked", "retried": False}
+    try:
+        result = mod.retry_pending_forget(conn, proactive)
+    finally:
+        proactive.close()
+    return result
+
+
+def apply_entity_proactive_forget(conn: sqlite3.Connection, entity_id: str) -> Dict[str, Any]:
+    """Memory commit first, then proactive. A proactive failure leaves the pending row."""
+    name = ""
+    row = conn.execute("SELECT name FROM entities WHERE id = ?", (entity_id,)).fetchone()
+    if row is not None:
+        name = row["name"] or ""
+    hashes = _alias_hashes(conn, entity_id)
+    source_ids: List[str] = []
+    mod = _proactive_module()
+    if mod is not None:
+        path = mod.profile_db_path()
+        if path is not None and path.exists():
+            try:
+                proactive = mod.connect(path, retry=False)
+                try:
+                    source_ids = mod.source_ids_for(
+                        proactive,
+                        entity_id=entity_id,
+                        address_hashes=hashes,
+                    )
+                finally:
+                    proactive.close()
+            except Exception:
+                source_ids = []
+    payload = {
+        "entity_id": entity_id,
+        "address_hashes": hashes,
+        "source_ids": source_ids,
+    }
+    if not _write_pending_and_delete_entity(conn, entity_id, payload):
+        return {"ok": False, "refused_reason": "error"}
+    if mod is None:
+        return {"ok": False, "refused_reason": "missing"}
+    result = mod.forget_subject_from_profile(payload, names=[name] if name else None)
+    if result.get("ok"):
+        _clear_pending_proactive(conn)
+    return result
+
+
 def handle_forget_memory(
     provider: Any,
     args: Dict[str, Any],
@@ -1127,7 +1427,13 @@ def handle_forget_memory(
             refused="platform",
         )
     # P9-FIX-ARM: platform tui is not a ticket; refuse instead of running the tool — P8-D02
-    if not origin_allows(**kwargs):
+    # P9-STORE: production has no turn_id here; the pre_tool token is the ticket — P8-D02
+    if _origin_override is not None:
+        _strip_model_token(args)
+        origin_ok = origin_allows(**kwargs)
+    else:
+        origin_ok = _take_origin_token(args, provider)
+    if not origin_ok:
         return _done(
             {
                 "ok": False,
@@ -1144,6 +1450,11 @@ def handle_forget_memory(
         )
 
     expire_orphan_hold_on_restart(provider)
+    # P9-STORE: a crash between the two databases finishes on the next ticket turn — P9-D06
+    try:
+        retry_pending_proactive(conn)
+    except Exception:
+        pass
 
     try:
         from . import store as _store
@@ -1155,6 +1466,17 @@ def handle_forget_memory(
 
     if not confirm:
         cands = search_candidates(conn, description)
+        # P9-STORE: a unique entity is a confirmable candidate so forget can take that path — P9-D06
+        for entity in entities_matching(conn, description):
+            cands.append(
+                {
+                    "id": entity["id"],
+                    "kind": RECORD_KIND_ENTITY,
+                    "date": "",
+                    "label": entity["name"] or "person",
+                    "_text": entity["name"] or "",
+                }
+            )
         # P6-FORGET: all listed IDs (incl. notebook_fact) for hold-end; confirm=true refuses notebook — P6-D06
         state.candidate_ids = {c["id"] for c in cands}
         state.candidate_meta = {c["id"]: c for c in cands}
@@ -1193,6 +1515,9 @@ def handle_forget_memory(
         else:
             state.ask_brian_pending = False
             msg = "No matches."
+        # P9-STORE: no mapped person means the pending list is untouched — P9-D06
+        if not ask_brian and not entities_matching(conn, description):
+            msg = msg + " " + MSG_PROACTIVE_UNMAPPED
         # P6-EPISODES: sanitize on every confirm=false (incl. no matches) — Phase 7-WAL
         try:
             _store.sanitize_after_erase(conn)
@@ -1254,12 +1579,28 @@ def handle_forget_memory(
             )
         targets.append({"id": tid, "kind": kind})
 
-    ok, counts = forget_cascade(
-        conn,
-        targets,
-        reason=ERASE_REASON_TOOL,
-        terms_source=description,
-    )
+    plain = [target for target in targets if target["kind"] != RECORD_KIND_ENTITY]
+    entity_targets = [target for target in targets if target["kind"] == RECORD_KIND_ENTITY]
+    ok = True
+    counts: Dict[str, int] = {}
+    if plain:
+        ok, counts = forget_cascade(
+            conn,
+            plain,
+            reason=ERASE_REASON_TOOL,
+            terms_source=description,
+        )
+    entity_hits = entities_matching(conn, description)
+    proactive_result: Optional[Dict[str, Any]] = None
+    # P9-STORE: proactive runs only after the memory side commits, and only for one entity — P9-D06
+    if (
+        ok
+        and len(entity_hits) == 1
+        and any(target["id"] == entity_hits[0]["id"] for target in entity_targets)
+    ):
+        proactive_result = apply_entity_proactive_forget(conn, entity_hits[0]["id"])
+        if not proactive_result.get("ok"):
+            ok = False
     state.forget_in_session = True
     mark_drop(state, provider._current_user_message or "")
     for ht in state.hold_user_texts:
@@ -1283,16 +1624,32 @@ def handle_forget_memory(
         ok=ok,
     )
     erased = [{"id": t["id"], "kind": t["kind"]} for t in targets]
+    if proactive_result is not None and not proactive_result.get("ok"):
+        message = MSG_PROACTIVE_PARTIAL
+    elif proactive_result is not None and proactive_result.get("ok"):
+        message = (
+            "Erased from provider memory. Tell Brian plainly it is gone from your memory; "
+            "conversation logs still have it."
+            + MSG_PROACTIVE_INCLUDED
+        )
+    elif len(entity_hits) != 1:
+        message = (
+            "Erased from provider memory. Tell Brian plainly it is gone from your memory; "
+            "conversation logs still have it. "
+            + MSG_PROACTIVE_UNMAPPED
+        )
+    else:
+        message = (
+            "Erased from provider memory. Tell Brian plainly it is gone from your memory; "
+            "conversation logs still have it."
+        )
     return _done(
         {
             "ok": ok,
             "confirm": True,
             "erased": erased,
             "counts": counts,
-            "message": (
-                "Erased from provider memory. Tell Brian plainly it is gone from your memory; "
-                "conversation logs still have it."
-            ),
+            "message": message,
             "_cand_count": len(erased),
             "_group_count": 0,
         }
@@ -1371,14 +1728,22 @@ def expire_orphan_hold_on_restart(provider: Any) -> None:
 def on_turn_start_forget_hooks(provider: Any, message: str, turn_id: str = "") -> None:
     """E2/E3: mark forget-intent drops; maintain hold turn budget; expiry checks."""
     # P9-FIX-ARM: a turn with no client ticket does not start a forget hold — P8-D02
+    # P9-STORE: the pre_llm ContextVar does not survive onto this thread — P8-D02
     if _origin_override is not None:
         if not _origin_override:
             return
     elif turn_id:
         if not origin_allows(turn_id):
+            if _permit_turn_ids(message or ""):
+                _log_origin_unresolved("forget_hold", "turn_id")
             return
-    elif not client_origin_active():
-        return
+    else:
+        tc = _turn_context_module()
+        resolved = tc.resolve_turn_from_permit(message or "") if tc is not None else None
+        if not resolved:
+            if tc is None:
+                _log_origin_unresolved("forget_hold", "no_judge")
+            return
     state: ForgetSessionState = provider._forget_state
     expire_disposition_drops(state)
     expire_orphan_hold_on_restart(provider)
@@ -1473,9 +1838,12 @@ def pre_tool_call_hook(
 
     sid = str(kwargs.get("session_id") or "")
     provider = _registry.get(sid)
+    name = str(tool_name or "")
+    # P9-STORE: a model-supplied token is never the one the handler will accept — P8-D02
+    if name == TOOL_NAME:
+        _strip_model_token(args)
     if provider is None:
         return None
-    name = str(tool_name or "")
     # P9-FIX-ARM: no ticket refuses forget and memory writes; it does not skip the hook — P8-D02
     if not origin_allows(**kwargs):
         if name in (TOOL_NAME, MEMORY_TOOL_NAME):
@@ -1517,7 +1885,7 @@ def pre_tool_call_hook(
 
     if name == TOOL_NAME:
         if not isinstance(args, dict) or not bool(args.get("confirm")):
-            return None
+            return _mint_modify(kwargs, args)
         if state.ask_brian_pending:
             memlog.write_event(
                 memlog.LOG_EVENT_FORGET_GUARD,
@@ -1532,7 +1900,7 @@ def pre_tool_call_hook(
             tool=TOOL_NAME,
             ok=True,
         )
-        return None
+        return _mint_modify(kwargs, args)
 
     return None
 

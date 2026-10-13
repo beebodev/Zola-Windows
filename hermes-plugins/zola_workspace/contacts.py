@@ -124,7 +124,23 @@ def _impl(args: Dict[str, Any]) -> str:
             continue
         person = item.get("person") or item
         if isinstance(person, dict):
-            contacts.append(shape_person(person))
+            shaped = shape_person(person)
+            # P9-STORE: a contact result is a handle, not a person id — P9-D09
+            try:
+                try:
+                    from . import recorded_results
+                except ImportError:
+                    import recorded_results
+                handle = recorded_results.remember(
+                    kind=recorded_results.KIND_CONTACT,
+                    addresses=list(shaped.get("emails") or []),
+                    sender_display_name=str(shaped.get("display_name") or ""),
+                )
+                if handle:
+                    shaped["handle"] = handle
+            except Exception:
+                pass
+            contacts.append(shaped)
     more_available = bool(body.get("nextPageToken"))
     state = read_common.STATE_NO_MATCH if not contacts else read_common.STATE_COMPLETE
     payload = {

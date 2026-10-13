@@ -6,3 +6,8 @@ hermes-plugins/**/__pycache__/
 # the tree cannot be committed. The live Hermes profile tree is outside the repo.
 **/token.dpapi
 **/taint.sqlite
+
+# P9-STORE: the proactive store lives under %HERMES_HOME%/proactive/ and is never committed — P9-D06
+**/proactive.db
+**/proactive.db-wal
+**/proactive.db-shm

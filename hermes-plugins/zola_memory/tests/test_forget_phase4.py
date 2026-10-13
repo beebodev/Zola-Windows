@@ -1229,22 +1229,33 @@ class TestNonTicketTurns(_TempHome):
 
         forget.set_client_origin_override_for_tests(None)
         origin.clear_for_tests()
+        import turn_context
+
         p = self._provider()
         try:
+            turn_context.record_pre_llm_call(
+                turn_id="turn-brian",
+                platform="tui",
+                parent_session_id="",
+                user_message="synthetic brian line",
+            )
             origin.grant_turn_for_tests("turn-brian", "synthetic brian line")
             p.on_turn_start(1, "synthetic brian line", turn_id="turn-brian")
-            allowed = json.loads(
-                p.handle_tool_call(
-                    "forget_memory",
-                    {"description": "synthetic", "confirm": False},
-                    turn_id="turn-brian",
-                )
+            args = {"description": "synthetic", "confirm": False}
+            directive = forget.pre_tool_call_hook(
+                tool_name="forget_memory",
+                args=args,
+                session_id="s1",
+                turn_id="turn-brian",
+                tool_call_id="call-brian",
             )
+            self.assertEqual(directive["action"], "modify")
+            args = {**args, **directive["args"]}
+            allowed = json.loads(p.handle_tool_call("forget_memory", args))
             self.assertTrue(allowed["ok"], allowed)
             origin.end_turn("turn-brian")
             self.assertFalse(origin.thread_turn_is_client())
             self.assertFalse(origin.turn_is_bound("turn-brian"))
-            self.assertFalse(forget.client_origin_active())
             p.on_turn_start(2, "synthetic persist-disabled follow-up")
             refused = json.loads(
                 p.handle_tool_call(
@@ -1283,6 +1294,8 @@ class TestNonTicketTurns(_TempHome):
             )
             self.assertEqual(pending.count_pending(p._conn), 1)
         finally:
+            forget.clear_origin_tokens_for_tests()
+            turn_context.clear_all_for_tests()
             origin.clear_for_tests()
             forget.set_client_origin_override_for_tests(None)
             if sys.path and sys.path[0] == ws:

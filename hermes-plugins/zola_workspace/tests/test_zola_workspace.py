@@ -389,6 +389,7 @@ class RegisterTests(unittest.TestCase):
                 "contacts_lookup",
                 "gmail_draft",
                 "gmail_send_draft",
+                "zola_loops",
             },
         )
         self.assertTrue(all(item["is_async"] is False for item in seen["tools"]))

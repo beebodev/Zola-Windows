@@ -175,16 +175,31 @@ def _clear_thread() -> None:
 
 
 def end_turn(turn_id: str = "") -> None:
-    """Drop this thread's origin flag and this turn's binding. The sync permit stays."""
-    current = current_turn_id()
+    """Drop this thread's origin flag and the passed turn's binding. The sync permit stays.
+
+    The pre_llm ContextVar is not on this thread, so it is not read.
+    """
     _clear_thread()
-    ids = {str(turn_id or ""), current}
-    ids.discard("")
-    if not ids:
+    tid = str(turn_id or "")
+    if not tid:
         return
     with _lock:
-        for tid in ids:
-            _bound.pop(tid, None)
+        _bound.pop(tid, None)
+
+
+def unexpired_sync_turn_ids(user_content: str) -> list[str]:
+    """Non-consuming. Turn ids of unexpired permits whose text hash equals this message."""
+    # P9-STORE: the turn thread cannot see the pre_llm ContextVar — P8-D02
+    if not wrap_ok():
+        return []
+    message = user_content if isinstance(user_content, str) else ""
+    if not message:
+        return []
+    digest = text_hash(message)
+    now = time.monotonic()
+    with _lock:
+        _prune_sync_locked(now)
+        return [tid for tid, item_digest, _created in _sync_ready if item_digest == digest]
 
 
 def take_sync_for_text(user_content: str) -> bool:

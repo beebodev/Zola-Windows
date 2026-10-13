@@ -253,7 +253,15 @@ def retrieve_episodes(
 ) -> str:
     t0 = time.perf_counter()
     # P9-FIX-ARM: no client ticket, no episode text — P8-D02
-    if not forget.is_brian_conversation(platform, parent_session_id) or not forget.client_origin_active():
+    # P9-STORE: the pre_llm ContextVar is gone; one matching permit is the ticket — P8-D02
+    if forget._origin_override is not None:
+        origin_ok = bool(forget._origin_override)
+    else:
+        tc = forget._turn_context_module()
+        origin_ok = bool(
+            tc is not None and tc.resolve_turn_from_permit(query or "")
+        )
+    if not forget.is_brian_conversation(platform, parent_session_id) or not origin_ok:
         memlog.write_event(
             memlog.LOG_EVENT_RETRIEVE,
             candidates=0,
