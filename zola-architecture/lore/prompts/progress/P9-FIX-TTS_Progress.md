@@ -22,7 +22,7 @@ Working tree at branch creation was not empty. `zola-architecture/lore/prompts/p
 | 3 | Implement | COMPLETE |
 | 4 | Review checkpoint | COMPLETE |
 | 5 | Deploy and smoke | COMPLETE |
-| 6 | Closeout | IMPLEMENTATION COMMITTED; merge pending |
+| 6 | Closeout | COMPLETE |
 
 ## Guardrails (summary)
 
@@ -382,5 +382,7 @@ Scratch deletion and the commit are not done.
 ## SHAs
 
 - Implementation: `0d6e56c94b29458c3e0ea8a9134a8a50f74a2a02` (`fix(P9-FIX-TTS): Deepgram TTS command provider in repo, key-path guard`)
+- Implementation-SHA commit: `58e4485ca7a32c2f77bf82843142fcee57337e11`
+- Merge `--no-ff`: `72243cb5fa3384ccee19f4ace9728baa0001de06` (`Merge branch 'p9-fix-tts'`)
 
 
