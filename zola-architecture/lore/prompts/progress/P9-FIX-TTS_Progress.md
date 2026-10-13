@@ -22,7 +22,7 @@ Working tree at branch creation was not empty. `zola-architecture/lore/prompts/p
 | 3 | Implement | COMPLETE |
 | 4 | Review checkpoint | COMPLETE |
 | 5 | Deploy and smoke | COMPLETE |
-| 6 | Closeout | EXIT TABLE SHOWN; commit not started |
+| 6 | Closeout | IMPLEMENTATION COMMITTED; merge pending |
 
 ## Guardrails (summary)
 
@@ -378,4 +378,9 @@ Scratch deletion and the commit are not done.
 - Privacy page publishing is pending. Brian publishes. The prepared text, for `privacy.md` after "Where data goes", with the date line set to the day he publishes: **Speech.** When voice replies are on, the text of Zola's spoken replies is sent to Deepgram to be turned into audio. That text may include details from the owner's email or calendar that Zola is answering about. Nothing else is sent to Deepgram.
 - No automatic fallback from the Deepgram command provider to Edge. Open question from TT-G6.
 - The P8 guard rows (Google terminal, self-mod, schedule) do not check `execute_code`. Same residual class. `execute_code` is not on the live `cli` toolset.
+
+## SHAs
+
+- Implementation: `0d6e56c94b29458c3e0ea8a9134a8a50f74a2a02` (`fix(P9-FIX-TTS): Deepgram TTS command provider in repo, key-path guard`)
+
 
