@@ -21,7 +21,7 @@
 | 4 | Implement | IMPLEMENTED — stopped for review; not committed |
 | 5 | Review checkpoint | FIXES APPLIED — stopped for the next phase |
 | 6 | Deploy and smoke | COMPLETE — Release serve restarted; schema version 2 |
-| 7 | Closeout | IMPLEMENTATION COMMITTED; merge pending |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails (summary)
 
@@ -1053,4 +1053,6 @@ Live `plugins/zola_memory/` source files. `__pycache__` holds 12 `.pyc` files an
 ## SHAs
 
 - Implementation: `b13989a8f96c713214cb5537e24a401a02526bff` (`feat(P9-STORE): proactive store, lifecycle, retention, open loops, forget cascade — P9-D06/D07/D09`)
+- Implementation-SHA commit: `f8a8d62add62b0194e2867f039857d27f8f58525`
+- Merge `--no-ff`: `7e5ea69791173822ff7cba1ea5fcfecd979ebed2` (`Merge branch 'p9-store'`)
 
