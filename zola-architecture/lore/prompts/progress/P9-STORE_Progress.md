@@ -21,7 +21,7 @@
 | 4 | Implement | IMPLEMENTED — stopped for review; not committed |
 | 5 | Review checkpoint | FIXES APPLIED — stopped for the next phase |
 | 6 | Deploy and smoke | COMPLETE — Release serve restarted; schema version 2 |
-| 7 | Closeout | LIVE CHECK PASSED — commit in progress |
+| 7 | Closeout | IMPLEMENTATION COMMITTED; merge pending |
 
 ## Guardrails (summary)
 
@@ -1049,3 +1049,8 @@ Live `plugins/zola_memory/` source files. `__pycache__` holds 12 `.pyc` files an
 | `84E0C44975579C0B6878E64355ADAB4D30B09EE9938E61E9855A6774CC11FA39` | 13648 | `retrieve.py` |
 | `C471EA121F993BD00D5E68EEF0DEFB92FBDD3D606774CA78B89ADF1B34CB00E8` | 17563 | `store.py` |
 | `327A027A740D4CD4DAA6A046245A0B44606DC39B774BAECACDB5A327597BC1BE` | 11425 | `time_context.py` |
+
+## SHAs
+
+- Implementation: `b13989a8f96c713214cb5537e24a401a02526bff` (`feat(P9-STORE): proactive store, lifecycle, retention, open loops, forget cascade — P9-D06/D07/D09`)
+
