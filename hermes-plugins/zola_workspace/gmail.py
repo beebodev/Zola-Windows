@@ -168,6 +168,29 @@ def attachment_meta(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return items
 
 
+def _stamp_gmail(shaped: Dict[str, Any]) -> str:
+    # P9-STORE: record before the id is stripped; the model sees only the handle — P9-D09
+    try:
+        try:
+            from . import recorded_results
+        except ImportError:
+            import recorded_results
+        handle = recorded_results.remember(
+            kind=recorded_results.KIND_GMAIL,
+            message_id=str(shaped.get("id") or ""),
+            thread_id=str(shaped.get("thread_id") or ""),
+            address=str(shaped.get("from_address") or ""),
+            sender_display_name=str(shaped.get("from_name") or ""),
+            subject=str(shaped.get("subject") or ""),
+            labels=list(shaped.get("labels") or []),
+        )
+    except Exception:
+        return ""
+    if handle:
+        shaped["handle"] = handle
+    return handle
+
+
 def shape_metadata(message: Dict[str, Any]) -> Dict[str, Any]:
     payload = message.get("payload") or {}
     headers = _header_map(payload if isinstance(payload, dict) else {})
@@ -302,7 +325,9 @@ def _search_impl(args: Dict[str, Any]) -> str:
                 reason="gmail_metadata_failed",
                 empty_key="messages",
             )
-        messages.append(shape_metadata(full))
+        shaped = shape_metadata(full)
+        _stamp_gmail(shaped)
+        messages.append(shaped)
     state = read_common.STATE_NO_MATCH if not messages else read_common.STATE_COMPLETE
     payload = {
         "ok": True,
@@ -363,6 +388,8 @@ def _read_impl(args: Dict[str, Any]) -> str:
         payload_body = {}
     text, truncated, total = extract_body(payload_body)
     meta = shape_metadata(message)
+    _stamp_gmail(meta)
+    handle = str(meta.pop("handle", "") or "")
     meta.pop("id", None)
     result = {
         "ok": True,
@@ -371,6 +398,7 @@ def _read_impl(args: Dict[str, Any]) -> str:
         "chars_returned": len(text),
         "chars_total": total,
         "text": text,
+        **({"handle": handle} if handle else {}),
         **{
             key: meta[key]
             for key in (
@@ -666,7 +694,24 @@ def _present_result(action: str, fields: Dict[str, Any], *, differs: bool, start
         recipient_count=_recipient_count(fields),
         started=started,
     )
-    return read_common.dump_result(TOOL_DRAFT, _content_payload(action, fields, reply_to_differs=differs))
+    payload = _content_payload(action, fields, reply_to_differs=differs)
+    # P9-STORE: a draft is Brian's own message, so reply compile refuses it — P9-D09
+    try:
+        try:
+            from . import recorded_results
+        except ImportError:
+            import recorded_results
+        handle = recorded_results.remember(
+            kind=recorded_results.KIND_GMAIL,
+            thread_id=str(payload.get("thread_id") or ""),
+            subject=str(payload.get("subject") or ""),
+            labels=["DRAFT"],
+        )
+        if handle:
+            payload["handle"] = handle
+    except Exception:
+        pass
+    return read_common.dump_result(TOOL_DRAFT, payload)
 
 
 def _fetch_draft(draft_id: str, headers: Dict[str, str]) -> Dict[str, Any]:

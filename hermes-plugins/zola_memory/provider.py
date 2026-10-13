@@ -224,8 +224,8 @@ class ZolaMemoryProvider(MemoryProvider):
                 turn_number=turn_number,
                 msg_len=len(self._current_user_message),
             )
-            # P9-FIX-ARM: Hermes does not pass turn_id; the pre_llm context does — P8-D02
-            tid = str(kwargs.get("turn_id") or "") or forget.current_origin_turn_id()
+            # P9-STORE: Hermes does not pass turn_id; the permit lookup is inside the hook — P8-D02
+            tid = str(kwargs.get("turn_id") or "")
             forget.on_turn_start_forget_hooks(
                 self, self._current_user_message, turn_id=tid
             )

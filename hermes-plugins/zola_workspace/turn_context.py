@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+
+_origin_logger = logging.getLogger("zola_workspace")
 
 # P8-HARDEN: authority TTL; missing/expired = not authorized — P8-D02
 AUTHORITY_GRANT_TTL_SECONDS = 900
@@ -107,6 +110,41 @@ def current_turn_id_from_context() -> str:
         return str(_approval_turn_id.get() or "")
     except Exception:
         return ""
+
+
+def log_origin_unresolved(path: str, reason: str) -> None:
+    """WARN for a failed origin resolution. path and reason only.
+
+    No message text and no token.
+    """
+    # P9-STORE: a silent empty origin is how the four-day miss hid — P8-D02
+    try:
+        _origin_logger.warning("origin_unresolved path=%s reason=%s", path, reason)
+    except Exception:
+        pass
+
+
+def resolve_turn_from_permit(message_text: str) -> Optional[str]:
+    """Turn id for the one unexpired sync permit matching this text, or None.
+
+    Non-consuming. Zero or several matches fail closed. is_brian_turn is the
+    only origin judge after the unique match.
+    """
+    # P9-STORE: on_turn_start and retrieve run after the pre_llm worker returns — P8-D02
+    message = message_text if isinstance(message_text, str) else ""
+    try:
+        ids = list(_origin().unexpired_sync_turn_ids(message))
+    except Exception:
+        log_origin_unresolved("permit", "lookup_error")
+        return None
+    if len(ids) != 1:
+        log_origin_unresolved("permit", "zero" if len(ids) == 0 else "several")
+        return None
+    tid = ids[0]
+    if not is_brian_turn(tid):
+        log_origin_unresolved("permit", "not_brian")
+        return None
+    return tid
 
 
 def is_brian_turn(turn_id: Optional[str] = None) -> bool:

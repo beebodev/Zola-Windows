@@ -17,6 +17,7 @@ try:
     from . import posture
     from . import send_gate
     from . import turn_context
+    from . import loops as zola_loops
 except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import auth
     import contacts
@@ -28,6 +29,7 @@ except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import posture
     import send_gate
     import turn_context
+    import loops as zola_loops
 
 # P8-HARDEN / P8-CONNECT: named tool / toolset constants — P8-D01 / P8-D08
 TOOL_NAME = "workspace_status"
@@ -157,9 +159,27 @@ def register(ctx) -> None:
             description=description,
             is_async=False,
         )
+    # P9-STORE: same toolset as the other Brian-only tools; no config.yaml line — P9-D09
+    ctx.register_tool(
+        name=zola_loops.TOOL_NAME,
+        toolset=TOOLSET_NAME,
+        schema=zola_loops.loops_schema(),
+        handler=zola_loops.loops_handler,
+        description=zola_loops._DESCRIPTION,
+        is_async=False,
+    )
     # P9-FIX-ARM: wrap prompt.submit only in the serve process, before any turn — P8-D02
     try:
         from . import origin
     except ImportError:
         import origin  # type: ignore
     origin.install_for_serve()
+    # P9-STORE: purge only in serve; tests do not pass that argv — P9-D07
+    try:
+        try:
+            from . import proactive_store
+        except ImportError:
+            import proactive_store
+        proactive_store.start_purge_thread()
+    except Exception:
+        pass

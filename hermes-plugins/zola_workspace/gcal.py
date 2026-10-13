@@ -255,6 +255,31 @@ def _shape_event(event: Dict[str, Any], *, calendar_name: str, tz) -> Dict[str, 
     }
 
 
+def _stamp_event(shaped: Dict[str, Any], event: Dict[str, Any]) -> None:
+    # P9-STORE: the public item has a handle; the raw event id stays off the model payload — P9-D09
+    try:
+        try:
+            from . import recorded_results
+        except ImportError:
+            import recorded_results
+        organizer = event.get("organizer") or {}
+        display = ""
+        if isinstance(organizer, dict):
+            display = str(organizer.get("displayName") or "")
+        handle = recorded_results.remember(
+            kind=recorded_results.KIND_CALENDAR,
+            event_id=str(event.get("id") or ""),
+            event_updated=str(event.get("updated") or ""),
+            subject=str(event.get("summary") or ""),
+            sender_display_name=display,
+            calendar_status=str(event.get("status") or ""),
+        )
+        if handle:
+            shaped["handle"] = handle
+    except Exception:
+        return
+
+
 def _google_get(
     url: str,
     *,
@@ -437,6 +462,7 @@ def _collect_most_recent_with_query(
                     continue
                 seen_keys.add(key)
             all_shaped.append(_shape_event(ev, calendar_name=cal_name, tz=tz))
+            _stamp_event(all_shaped[-1], ev)
     all_shaped.sort(key=_sort_key_dt, reverse=True)
     return all_shaped, incomplete
 
@@ -495,6 +521,7 @@ def _collect_most_recent(
             for ev in raw_events:
                 eid = str(ev.get("id") or "")
                 shaped = _shape_event(ev, calendar_name=cal_name, tz=tz)
+                _stamp_event(shaped, ev)
                 chunk_items.append((cal_id, eid, shaped))
         chunk_items.sort(key=lambda t: _sort_key_dt(t[2]), reverse=True)
         for cal_id, eid, item in chunk_items:
@@ -678,7 +705,9 @@ def _calendar_query_impl(args: Dict[str, Any]) -> str:
             if page_incomplete:
                 incomplete = True
             for ev in raw_events:
-                all_shaped.append(_shape_event(ev, calendar_name=cal_name, tz=tz))
+                shaped = _shape_event(ev, calendar_name=cal_name, tz=tz)
+                _stamp_event(shaped, ev)
+                all_shaped.append(shaped)
 
         all_shaped.sort(key=_sort_key_dt)
         more_available = len(all_shaped) > max_results

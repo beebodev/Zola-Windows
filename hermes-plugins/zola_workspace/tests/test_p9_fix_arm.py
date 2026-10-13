@@ -294,7 +294,8 @@ class WrapTests(_ServerCase):
         origin.grant_turn_for_tests("turn-stop")
         send_gate.agent_loop_stopped_hook(session_key=self.sid)
         self.assertFalse(origin.thread_turn_is_client())
-        self.assertFalse(origin.turn_is_bound("turn-stop"))
+        # No turn_id was passed. The pre_llm ContextVar is not read, so the binding stays.
+        self.assertTrue(origin.turn_is_bound("turn-stop"))
         origin.grant_turn_for_tests("turn-end")
         send_gate.on_session_end_hook(session_id=self.sid, turn_id="turn-end")
         self.assertFalse(origin.turn_is_bound("turn-end"))
