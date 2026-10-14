@@ -30,7 +30,7 @@ TOKEN = "P9STORE_SYNTHETIC"
 ADDRESS = "p9store-synthetic@example.com"
 SQL_OWNER = re.compile(
     r"(?i)\b(?:insert\s+into|update|delete\s+from)\s+"
-    r"(?:items|loops|item_attempts|deliveries|cursors|watcher_health)\b"
+    r"(?:items|loops|item_attempts|deliveries|cursors|watcher_health|calendar_events|watcher_rejects)\b"
 )
 
 
@@ -460,7 +460,7 @@ class StoreTests(unittest.TestCase):
         version = self.conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()[0]
-        self.assertEqual(version, "2")
+        self.assertEqual(version, str(proactive_store.SCHEMA_VERSION))
         columns = {row[1] for row in self.conn.execute("PRAGMA table_info(loops)")}
         self.assertIn("closed_intent", columns)
         closed = self.conn.execute(

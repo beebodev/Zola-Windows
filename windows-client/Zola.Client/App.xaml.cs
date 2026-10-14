@@ -7,6 +7,7 @@ public partial class App : Application
 {
     private Window? _window;
     private HermesProcessManager? _backend;
+    private WatcherProcess? _watcher;
 
     public App()
     {
@@ -20,9 +21,16 @@ public partial class App : Application
         DumpPruner.PruneOnStartup();
         // P1-CLIENT: own the backend for this window; chat socket stays closed until health passes — P1-D01
         _backend = new HermesProcessManager();
+        // P9-WATCH: polling continues while serve is down, so the watcher is not serve's child — P9-D02
+        _watcher = new WatcherProcess(_backend.ProfileDirectory);
         _window = new MainWindow(_backend);
-        _window.Closed += (_, _) => _backend.Shutdown();
+        _window.Closed += (_, _) =>
+        {
+            _watcher.StopDeliberate();
+            _backend.Shutdown();
+        };
         _window.Activate();
+        _watcher.Start();
         _ = StartBackendAsync();
     }
 

@@ -8,11 +8,13 @@ in the repository.
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import json
 import secrets
 import threading
 import time
+from ctypes import wintypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -31,6 +33,87 @@ OAUTH_PROMPT = "consent"
 
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+# P9-WATCH: one mutex around the token POST; the access token stays in this process — P9-D03
+_REFRESH_MUTEX_NAME = "Local\\ZolaOAuthRefresh"
+_refresh_mutex_override: Optional[str] = None
+_REFRESH_LOCK_TIMEOUT_SECONDS = 45.0
+_WAIT_OBJECT_0 = 0
+_WAIT_ABANDONED = 0x00000080
+_WAIT_TIMEOUT = 0x00000102
+_token_endpoint_override: Optional[str] = None
+
+_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_CreateMutexW = _k32.CreateMutexW
+_CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+_CreateMutexW.restype = wintypes.HANDLE
+_WaitForSingleObject = _k32.WaitForSingleObject
+_WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+_WaitForSingleObject.restype = wintypes.DWORD
+_ReleaseMutex = _k32.ReleaseMutex
+_ReleaseMutex.argtypes = [wintypes.HANDLE]
+_ReleaseMutex.restype = wintypes.BOOL
+_CloseHandle = _k32.CloseHandle
+_CloseHandle.argtypes = [wintypes.HANDLE]
+_CloseHandle.restype = wintypes.BOOL
+
+
+class RefreshLockTimeout(RuntimeError):
+    """The refresh mutex was not free in time. This is not needs_reconnect."""
+
+
+def set_token_endpoint_for_tests(url: Optional[str]) -> None:
+    global _token_endpoint_override
+    _token_endpoint_override = url
+
+
+def set_refresh_lock_timeout_for_tests(seconds: Optional[float]) -> None:
+    global _REFRESH_LOCK_TIMEOUT_SECONDS
+    _REFRESH_LOCK_TIMEOUT_SECONDS = 45.0 if seconds is None else float(seconds)
+
+
+def set_refresh_mutex_name_for_tests(name: Optional[str]) -> None:
+    # P9-WATCH: tests name their own refresh mutex so a live serve keeps its lock — P9-D03
+    global _refresh_mutex_override
+    _refresh_mutex_override = name
+
+
+def _refresh_mutex_name() -> str:
+    return _refresh_mutex_override or _REFRESH_MUTEX_NAME
+
+
+def _acquire_refresh_mutex() -> Tuple[Any, str]:
+    handle = _CreateMutexW(None, False, _refresh_mutex_name())
+    if not handle:
+        raise OSError(ctypes.get_last_error())
+    timeout_ms = max(0, int(_REFRESH_LOCK_TIMEOUT_SECONDS * 1000))
+    waited = _WaitForSingleObject(handle, timeout_ms)
+    if waited == _WAIT_OBJECT_0:
+        return handle, "ok"
+    if waited == _WAIT_ABANDONED:
+        return handle, "abandoned"
+    _CloseHandle(handle)
+    return None, "timeout"
+
+
+def _release_refresh_mutex(handle: Any) -> None:
+    if not handle:
+        return
+    _ReleaseMutex(handle)
+    _CloseHandle(handle)
+
+
+def hold_refresh_mutex_for_tests(seconds: float) -> None:
+    handle, how = _acquire_refresh_mutex()
+    if how == "timeout":
+        print("timeout", flush=True)
+        return
+    print("held", flush=True)
+    try:
+        time.sleep(seconds)
+    finally:
+        _release_refresh_mutex(handle)
+
+
 GOOGLE_JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISS = frozenset({"https://accounts.google.com", "accounts.google.com"})
 
@@ -134,6 +217,8 @@ def reset_auth_runtime_for_tests() -> None:
     _reconnect_reason = None
     _reconnect_store_stamp = None
     _jwks_cache = None
+    set_token_endpoint_for_tests(None)
+    set_refresh_lock_timeout_for_tests(None)
     set_dpapi_shim_for_tests(None, None)
     set_store_path_for_tests(None)
     set_open_browser_for_tests(None)
@@ -436,7 +521,7 @@ def _token_post(form: Dict[str, str]) -> Dict[str, Any]:
     try:
         resp = google_http.request(
             "POST",
-            GOOGLE_TOKEN_URI,
+            _token_endpoint_override or GOOGLE_TOKEN_URI,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data=urlencode(form),
             timeout=30.0,
@@ -663,63 +748,71 @@ def refresh_access_token(*, force: bool = False) -> str:
         ):
             return _cached_access_token
 
+    # P9-WATCH: the named mutex covers the POST. A dead holder leaves it abandoned — P9-D03
+    mutex, how = _acquire_refresh_mutex()
+    if how == "timeout":
+        raise RefreshLockTimeout("refresh_lock_timeout")
     try:
-        record = load_token_record()
-    except Exception as exc:
-        set_reconnect_reason(REASON_DECRYPT_FAILED)
-        raise RuntimeError(REASON_DECRYPT_FAILED) from exc
-    if record is None:
-        set_reconnect_reason(REASON_MISSING_STORE)
-        raise RuntimeError(REASON_MISSING_STORE)
-
-    try:
-        from . import google_http
-    except ImportError:
-        import google_http  # type: ignore
-
-    try:
-        body = _token_post(
-            {
-                "client_id": record.client_id,
-                "client_secret": record.client_secret,
-                "refresh_token": record.refresh,
-                "grant_type": "refresh_token",
-            }
-        )
-    except google_http.GoogleHttpStatusError as exc:
-        # Try to detect invalid_grant from status body is unavailable; treat 400 as reconnect
-        if exc.status in (400, 401):
-            set_reconnect_reason(REASON_INVALID_GRANT)
-            raise RuntimeError(REASON_INVALID_GRANT) from exc
-        raise
-
-    if body.get("error") == "invalid_grant":
-        # P8-CONNECT: invalid_grant → needs_reconnect, no retry loop — P8-D03
-        set_reconnect_reason(REASON_INVALID_GRANT)
-        raise RuntimeError(REASON_INVALID_GRANT)
-
-    id_token = body.get("id_token")
-    if id_token:
         try:
-            sub = validate_id_token(str(id_token), client_id=record.client_id)
+            record = load_token_record()
         except Exception as exc:
-            set_reconnect_reason(REASON_ID_TOKEN_INVALID)
-            raise RuntimeError(REASON_ID_TOKEN_INVALID) from exc
-        if sub != record.sub:
-            # P8-CONNECT: id_token sub mismatch → needs_reconnect — P8-D03
-            set_reconnect_reason(REASON_SUB_MISMATCH)
-            raise RuntimeError(REASON_SUB_MISMATCH)
-    # no id_token alone is not a failure
+            set_reconnect_reason(REASON_DECRYPT_FAILED)
+            raise RuntimeError(REASON_DECRYPT_FAILED) from exc
+        if record is None:
+            set_reconnect_reason(REASON_MISSING_STORE)
+            raise RuntimeError(REASON_MISSING_STORE)
 
-    access = str(body.get("access_token") or "")
-    if not access:
-        raise RuntimeError("missing_access_token")
-    expires_in = int(body.get("expires_in") or 3600)
-    with _access_lock:
-        _cached_access_token = access
-        _cached_access_expires_at = time.time() + max(60, expires_in)
-    clear_reconnect_reason()
-    return access
+        try:
+            from . import google_http
+        except ImportError:
+            import google_http  # type: ignore
+
+        try:
+            body = _token_post(
+                {
+                    "client_id": record.client_id,
+                    "client_secret": record.client_secret,
+                    "refresh_token": record.refresh,
+                    "grant_type": "refresh_token",
+                }
+            )
+        except google_http.GoogleHttpStatusError as exc:
+            # Try to detect invalid_grant from status body is unavailable; treat 400 as reconnect
+            if exc.status in (400, 401):
+                set_reconnect_reason(REASON_INVALID_GRANT)
+                raise RuntimeError(REASON_INVALID_GRANT) from exc
+            raise
+
+        if body.get("error") == "invalid_grant":
+            # P8-CONNECT: invalid_grant → needs_reconnect, no retry loop — P8-D03
+            set_reconnect_reason(REASON_INVALID_GRANT)
+            raise RuntimeError(REASON_INVALID_GRANT)
+
+        id_token = body.get("id_token")
+        if id_token:
+            try:
+                sub = validate_id_token(str(id_token), client_id=record.client_id)
+            except Exception as exc:
+                set_reconnect_reason(REASON_ID_TOKEN_INVALID)
+                raise RuntimeError(REASON_ID_TOKEN_INVALID) from exc
+            if sub != record.sub:
+                # P8-CONNECT: id_token sub mismatch → needs_reconnect — P8-D03
+                set_reconnect_reason(REASON_SUB_MISMATCH)
+                raise RuntimeError(REASON_SUB_MISMATCH)
+        # no id_token alone is not a failure
+        # A rotated refresh_token in the body is ignored. The access token is not written.
+
+        access = str(body.get("access_token") or "")
+        if not access:
+            raise RuntimeError("missing_access_token")
+        expires_in = int(body.get("expires_in") or 3600)
+        with _access_lock:
+            _cached_access_token = access
+            _cached_access_expires_at = time.time() + max(60, expires_in)
+        clear_reconnect_reason()
+        return access
+    finally:
+        _release_refresh_mutex(mutex)
 
 
 def authorization_header() -> Dict[str, str]:
