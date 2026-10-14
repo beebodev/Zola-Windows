@@ -431,6 +431,86 @@ internal sealed partial class CheckRunner
                 && line == "supervisor proc=serve event=tts_restore_mismatch restarts=0 generation=0";
         });
 
+        Supervision("watcher fourth exit in the window is terminal", () =>
+        {
+            var watcher = new WatcherSupervisor();
+            var generation = watcher.BeginSpawn();
+            var first = watcher.NoteExit(generation, T(0));
+            generation = watcher.BeginSpawn();
+            var second = watcher.NoteExit(generation, T(60));
+            generation = watcher.BeginSpawn();
+            var third = watcher.NoteExit(generation, T(120));
+            generation = watcher.BeginSpawn();
+            var fourth = watcher.NoteExit(generation, T(180));
+            return first == WatcherExitKind.Spawn
+                && second == WatcherExitKind.Spawn
+                && third == WatcherExitKind.Spawn
+                && fourth == WatcherExitKind.Terminal
+                && watcher.Policy.IsTerminal;
+        });
+
+        Supervision("a deliberate watcher stop does not count", () =>
+        {
+            var watcher = new WatcherSupervisor();
+            var generation = watcher.BeginSpawn();
+            watcher.NoteDeliberateStop();
+            var kind = watcher.NoteExit(generation, T(0));
+            return kind == WatcherExitKind.IgnoredDeliberate
+                && watcher.Policy.AttemptsInWindow(T(1)) == 0;
+        });
+
+        Supervision("a stale watcher generation is ignored", () =>
+        {
+            var watcher = new WatcherSupervisor();
+            var first = watcher.BeginSpawn();
+            var second = watcher.BeginSpawn();
+            var kind = watcher.NoteExit(first, T(0));
+            return first != second
+                && kind == WatcherExitKind.IgnoredStale
+                && watcher.Policy.AttemptsInWindow(T(0)) == 0;
+        });
+
+        Supervision("serve and watcher restart counters are independent", () =>
+        {
+            var serve = new RestartPolicy();
+            var watcher = new WatcherSupervisor();
+            var generation = watcher.BeginSpawn();
+            watcher.NoteExit(generation, T(0));
+            generation = watcher.BeginSpawn();
+            watcher.NoteExit(generation, T(10));
+            var serveChoice = serve.NoteRestartAttempt(T(10));
+            return watcher.Policy.AttemptsInWindow(T(10)) == 2
+                && serve.AttemptsInWindow(T(10)) == 1
+                && serveChoice == RestartChoice.BackoffThenSpawn;
+        });
+
+        Supervision("the watcher job limit is kill on close", () =>
+        {
+            using var job = WatcherJob.CreateKillOnClose();
+            return WatcherJob.KillOnJobClose == 0x2000 && !job.IsInvalid;
+        });
+
+        Supervision("watcher output uses the serve stderr cap", () =>
+        {
+            var now = T(0);
+            var fresh = now.AddDays(-13);
+            var expired = now.AddDays(-14);
+            return SupervisionConstants.WatcherOutputFileName == "zola_watcher.out.log"
+                && SupervisionConstants.StderrShouldRotate(SupervisionConstants.ServeStderrMaxBytes)
+                && !SupervisionConstants.StderrShouldRotate(SupervisionConstants.ServeStderrMaxBytes - 1)
+                && SupervisionConstants.ServeStderrMaxFiles == 3
+                && !SupervisionConstants.RetentionExpired(fresh, now, SupervisionConstants.ServeStderrRetentionDays)
+                && SupervisionConstants.RetentionExpired(expired, now, SupervisionConstants.ServeStderrRetentionDays);
+        });
+
+        Supervision("a watcher exit code 2 logs already_running", () =>
+            WatcherSupervisor.ClassifyExit(SupervisionConstants.WatcherAlreadyRunningExit)
+                == SupervisionConstants.EventAlreadyRunning
+            && WatcherSupervisor.ClassifyExit(0) == null
+            && SupervisionConstants.EventResolveFailed == "resolve_failed"
+            && SupervisionConstants.EventJobAssigned == "job_assigned"
+            && SupervisionConstants.EventJobAssignFailed == "job_assign_failed");
+
         Supervision("stderr rotates at the byte cap and retention uses the named day count", () =>
         {
             var now = T(0);

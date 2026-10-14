@@ -21,11 +21,18 @@ public static class SupervisionConstants
     public const string VoiceOfflineLabel = "Offline";
 
     public const string ProcServe = "serve";
+    public const string ProcWatcher = "watcher";
     public const string EventRestart = "restart";
     public const string EventStale = "stale";
     public const string EventKeepsFailing = "keeps_failing";
     public const string EventStderrAclFailed = "stderr_acl_failed";
     public const string EventTtsRestoreMismatch = "tts_restore_mismatch";
+    public const string EventAlreadyRunning = "already_running";
+    public const string EventResolveFailed = "resolve_failed";
+    public const string EventJobAssigned = "job_assigned";
+    public const string EventJobAssignFailed = "job_assign_failed";
+    public const string WatcherOutputFileName = "zola_watcher.out.log";
+    public const int WatcherAlreadyRunningExit = 2;
     public const string GapReason = "backend-unreachable";
 
     public static bool StderrShouldRotate(long length) => length >= ServeStderrMaxBytes;

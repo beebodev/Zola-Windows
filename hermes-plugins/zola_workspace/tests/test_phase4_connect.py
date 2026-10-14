@@ -35,6 +35,9 @@ if "hermes_plugins" not in sys.modules:
     sys.modules["hermes_plugins"] = hp
 
 import auth  # noqa: E402
+
+# P9-WATCH: refresh tests never take the live Local\ZolaOAuthRefresh mutex — P9-D03
+auth.set_refresh_mutex_name_for_tests("Local\\ZolaOAuthRefreshTest")
 import framing  # noqa: E402
 import gcal  # noqa: E402
 import google_http  # noqa: E402
@@ -2100,6 +2103,8 @@ class SourceScanTests(SocketGuardMixin, unittest.TestCase):
             "ROUTE_OAUTH_TOKEN",
             "ROUTE_GMAIL_LIST",
             "ROUTE_GMAIL_GET",
+            "ROUTE_GMAIL_PROFILE",
+            "ROUTE_GMAIL_HISTORY",
             "ROUTE_DRIVE_LIST",
             "ROUTE_DRIVE_GET",
             "ROUTE_DRIVE_EXPORT",
@@ -2117,7 +2122,7 @@ class SourceScanTests(SocketGuardMixin, unittest.TestCase):
             if not call_re.search(text):
                 continue
             # Each call must name one of the four route constants.
-            if path.name == "read_common.py":
+            if path.name in {"read_common.py", "background_read.py"}:
                 window_ok = "route=route" in text and "route=None" not in text
                 if not window_ok:
                     offenders.append(path.name)

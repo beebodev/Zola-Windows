@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence
 # P9-STORE: marker so zola_memory can find this module without a hard import cycle — P9-D06
 PROACTIVE_STORE_MARKER = "p9-store"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # P9-STORE: why a loop ended; NULL means the live row was already closed before this column — P9-D09
 CLOSED_INTENTS = frozenset(
     {"reply", "cancelled", "status_change", "confirm_close", "expired", "forgotten"}
@@ -38,6 +38,8 @@ DELIVERY_KEEP_DAYS = 30
 PURGE_INTERVAL_SECONDS = 3600
 LOOP_DEFAULT_EXPIRY_DAYS = 14
 LOOP_MAX_EXPIRY_DAYS = 90
+# P9-WATCH: a transient fetch becomes terminal after this many tries — P9-D04
+POISON_ATTEMPT_CAP = 5
 BUSY_TIMEOUT_MS = 5000
 
 MEMORY_DIRNAME = "zola_memory"
@@ -182,6 +184,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if current < 2:
             _migrate_v2(conn)
             current = 2
+        if current < 3:
+            _migrate_v3(conn)
+            current = 3
         conn.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -288,6 +293,51 @@ def _migrate_v1(conn: sqlite3.Connection) -> None:
         );
         """
     )
+
+
+def _migrate_v3(conn: sqlite3.Connection) -> None:
+    # P9-WATCH: known calendar state, poison records, and per-source health — P9-D04 / P9-D12
+    conn.executescript(
+        """
+        CREATE TABLE calendar_events (
+          calendar_id TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          event_updated TEXT NOT NULL,
+          calendar_status TEXT,
+          start_at TEXT,
+          end_at TEXT,
+          recurring_event_id TEXT,
+          original_start TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (calendar_id, event_id)
+        );
+
+        CREATE TABLE watcher_rejects (
+          source TEXT NOT NULL,
+          source_id_hash TEXT NOT NULL,
+          error_class TEXT NOT NULL,
+          disposition TEXT NOT NULL,
+          attempts INTEGER NOT NULL,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          PRIMARY KEY (source, source_id_hash)
+        );
+        """
+    )
+    for column, ddl in (
+        ("gmail_ok_at", "ALTER TABLE watcher_health ADD COLUMN gmail_ok_at TEXT"),
+        ("calendar_ok_at", "ALTER TABLE watcher_health ADD COLUMN calendar_ok_at TEXT"),
+        ("gmail_error", "ALTER TABLE watcher_health ADD COLUMN gmail_error TEXT"),
+        ("calendar_error", "ALTER TABLE watcher_health ADD COLUMN calendar_error TEXT"),
+        ("needs_reconnect", "ALTER TABLE watcher_health ADD COLUMN needs_reconnect INTEGER"),
+        (
+            "recovery_count",
+            "ALTER TABLE watcher_health ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0",
+        ),
+    ):
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(watcher_health)")}
+        if column not in existing:
+            conn.execute(ddl)
 
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
@@ -1260,21 +1310,28 @@ def _note_loop_match_on_loop(
 ) -> Dict[str, Any]:
     stamp = _iso(_now(now))
     conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        "SELECT status, matched_at FROM loops WHERE id = ?",
+        (loop_id,),
+    ).fetchone()
+    if row is None or row["status"] != "open":
+        _rollback(conn)
+        return _no("illegal_transition")
+    if row["matched_at"]:
+        conn.execute("COMMIT")
+        return _ok(already=True)
     cur = conn.execute(
         """
         UPDATE loops
            SET matched_at = ?
-         WHERE id = ? AND status = 'open'
+         WHERE id = ? AND status = 'open' AND matched_at IS NULL
         """,
         (stamp, loop_id),
     )
     if cur.rowcount != 1:
         _rollback(conn)
         return _no("illegal_transition")
-    row = conn.execute("SELECT status FROM loops WHERE id = ?", (loop_id,)).fetchone()
     conn.execute("COMMIT")
-    if row is None or row["status"] != "open":
-        return _no("illegal_transition")
     return _ok()
 
 
@@ -1691,6 +1748,512 @@ def forget_subject_from_profile(payload: Dict[str, Any], names: Optional[Sequenc
         )
     finally:
         conn.close()
+
+
+def read_cursor(
+    conn: sqlite3.Connection,
+    source: str,
+    scope_key: str,
+) -> Dict[str, Any]:
+    # P9-WATCH: one cursor per mailbox and per calendar id — P9-D04
+    try:
+        row = conn.execute(
+            """
+            SELECT cursor_value, updated_at FROM cursors
+             WHERE source = ? AND scope_key = ?
+            """,
+            (source, scope_key),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    if row is None:
+        return _ok(cursor_value=None, updated_at=None)
+    return _ok(cursor_value=row["cursor_value"], updated_at=row["updated_at"])
+
+
+def write_cursor(
+    conn: sqlite3.Connection,
+    source: str,
+    scope_key: str,
+    cursor_value: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-WATCH: the cursor moves only after the caller finished the page — P9-D04
+    return _call(
+        _write_cursor,
+        conn,
+        source,
+        scope_key,
+        cursor_value,
+        now=now,
+    )
+
+
+def _write_cursor(
+    conn: sqlite3.Connection,
+    source: str,
+    scope_key: str,
+    cursor_value: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        """
+        INSERT INTO cursors (source, scope_key, cursor_value, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(source, scope_key) DO UPDATE SET
+          cursor_value = excluded.cursor_value,
+          updated_at = excluded.updated_at
+        """,
+        (source, scope_key, cursor_value, stamp),
+    )
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def clear_cursor(conn: sqlite3.Connection, source: str, scope_key: str) -> Dict[str, Any]:
+    return _call(_clear_cursor, conn, source, scope_key)
+
+
+def _clear_cursor(conn: sqlite3.Connection, source: str, scope_key: str) -> Dict[str, Any]:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "DELETE FROM cursors WHERE source = ? AND scope_key = ?",
+        (source, scope_key),
+    )
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def get_calendar_event(
+    conn: sqlite3.Connection,
+    calendar_id: str,
+    event_id: str,
+) -> Dict[str, Any]:
+    # P9-WATCH: known state is ids, status, and times — P9-D04
+    try:
+        row = conn.execute(
+            """
+            SELECT event_updated, calendar_status, start_at, end_at
+              FROM calendar_events
+             WHERE calendar_id = ? AND event_id = ?
+            """,
+            (calendar_id, event_id),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    if row is None:
+        return _ok(known=False)
+    return _ok(
+        known=True,
+        event_updated=row["event_updated"],
+        calendar_status=row["calendar_status"] or "",
+        start_at=row["start_at"] or "",
+        end_at=row["end_at"] or "",
+    )
+
+
+def save_calendar_event(
+    conn: sqlite3.Connection,
+    *,
+    calendar_id: str,
+    event_id: str,
+    event_updated: str,
+    calendar_status: str = "",
+    start_at: str = "",
+    end_at: str = "",
+    recurring_event_id: str = "",
+    original_start: str = "",
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-WATCH: one row per event id; a later update replaces it — P9-D04
+    return _call(
+        _save_calendar_event,
+        conn,
+        calendar_id=calendar_id,
+        event_id=event_id,
+        event_updated=event_updated,
+        calendar_status=calendar_status,
+        start_at=start_at,
+        end_at=end_at,
+        recurring_event_id=recurring_event_id,
+        original_start=original_start,
+        now=now,
+    )
+
+
+def _save_calendar_event(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
+    stamp = _iso(_now(kwargs.get("now")))
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        """
+        INSERT INTO calendar_events (
+          calendar_id, event_id, event_updated, calendar_status, start_at, end_at,
+          recurring_event_id, original_start, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(calendar_id, event_id) DO UPDATE SET
+          event_updated = excluded.event_updated,
+          calendar_status = excluded.calendar_status,
+          start_at = excluded.start_at,
+          end_at = excluded.end_at,
+          recurring_event_id = excluded.recurring_event_id,
+          original_start = excluded.original_start,
+          updated_at = excluded.updated_at
+        """,
+        (
+            kwargs["calendar_id"],
+            kwargs["event_id"],
+            kwargs["event_updated"],
+            kwargs.get("calendar_status") or "",
+            kwargs.get("start_at") or "",
+            kwargs.get("end_at") or "",
+            kwargs.get("recurring_event_id") or "",
+            kwargs.get("original_start") or "",
+            stamp,
+        ),
+    )
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def find_item_id(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    message_id: str = "",
+    event_id: str = "",
+    event_updated: str = "",
+) -> Dict[str, Any]:
+    # P9-WATCH: replay finds the row the idempotency key already stored — P9-D06
+    try:
+        key = _idempotency_key(
+            source=source,
+            message_id=message_id,
+            event_id=event_id,
+            event_updated=event_updated,
+        )
+        row = conn.execute(
+            "SELECT id FROM items WHERE idempotency_key = ?",
+            (key,),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("bad_args")
+    if row is None:
+        return _ok(id=None)
+    return _ok(id=row["id"])
+
+
+def gmail_message_known(conn: sqlite3.Connection, message_id: str) -> Dict[str, Any]:
+    try:
+        row = conn.execute(
+            "SELECT id FROM items WHERE source = 'gmail' AND message_id = ?",
+            (message_id,),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    return _ok(known=row is not None)
+
+
+def list_open_loop_predicates(conn: sqlite3.Connection) -> Dict[str, Any]:
+    # P9-WATCH: the watcher evaluates predicates; names stay off this read — P9-D09
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, intent, predicate_json
+              FROM loops
+             WHERE status = 'open'
+             ORDER BY created_at
+            """
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    found = []
+    for row in rows:
+        try:
+            predicate = json.loads(row["predicate_json"] or "{}")
+        except json.JSONDecodeError:
+            predicate = {}
+        found.append({"id": row["id"], "intent": row["intent"], "predicate": predicate})
+    return _ok(loops=found)
+
+
+def item_loop_state(conn: sqlite3.Connection, item_id: str) -> Dict[str, Any]:
+    try:
+        row = conn.execute(
+            """
+            SELECT eligibility, loop_matched, closed_at
+              FROM items WHERE id = ?
+            """,
+            (item_id,),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    if row is None:
+        return _no("missing")
+    return _ok(
+        eligibility=row["eligibility"],
+        loop_matched=int(row["loop_matched"]),
+        closed=row["closed_at"] is not None,
+    )
+
+
+def set_loop_matched(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-WATCH: backstop when the row is already eligible — P9-D09
+    return _call(_set_loop_matched, conn, item_id, now=now)
+
+
+def _set_loop_matched(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        "SELECT eligibility, loop_matched, closed_at FROM items WHERE id = ?",
+        (item_id,),
+    ).fetchone()
+    if row is None or row["closed_at"] is not None:
+        _rollback(conn)
+        return _no("illegal_transition")
+    if int(row["loop_matched"]) == 1:
+        conn.execute("COMMIT")
+        return _ok(already=True)
+    cur = conn.execute(
+        """
+        UPDATE items
+           SET loop_matched = 1, updated_at = ?
+         WHERE id = ? AND closed_at IS NULL AND loop_matched = 0
+        """,
+        (stamp, item_id),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def close_loop_from_match(
+    conn: sqlite3.Connection,
+    loop_id: str,
+    closed_intent: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-WATCH: a terminal calendar predicate closes without a ticket — P9-D09
+    return _call(_close_loop_from_match, conn, loop_id, closed_intent, now=now)
+
+
+def _close_loop_from_match(
+    conn: sqlite3.Connection,
+    loop_id: str,
+    closed_intent: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    if closed_intent not in ("cancelled", "status_change"):
+        return _no("bad_args")
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        "SELECT status, closed_intent FROM loops WHERE id = ?",
+        (loop_id,),
+    ).fetchone()
+    if row is None:
+        _rollback(conn)
+        return _no("missing")
+    if row["status"] != "open":
+        _rollback(conn)
+        if row["closed_intent"] == closed_intent:
+            return _ok(already=True)
+        return _no("illegal_transition")
+    cur = conn.execute(
+        """
+        UPDATE loops
+           SET status = 'closed', closed_intent = ?
+         WHERE id = ? AND status = 'open'
+        """,
+        (closed_intent, loop_id),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def note_watcher_reject(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    source_id_hash: str,
+    error_class: str,
+    terminal: bool,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-WATCH: the record stores a class and a hash, never the message — P9-D04
+    return _call(
+        _note_watcher_reject,
+        conn,
+        source=source,
+        source_id_hash=source_id_hash,
+        error_class=error_class,
+        terminal=terminal,
+        now=now,
+    )
+
+
+def _note_watcher_reject(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
+    stamp = _iso(_now(kwargs.get("now")))
+    source = str(kwargs["source"])
+    source_hash = str(kwargs["source_id_hash"])
+    error_class = str(kwargs["error_class"])
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        """
+        SELECT attempts FROM watcher_rejects
+         WHERE source = ? AND source_id_hash = ?
+        """,
+        (source, source_hash),
+    ).fetchone()
+    attempts = int(row["attempts"]) + 1 if row else 1
+    disposition = "terminal" if kwargs["terminal"] or attempts >= POISON_ATTEMPT_CAP else "transient"
+    if row is None:
+        conn.execute(
+            """
+            INSERT INTO watcher_rejects (
+              source, source_id_hash, error_class, disposition, attempts, first_seen, last_seen
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (source, source_hash, error_class, disposition, attempts, stamp, stamp),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE watcher_rejects
+               SET error_class = ?, disposition = ?, attempts = ?, last_seen = ?
+             WHERE source = ? AND source_id_hash = ?
+            """,
+            (error_class, disposition, attempts, stamp, source, source_hash),
+        )
+    conn.execute("COMMIT")
+    return _ok(attempts=attempts, disposition=disposition)
+
+
+def write_watcher_health(
+    conn: sqlite3.Connection,
+    *,
+    gmail_ok: bool = False,
+    calendar_ok: bool = False,
+    gmail_error: Optional[str] = None,
+    calendar_error: Optional[str] = None,
+    needs_reconnect: Optional[bool] = None,
+    recovery: bool = False,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-WATCH: one row, each source keeps its own time — P9-D12
+    return _call(
+        _write_watcher_health,
+        conn,
+        gmail_ok=gmail_ok,
+        calendar_ok=calendar_ok,
+        gmail_error=gmail_error,
+        calendar_error=calendar_error,
+        needs_reconnect=needs_reconnect,
+        recovery=recovery,
+        now=now,
+    )
+
+
+def _write_watcher_health(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
+    stamp = _iso(_now(kwargs.get("now")))
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute("SELECT * FROM watcher_health WHERE id = 1").fetchone()
+    gmail_ok_at = row["gmail_ok_at"] if row else None
+    calendar_ok_at = row["calendar_ok_at"] if row else None
+    gmail_error = row["gmail_error"] if row else None
+    calendar_error = row["calendar_error"] if row else None
+    reconnect = row["needs_reconnect"] if row else None
+    recovery_count = int(row["recovery_count"] or 0) if row else 0
+    last_ok = row["last_ok_at"] if row else None
+    if kwargs.get("gmail_ok"):
+        gmail_ok_at = stamp
+        gmail_error = None
+        last_ok = stamp
+    if kwargs.get("calendar_ok"):
+        calendar_ok_at = stamp
+        calendar_error = None
+        last_ok = stamp
+    if kwargs.get("gmail_error") is not None:
+        gmail_error = kwargs["gmail_error"]
+    if kwargs.get("calendar_error") is not None:
+        calendar_error = kwargs["calendar_error"]
+    if kwargs.get("needs_reconnect") is not None:
+        reconnect = 1 if kwargs["needs_reconnect"] else 0
+    if kwargs.get("recovery"):
+        recovery_count += 1
+    error_class = gmail_error or calendar_error
+    if row is None:
+        conn.execute(
+            """
+            INSERT INTO watcher_health (
+              id, last_ok_at, error_class, updated_at,
+              gmail_ok_at, calendar_ok_at, gmail_error, calendar_error,
+              needs_reconnect, recovery_count
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                last_ok,
+                error_class,
+                stamp,
+                gmail_ok_at,
+                calendar_ok_at,
+                gmail_error,
+                calendar_error,
+                reconnect,
+                recovery_count,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE watcher_health
+               SET last_ok_at = ?, error_class = ?, updated_at = ?,
+                   gmail_ok_at = ?, calendar_ok_at = ?, gmail_error = ?,
+                   calendar_error = ?, needs_reconnect = ?, recovery_count = ?
+             WHERE id = 1
+            """,
+            (
+                last_ok,
+                error_class,
+                stamp,
+                gmail_ok_at,
+                calendar_ok_at,
+                gmail_error,
+                calendar_error,
+                reconnect,
+                recovery_count,
+            ),
+        )
+    conn.execute("COMMIT")
+    return _ok(recovery_count=recovery_count)
 
 
 def start_purge_thread() -> None:

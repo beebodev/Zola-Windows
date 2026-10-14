@@ -10,12 +10,24 @@ public sealed class ServeStderrLog
 {
     private readonly object _gate = new();
     private readonly string _directory;
+    private readonly string _fileName;
     private bool _aclApplied;
     private bool _aclFailureLogged;
 
     public ServeStderrLog()
+        : this(DefaultDirectory(), "serve-stderr.log")
     {
-        _directory = Path.Combine(
+    }
+
+    public ServeStderrLog(string directory, string fileName)
+    {
+        _directory = directory;
+        _fileName = fileName;
+    }
+
+    private static string DefaultDirectory()
+    {
+        return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ZolaClient",
             "logs",
@@ -41,7 +53,7 @@ public sealed class ServeStderrLog
                 }
 
                 PruneExpired();
-                var path = Path.Combine(_directory, "serve-stderr.log");
+                var path = Path.Combine(_directory, _fileName);
                 var existing = File.Exists(path) ? new FileInfo(path).Length : 0;
                 if (Supervision.SupervisionConstants.StderrShouldRotate(existing))
                 {
@@ -98,7 +110,7 @@ public sealed class ServeStderrLog
 
     private void Rotate(string path)
     {
-        var oldest = Path.Combine(_directory, "serve-stderr.log." + Supervision.SupervisionConstants.ServeStderrMaxFiles);
+        var oldest = Path.Combine(_directory, _fileName + "." + Supervision.SupervisionConstants.ServeStderrMaxFiles);
         if (File.Exists(oldest))
         {
             File.Delete(oldest);
@@ -106,8 +118,8 @@ public sealed class ServeStderrLog
 
         for (var index = Supervision.SupervisionConstants.ServeStderrMaxFiles - 1; index >= 1; index--)
         {
-            var from = Path.Combine(_directory, "serve-stderr.log." + index);
-            var to = Path.Combine(_directory, "serve-stderr.log." + (index + 1));
+            var from = Path.Combine(_directory, _fileName + "." + index);
+            var to = Path.Combine(_directory, _fileName + "." + (index + 1));
             if (File.Exists(from))
             {
                 File.Move(from, to, overwrite: true);
@@ -116,7 +128,7 @@ public sealed class ServeStderrLog
 
         if (File.Exists(path))
         {
-            File.Move(path, Path.Combine(_directory, "serve-stderr.log.1"), overwrite: true);
+            File.Move(path, Path.Combine(_directory, _fileName + ".1"), overwrite: true);
         }
     }
 
