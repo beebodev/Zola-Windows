@@ -2,9 +2,9 @@
 
 ## Branch
 
-- Work branch: `p9-watch` (created from `main`; not pushed)
-- Base `main` = `origin/main`: `0bec3b7b8fa1d163e5ed947ef3589058d9aef178` (fetched; porcelain empty)
-- `p9-watch` HEAD: `0bec3b7b8fa1d163e5ed947ef3589058d9aef178`
+- Work branch: `p9-watch` (created from `main`)
+- Base `main`: `0bec3b7b8fa1d163e5ed947ef3589058d9aef178`
+- Implementation commit: `27b56b59d8be5295501177914b22330bc0189aec`
 - Hermes (read-only): clean at `345cd2b057a452236de401d3534b8502a7465e8d`
 - Prompt file: `C:\Users\test\Dev\zola-spikes\prompts\P9-WATCH_Prompt_v1.1.md`
   SHA-256 `D5D31C0D26E9B43009D9D917655C7013362366C130F26C96A75F3800F1376B8C` (55,422 bytes)
@@ -913,4 +913,4 @@ Modified: `hermes-plugins/zola_workspace/auth.py`, `hermes-plugins/zola_workspac
 - Brian's own sent mail is not watched (skipped as not INBOX). A "Brian replied" signal is a possible later feature.
 - Calendar ids are now encoded (`#` in holiday and birthday ids), found in smoke.
 
-Implementation commit SHA: recorded in the following commit.
+Implementation commit: `27b56b59d8be5295501177914b22330bc0189aec`.
