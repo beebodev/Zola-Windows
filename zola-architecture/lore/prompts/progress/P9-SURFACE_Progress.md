@@ -1264,5 +1264,5 @@ Modified: `hermes-plugins/zola_workspace/__init__.py`, `hermes-plugins/zola_work
 | No Hermes edit, no install, no lore change, no client change | MET. `hermes-agent` is unchanged. This progress doc is the only lore file this phase writes. No client file is in the diff. |
 | P10 processes untouched | MET. Process checks matched the client, the dedicated serve, and the watcher only. |
 
-Implementation commit: pending the 7d commit.
+Implementation commit: `bae7ac4874efff807204b977bb6dc0491d27b504`.
 Merge commit on `main`: pending the 7g merge.
