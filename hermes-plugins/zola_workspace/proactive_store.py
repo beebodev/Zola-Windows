@@ -585,9 +585,17 @@ def _claim_rank(
     lease = _iso(clock + timedelta(seconds=RANK_LEASE_SECONDS))
     conn.execute("BEGIN IMMEDIATE")
     row = _item(conn, item_id)
-    if row is None or row["processing"] != "unranked" or row["closed_at"]:
+    # P9-RANK: Gmail only, and body IS NOT NULL (an empty string may be claimed) — P9-D08
+    if (
+        row is None
+        or row["source"] != "gmail"
+        or row["processing"] != "unranked"
+        or row["closed_at"]
+        or row["content_state"] != "available"
+        or row["body"] is None
+    ):
         _rollback(conn)
-        return _no("illegal_transition")
+        return _no("not_rankable")
     if _open_attempt(conn, item_id, "rank", stamp) is not None:
         _rollback(conn)
         return _no("illegal_transition")
@@ -613,7 +621,7 @@ def complete_rank(
     gist: str = "",
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    # P9-STORE: ranking nulls the body and does not touch eligibility or delivery — P9-D07
+    # P9-RANK: the body is deleted and eligibility is written in this same transaction — P9-D08
     return _call(
         _complete_rank,
         conn,
@@ -638,6 +646,35 @@ def _complete_rank(
         return _no("bad_args")
     stamp = _iso(_now(now))
     conn.execute("BEGIN IMMEDIATE")
+    row = _item(conn, item_id)
+    if row is None:
+        _rollback(conn)
+        return _no("gone")
+    if row["closed_at"] or row["content_state"] != "available" or row["processing"] != "unranked":
+        _rollback(conn)
+        return _no("not_rankable")
+    attempt = conn.execute(
+        """
+        SELECT status, lease_expires_at FROM item_attempts
+         WHERE attempt_id = ? AND item_id = ? AND purpose = 'rank'
+        """,
+        (attempt_id, item_id),
+    ).fetchone()
+    if attempt is None:
+        _rollback(conn)
+        return _no("attempt_mismatch")
+    if attempt["status"] != "open" or attempt["lease_expires_at"] <= stamp:
+        _rollback(conn)
+        return _no("lease_expired")
+    if int(row["loop_matched"]):
+        eligibility = "eligible"
+        eligible_at = row["eligible_at"] or stamp
+    elif label == "ignore":
+        eligibility = "suppressed"
+        eligible_at = row["eligible_at"]
+    else:
+        eligibility = "eligible"
+        eligible_at = stamp
     cur = conn.execute(
         """
         UPDATE items
@@ -646,28 +683,33 @@ def _complete_rank(
                gist = ?,
                body = NULL,
                ranked_at = ?,
+               eligibility = ?,
+               eligible_at = ?,
                updated_at = ?
          WHERE id = ?
            AND processing = 'unranked'
+           AND closed_at IS NULL
+           AND content_state = 'available'
         """,
-        (label, gist, stamp, stamp, item_id),
+        (label, gist, stamp, eligibility, eligible_at, stamp, item_id),
     )
     if cur.rowcount != 1:
         _rollback(conn)
-        return _no("illegal_transition")
+        return _no("not_rankable")
     done = conn.execute(
         """
         UPDATE item_attempts
            SET status = 'completed'
          WHERE attempt_id = ? AND item_id = ? AND purpose = 'rank' AND status = 'open'
+           AND lease_expires_at > ?
         """,
-        (attempt_id, item_id),
+        (attempt_id, item_id, stamp),
     )
     if done.rowcount != 1:
         _rollback(conn)
-        return _no("attempt_mismatch")
+        return _no("lease_expired")
     conn.execute("COMMIT")
-    return _ok()
+    return _ok(eligibility=eligibility)
 
 
 def fail_rank(
@@ -693,33 +735,53 @@ def _fail_rank(
     row = _item(conn, item_id)
     if row is None:
         _rollback(conn)
-        return _no("illegal_transition")
+        return _no("gone")
+    if row["closed_at"] or row["content_state"] != "available" or row["processing"] != "unranked":
+        _rollback(conn)
+        return _no("not_rankable")
+    attempt = conn.execute(
+        """
+        SELECT status, lease_expires_at FROM item_attempts
+         WHERE attempt_id = ? AND item_id = ? AND purpose = 'rank'
+        """,
+        (attempt_id, item_id),
+    ).fetchone()
+    if attempt is None:
+        _rollback(conn)
+        return _no("attempt_mismatch")
+    if attempt["status"] != "open" or attempt["lease_expires_at"] <= stamp:
+        _rollback(conn)
+        return _no("lease_expired")
     attempts = int(row["rank_attempts"]) + 1
     processing = "rank_failed" if attempts >= RANK_ATTEMPT_CAP else "unranked"
+    # P9-RANK: the capped failure deletes the body in this same write — P9-D07
     cur = conn.execute(
         """
         UPDATE items
            SET processing = ?,
                rank_attempts = ?,
+               body = CASE WHEN ? = 'rank_failed' THEN NULL ELSE body END,
                updated_at = ?
          WHERE id = ? AND processing = 'unranked'
+           AND closed_at IS NULL AND content_state = 'available'
         """,
-        (processing, attempts, stamp, item_id),
+        (processing, attempts, processing, stamp, item_id),
     )
     if cur.rowcount != 1:
         _rollback(conn)
-        return _no("illegal_transition")
+        return _no("not_rankable")
     done = conn.execute(
         """
         UPDATE item_attempts
            SET status = 'released'
          WHERE attempt_id = ? AND item_id = ? AND purpose = 'rank' AND status = 'open'
+           AND lease_expires_at > ?
         """,
-        (attempt_id, item_id),
+        (attempt_id, item_id, stamp),
     )
     if done.rowcount != 1:
         _rollback(conn)
-        return _no("attempt_mismatch")
+        return _no("lease_expired")
     conn.execute("COMMIT")
     return _ok(processing=processing, rank_attempts=attempts)
 
@@ -749,6 +811,257 @@ def _release_rank_lease(
     )
     conn.execute("COMMIT")
     return _ok(released=cur.rowcount)
+
+
+def release_rank_transient(
+    conn: sqlite3.Connection,
+    item_id: str,
+    attempt_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-RANK: a provider or store failure releases the lease and does not count — P9-D08
+    return _call(_release_rank_transient, conn, item_id, attempt_id, now=now)
+
+
+def _release_rank_transient(
+    conn: sqlite3.Connection,
+    item_id: str,
+    attempt_id: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    del now
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute(
+        """
+        UPDATE item_attempts
+           SET status = 'released'
+         WHERE attempt_id = ? AND item_id = ? AND purpose = 'rank' AND status = 'open'
+        """,
+        (attempt_id, item_id),
+    )
+    conn.execute("COMMIT")
+    return _ok(released=cur.rowcount)
+
+
+RANKER_STATES = frozenset(
+    {
+        "idle",
+        "processing",
+        "backing_off",
+        "provider_unavailable",
+        "auth_unavailable",
+        "worker_failed",
+    }
+)
+
+
+def write_ranker_status(
+    conn: sqlite3.Connection,
+    state: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    return _call(_write_ranker_status, conn, state, now=now)
+
+
+def _write_ranker_status(
+    conn: sqlite3.Connection,
+    state: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    if state not in RANKER_STATES:
+        return _no("bad_args")
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    for key, value in (("ranker_state", state), ("ranker_progress_at", stamp)):
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+    conn.execute("COMMIT")
+    return _ok(state=state)
+
+
+def claim_next_rank(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    return _call(_claim_next_rank, conn, now=now)
+
+
+def _claim_next_rank(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    row = conn.execute(
+        """
+        SELECT id FROM items
+         WHERE source = 'gmail'
+           AND processing = 'unranked'
+           AND closed_at IS NULL
+           AND content_state = 'available'
+           AND body IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM item_attempts
+              WHERE item_id = items.id AND purpose = 'rank' AND status = 'open'
+                AND lease_expires_at > ?
+           )
+         ORDER BY detected_at
+         LIMIT 1
+        """,
+        (stamp,),
+    ).fetchone()
+    if row is None:
+        return _ok(claimed=False)
+    claimed = _claim_rank(conn, row["id"], now=now)
+    if not claimed.get("ok"):
+        return claimed
+    return _ok(claimed=True, id=row["id"], attempt_id=claimed["attempt_id"])
+
+
+def rank_calendar(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-RANK: calendar is code only. The label stays NULL — P9-D08
+    return _call(_rank_calendar, conn, item_id, now=now)
+
+
+def _rank_calendar(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    row = _item(conn, item_id)
+    if row is None:
+        _rollback(conn)
+        return _no("gone")
+    if (
+        row["source"] != "calendar"
+        or row["processing"] != "unranked"
+        or row["closed_at"]
+        or row["content_state"] != "available"
+    ):
+        _rollback(conn)
+        return _no("not_rankable")
+    eligible_at = row["eligible_at"] or stamp
+    cur = conn.execute(
+        """
+        UPDATE items
+           SET processing = 'ranked',
+               label = NULL,
+               gist = NULL,
+               ranked_at = ?,
+               eligibility = 'eligible',
+               eligible_at = ?,
+               updated_at = ?
+         WHERE id = ?
+           AND source = 'calendar'
+           AND processing = 'unranked'
+           AND closed_at IS NULL
+           AND content_state = 'available'
+        """,
+        (stamp, eligible_at, stamp, item_id),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("not_rankable")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def rank_next_calendar(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    return _call(_rank_next_calendar, conn, now=now)
+
+
+def _rank_next_calendar(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    row = conn.execute(
+        """
+        SELECT id FROM items
+         WHERE source = 'calendar'
+           AND processing = 'unranked'
+           AND closed_at IS NULL
+           AND content_state = 'available'
+         ORDER BY detected_at
+         LIMIT 1
+        """
+    ).fetchone()
+    if row is None:
+        return _ok(ranked=False)
+    done = _rank_calendar(conn, row["id"], now=now)
+    if not done.get("ok"):
+        return done
+    return _ok(ranked=True, id=row["id"])
+
+
+def sweep_rank_eligibility(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-RANK: finishes a ranked row whose eligibility write did not land — P9-D08
+    return _call(_sweep_rank_eligibility, conn, now=now)
+
+
+def _sweep_rank_eligibility(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    eligible = conn.execute(
+        """
+        UPDATE items
+           SET eligibility = 'eligible',
+               eligible_at = COALESCE(eligible_at, ?),
+               updated_at = ?
+         WHERE processing = 'ranked'
+           AND eligibility = 'pending'
+           AND closed_at IS NULL
+           AND (
+             label IN ('urgent', 'important', 'normal')
+             OR source = 'calendar'
+             OR loop_matched = 1
+           )
+        """,
+        (stamp, stamp),
+    )
+    suppressed = conn.execute(
+        """
+        UPDATE items
+           SET eligibility = 'suppressed',
+               updated_at = ?
+         WHERE processing = 'ranked'
+           AND eligibility = 'pending'
+           AND closed_at IS NULL
+           AND label = 'ignore'
+           AND loop_matched = 0
+        """,
+        (stamp,),
+    )
+    conn.execute("COMMIT")
+    return _ok(eligible=eligible.rowcount, suppressed=suppressed.rowcount)
 
 
 def mark_loop_eligible(
@@ -1603,10 +1916,26 @@ def _purge_retention(
         """
         UPDATE items
            SET body = NULL,
-               content_state = 'content_expired'
+               content_state = 'content_expired',
+               eligibility = CASE WHEN loop_matched = 1 THEN 'eligible' ELSE 'expired' END,
+               eligible_at = CASE
+                 WHEN loop_matched = 1 THEN COALESCE(eligible_at, ?)
+                 ELSE eligible_at
+               END
          WHERE processing = 'unranked'
            AND detected_at <= ?
            AND content_state = 'available'
+           AND body IS NOT NULL
+        """,
+        (stamp, body_cutoff),
+    )
+    # P9-RANK: no body survives 7 days, including rank_failed — P9-D07
+    other_bodies = conn.execute(
+        """
+        UPDATE items
+           SET body = NULL
+         WHERE processing != 'unranked'
+           AND detected_at <= ?
            AND body IS NOT NULL
         """,
         (body_cutoff,),
@@ -1665,7 +1994,7 @@ def _purge_retention(
     )
     conn.execute("COMMIT")
     return _ok(
-        bodies=bodies.rowcount,
+        bodies=bodies.rowcount + other_bodies.rowcount,
         texts=texts.rowcount,
         content_expired=expired.rowcount,
         deliveries_deleted=old_deliveries.rowcount,

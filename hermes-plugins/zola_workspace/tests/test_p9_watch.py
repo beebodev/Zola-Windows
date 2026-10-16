@@ -207,13 +207,19 @@ class WatchTests(unittest.TestCase):
             self.assertNotIn(token, text)
 
     def _deliver(self, item_id: str) -> None:
-        claimed = proactive_store.claim_rank(self.conn, item_id, now=T0)
-        self.assertTrue(claimed["ok"], claimed)
-        done = proactive_store.complete_rank(
-            self.conn, item_id, claimed["attempt_id"], label="normal", gist="g", now=T0
-        )
-        self.assertTrue(done["ok"], done)
-        self.assertTrue(proactive_store.mark_eligible(self.conn, item_id, now=T0)["ok"])
+        row = proactive_store._item(self.conn, item_id)
+        if row["source"] == "calendar":
+            done = proactive_store.rank_calendar(self.conn, item_id, now=T0)
+            self.assertTrue(done["ok"], done)
+        else:
+            claimed = proactive_store.claim_rank(self.conn, item_id, now=T0)
+            self.assertTrue(claimed["ok"], claimed)
+            done = proactive_store.complete_rank(
+                self.conn, item_id, claimed["attempt_id"], label="normal", gist="g", now=T0
+            )
+            self.assertTrue(done["ok"], done)
+        if proactive_store._item(self.conn, item_id)["eligibility"] == "pending":
+            self.assertTrue(proactive_store.mark_eligible(self.conn, item_id, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, item_id, now=T0)
         self.assertTrue(speech["ok"], speech)
         self.assertTrue(

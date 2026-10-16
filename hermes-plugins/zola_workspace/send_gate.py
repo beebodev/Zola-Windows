@@ -771,6 +771,17 @@ def post_llm_call_hook(**kwargs: Any) -> None:
         pass
 
 
+def _ranker_turn_ended() -> None:
+    try:
+        try:
+            from . import ranker
+        except ImportError:
+            import ranker
+        ranker.note_turn_ended()
+    except Exception:
+        pass
+
+
 def on_session_end_hook(**kwargs: Any) -> None:
     """Leave the pending draft in place.
 
@@ -784,6 +795,8 @@ def on_session_end_hook(**kwargs: Any) -> None:
     # P8-SEND: per-turn on_session_end must not drop the reviewed draft — P8-D05
     # P9-FIX-ARM: this hook runs on the turn thread, including an interrupt — P8-D02
     _end_origin_turn(str(kwargs.get("turn_id") or ""))
+    # P9-RANK: Hermes calls this at the end of every normal turn — P9-D08
+    _ranker_turn_ended()
 
 
 def agent_loop_stopped_hook(**kwargs: Any) -> None:
@@ -797,6 +810,8 @@ def agent_loop_stopped_hook(**kwargs: Any) -> None:
     # P8-SEND: interrupt still drops the draft; turn end does not — P8-D05
     # P9-FIX-ARM: clears this thread only; the turn thread is cleared in on_session_end — P8-D02
     _end_origin_turn(str(kwargs.get("turn_id") or ""))
+    # P9-RANK: an interrupt is also the end of the live turn — P9-D08
+    _ranker_turn_ended()
     session_id = str(kwargs.get("session_key") or kwargs.get("session_id") or "")
     try:
         clear_session(session_id)
