@@ -1265,4 +1265,4 @@ Modified: `hermes-plugins/zola_workspace/__init__.py`, `hermes-plugins/zola_work
 | P10 processes untouched | MET. Process checks matched the client, the dedicated serve, and the watcher only. |
 
 Implementation commit: `bae7ac4874efff807204b977bb6dc0491d27b504`.
-Merge commit on `main`: pending the 7g merge.
+Merge commit on `main`: `0f880ad00e4c1574d133f3c9e1f9ed08563072cd`.
