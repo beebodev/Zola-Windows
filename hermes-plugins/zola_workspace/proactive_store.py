@@ -13,12 +13,12 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 # P9-STORE: marker so zola_memory can find this module without a hard import cycle — P9-D06
 PROACTIVE_STORE_MARKER = "p9-store"
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # P9-STORE: why a loop ended; NULL means the live row was already closed before this column — P9-D09
 CLOSED_INTENTS = frozenset(
     {"reply", "cancelled", "status_change", "confirm_close", "expired", "forgotten"}
@@ -38,6 +38,11 @@ DELIVERY_KEEP_DAYS = 30
 PURGE_INTERVAL_SECONDS = 3600
 LOOP_DEFAULT_EXPIRY_DAYS = 14
 LOOP_MAX_EXPIRY_DAYS = 90
+# P9-SURFACE: pending counts stop at this window; purge closes the rest — P9-D10
+SURFACE_LIST_WINDOW_DAYS = 7
+META_SURFACE_MARKER = "surface_last_ticket_turn_at"
+META_SURFACE_ATTEMPT = "surface_last_attempt_id"
+META_SURFACE_CONFIRMED = "surface_last_confirmed"
 # P9-WATCH: a transient fetch becomes terminal after this many tries — P9-D04
 POISON_ATTEMPT_CAP = 5
 BUSY_TIMEOUT_MS = 5000
@@ -67,7 +72,7 @@ def address_hash(address: str) -> str:
     return hashlib.sha256(address.strip().casefold().encode("utf-8")).hexdigest()
 
 
-def _ticket_ok() -> bool:
+def _ticket_ok(turn_id: Optional[str] = None) -> bool:
     if _ticket_override is not None:
         return bool(_ticket_override)
     try:
@@ -75,6 +80,8 @@ def _ticket_ok() -> bool:
             from . import turn_context
         except ImportError:
             import turn_context
+        if turn_id:
+            return bool(turn_context.is_brian_turn(turn_id))
         return bool(turn_context.is_brian_turn())
     except Exception:
         return False
@@ -187,6 +194,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if current < 3:
             _migrate_v3(conn)
             current = 3
+        if current < 4:
+            _migrate_v4(conn)
+            current = 4
         conn.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -337,6 +347,35 @@ def _migrate_v3(conn: sqlite3.Connection) -> None:
     ):
         existing = {row[1] for row in conn.execute("PRAGMA table_info(watcher_health)")}
         if column not in existing:
+            conn.execute(ddl)
+
+
+def _migrate_v4(conn: sqlite3.Connection) -> None:
+    # P9-SURFACE: attempt bookkeeping and a purge-owned close reason — P9-D10
+    item_columns = (
+        ("selected_at", "ALTER TABLE items ADD COLUMN selected_at TEXT"),
+        ("inject_count", "ALTER TABLE items ADD COLUMN inject_count INTEGER NOT NULL DEFAULT 0"),
+        ("acknowledged_at", "ALTER TABLE items ADD COLUMN acknowledged_at TEXT"),
+        ("attempt_id", "ALTER TABLE items ADD COLUMN attempt_id TEXT"),
+        ("attempt_turn_id", "ALTER TABLE items ADD COLUMN attempt_turn_id TEXT"),
+        ("attempt_at", "ALTER TABLE items ADD COLUMN attempt_at TEXT"),
+        (
+            "closed_reason",
+            "ALTER TABLE items ADD COLUMN closed_reason TEXT "
+            "CHECK (closed_reason IS NULL OR closed_reason IN ('dismissed', 'aged_out'))",
+        ),
+    )
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    for name, ddl in item_columns:
+        if name not in existing:
+            conn.execute(ddl)
+    loop_columns = (
+        ("lapse_attempt_id", "ALTER TABLE loops ADD COLUMN lapse_attempt_id TEXT"),
+        ("lapse_attempt_turn_id", "ALTER TABLE loops ADD COLUMN lapse_attempt_turn_id TEXT"),
+    )
+    existing_loops = {row[1] for row in conn.execute("PRAGMA table_info(loops)")}
+    for name, ddl in loop_columns:
+        if name not in existing_loops:
             conn.execute(ddl)
 
 
@@ -1209,16 +1248,21 @@ def acknowledge(
     item_id: str,
     *,
     now: Optional[datetime] = None,
+    turn_id: Optional[str] = None,
+    include_unselected: bool = False,
 ) -> Dict[str, Any]:
     # P9-STORE: acknowledged only on a ticket turn — P9-D09
+    # P9-SURFACE: a listed item can be acknowledged before it was injected — P9-D10
+    sources = ("none", "selected", "possibly_surfaced") if include_unselected else ("selected", "possibly_surfaced")
     return _call(
         _set_conversation,
         conn,
         item_id,
         "acknowledged",
-        ("selected", "possibly_surfaced"),
+        sources,
         now=now,
         ticket=True,
+        turn_id=turn_id,
     )
 
 
@@ -1230,19 +1274,41 @@ def _set_conversation(
     *,
     now: Optional[datetime],
     ticket: bool,
+    turn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    if ticket and not _ticket_ok():
+    if ticket and not _ticket_ok(turn_id):
         return _no("origin")
     stamp = _iso(_now(now))
     marks = ",".join("?" for _ in sources)
+    extra = ""
+    ack_sql = ""
+    params: List[Any] = [dest, stamp]
+    if dest == "acknowledged":
+        # P9-SURFACE: a closed or suppressed row cannot be acknowledged — P9-D10
+        ack_sql = ", acknowledged_at = ?"
+        params.append(stamp)
+        extra = (
+            " AND closed_at IS NULL"
+            " AND eligibility NOT IN ('suppressed', 'expired')"
+            " AND content_state = 'available'"
+        )
+    elif dest == "selected":
+        # P9-SURFACE: selection requires an open eligible row — P9-D10
+        extra = (
+            " AND eligibility = 'eligible'"
+            " AND closed_at IS NULL"
+            " AND content_state = 'available'"
+            " AND processing = 'ranked'"
+        )
+    params.extend((item_id, *sources))
     conn.execute("BEGIN IMMEDIATE")
     cur = conn.execute(
         f"""
         UPDATE items
-           SET conversation = ?, updated_at = ?
-         WHERE id = ? AND conversation IN ({marks})
+           SET conversation = ?, updated_at = ?{ack_sql}
+         WHERE id = ? AND conversation IN ({marks}){extra}
         """,
-        (dest, stamp, item_id, *sources),
+        tuple(params),
     )
     if cur.rowcount != 1:
         _rollback(conn)
@@ -1956,11 +2022,13 @@ def _purge_retention(
         """,
         (text_cutoff,),
     )
+    # P9-SURFACE: calendar rows have no mail text; expiring them hides the change — P9-D10
     expired = conn.execute(
         """
         UPDATE items
            SET content_state = 'content_expired'
          WHERE content_state = 'available'
+           AND source != 'calendar'
            AND body IS NULL
            AND subject IS NULL
            AND snippet IS NULL
@@ -1992,6 +2060,7 @@ def _purge_retention(
            AND (sender_display_name IS NOT NULL OR subject IS NOT NULL)
         """
     )
+    aged = _age_out_items(conn, stamp, text_cutoff)
     conn.execute("COMMIT")
     return _ok(
         bodies=bodies.rowcount + other_bodies.rowcount,
@@ -2000,9 +2069,59 @@ def _purge_retention(
         deliveries_deleted=old_deliveries.rowcount,
         loops_expired=loops.rowcount,
         loops_text_cleared=loop_text.rowcount,
+        aged_out=aged,
         speech_released=recovery.get("released", 0),
         speech_uncertain=recovery.get("uncertain", 0),
     )
+
+
+def _age_out_items(conn: sqlite3.Connection, stamp: str, cutoff: str) -> int:
+    # P9-SURFACE: purge closes rows past the list window; an open loop keeps its matches — P9-D10
+    protected: Set[str] = set()
+    for loop in conn.execute(
+        "SELECT source_ids_json FROM loops WHERE status = 'open'"
+    ):
+        try:
+            values = json.loads(loop["source_ids_json"] or "[]")
+        except json.JSONDecodeError:
+            values = []
+        for value in values:
+            if value:
+                protected.add(str(value))
+    rows = conn.execute(
+        """
+        SELECT id, message_id, thread_id, event_id, loop_matched
+          FROM items
+         WHERE closed_at IS NULL
+           AND detected_at <= ?
+           AND delivery NOT IN ('claimed', 'speech_started')
+        """,
+        (cutoff,),
+    ).fetchall()
+    aged = 0
+    for row in rows:
+        if int(row["loop_matched"] or 0):
+            keys = {
+                str(row["id"] or ""),
+                str(row["message_id"] or ""),
+                str(row["thread_id"] or ""),
+                str(row["event_id"] or ""),
+            }
+            keys.discard("")
+            if keys & protected:
+                continue
+        cur = conn.execute(
+            """
+            UPDATE items
+               SET closed_at = ?, updated_at = ?, closed_reason = 'aged_out'
+             WHERE id = ?
+               AND closed_at IS NULL
+               AND delivery NOT IN ('claimed', 'speech_started')
+            """,
+            (stamp, stamp, row["id"]),
+        )
+        aged += cur.rowcount
+    return aged
 
 
 def _memory_path_for(db_path: Path) -> Path:
@@ -2616,3 +2735,370 @@ def start_purge_thread() -> None:
             threading.Event().wait(PURGE_INTERVAL_SECONDS)
 
     threading.Thread(target=_loop, name="zola-proactive-purge", daemon=True).start()
+
+
+def _meta_get(conn: sqlite3.Connection, key: str) -> Optional[str]:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    if row is None:
+        return None
+    return str(row["value"])
+
+
+def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+
+
+def read_surface_marker(conn: sqlite3.Connection) -> Dict[str, Any]:
+    # P9-SURFACE: the gap clock is this store's meta, not memory's — P9-D10
+    try:
+        return _ok(
+            at=_meta_get(conn, META_SURFACE_MARKER),
+            attempt_id=_meta_get(conn, META_SURFACE_ATTEMPT) or "",
+            confirmed=_meta_get(conn, META_SURFACE_CONFIRMED) == "1",
+        )
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("error")
+
+
+def write_surface_marker(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+    attempt_id: str = "",
+    confirmed: bool = False,
+) -> Dict[str, Any]:
+    # P9-SURFACE: a failed gap must not move this clock — P9-D10
+    return _call(
+        _write_surface_marker,
+        conn,
+        now=now,
+        attempt_id=attempt_id,
+        confirmed=confirmed,
+    )
+
+
+def _write_surface_marker(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
+    stamp = _iso(_now(kwargs.get("now")))
+    conn.execute("BEGIN IMMEDIATE")
+    _meta_set(conn, META_SURFACE_MARKER, stamp)
+    _meta_set(conn, META_SURFACE_ATTEMPT, str(kwargs.get("attempt_id") or ""))
+    _meta_set(conn, META_SURFACE_CONFIRMED, "1" if kwargs.get("confirmed") else "0")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def mark_surface_confirmed(conn: sqlite3.Connection, attempt_id: str) -> Dict[str, Any]:
+    # P9-SURFACE: only this attempt's confirm lets the next turn trust the marker — P9-D10
+    return _call(_mark_surface_confirmed, conn, attempt_id)
+
+
+def _mark_surface_confirmed(conn: sqlite3.Connection, attempt_id: str) -> Dict[str, Any]:
+    conn.execute("BEGIN IMMEDIATE")
+    current = _meta_get(conn, META_SURFACE_ATTEMPT) or ""
+    if not attempt_id or current != attempt_id:
+        _rollback(conn)
+        return _no("attempt_mismatch")
+    _meta_set(conn, META_SURFACE_CONFIRMED, "1")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def list_surface_rows(conn: sqlite3.Connection) -> Dict[str, Any]:
+    # P9-SURFACE: closed rows stay out of the pending counts — P9-D10
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, source, label, eligibility, processing, conversation, delivery,
+                   content_state, loop_matched, gist, subject, sender_display_name,
+                   sender_address, detected_at, inject_count, selected_at, acknowledged_at,
+                   message_id, thread_id, event_id,
+                   (
+                     SELECT start_at FROM calendar_events
+                      WHERE event_id = items.event_id
+                      ORDER BY updated_at DESC LIMIT 1
+                   ) AS start_at
+              FROM items
+             WHERE closed_at IS NULL
+             ORDER BY detected_at
+            """
+        ).fetchall()
+        return _ok(items=[dict(row) for row in rows])
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("error")
+
+
+def list_untold_lapses(conn: sqlite3.Connection) -> Dict[str, Any]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT id FROM loops
+             WHERE status = 'expired' AND lapse_told = 0
+             ORDER BY expires_at
+            """
+        ).fetchall()
+        return _ok(ids=[row["id"] for row in rows])
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("error")
+
+
+def provisional_select(
+    conn: sqlite3.Connection,
+    item_id: str,
+    attempt_id: str,
+    turn_id: str,
+    *,
+    now: Optional[datetime] = None,
+    reinject_cap: int,
+    quiet_seconds: int,
+) -> Dict[str, Any]:
+    # P9-SURFACE: an attempt is not a confirmed tell — P9-D10
+    return _call(
+        _provisional_select,
+        conn,
+        item_id,
+        attempt_id,
+        turn_id,
+        now=now,
+        reinject_cap=reinject_cap,
+        quiet_seconds=quiet_seconds,
+    )
+
+
+def _provisional_select(conn: sqlite3.Connection, item_id: str, attempt_id: str, turn_id: str, **kwargs: Any) -> Dict[str, Any]:
+    clock = _now(kwargs.get("now"))
+    stamp = _iso(clock)
+    quiet_before = _iso(clock - timedelta(seconds=int(kwargs["quiet_seconds"])))
+    cap = int(kwargs["reinject_cap"])
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute(
+        """
+        UPDATE items
+           SET attempt_id = ?, attempt_turn_id = ?, attempt_at = ?, updated_at = ?
+         WHERE id = ?
+           AND closed_at IS NULL
+           AND content_state = 'available'
+           AND acknowledged_at IS NULL
+           AND conversation != 'acknowledged'
+           AND inject_count < ?
+           AND (
+             (processing = 'ranked' AND eligibility = 'eligible')
+             OR (loop_matched = 1 AND processing != 'rank_failed'
+                 AND eligibility NOT IN ('suppressed', 'expired'))
+           )
+           AND conversation IN ('none', 'selected', 'possibly_surfaced')
+           AND (
+             conversation = 'none'
+             OR selected_at IS NULL
+             OR selected_at <= ?
+           )
+        """,
+        (attempt_id, turn_id, stamp, stamp, item_id, cap, quiet_before),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def release_surface_attempt(conn: sqlite3.Connection, attempt_id: str) -> Dict[str, Any]:
+    return _call(_release_surface_attempt, conn, attempt_id)
+
+
+def _release_surface_attempt(conn: sqlite3.Connection, attempt_id: str) -> Dict[str, Any]:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        """
+        UPDATE items
+           SET attempt_id = NULL, attempt_turn_id = NULL, attempt_at = NULL
+         WHERE attempt_id = ?
+        """,
+        (attempt_id,),
+    )
+    conn.execute(
+        """
+        UPDATE loops
+           SET lapse_attempt_id = NULL, lapse_attempt_turn_id = NULL
+         WHERE lapse_attempt_id = ? AND lapse_told = 0
+        """,
+        (attempt_id,),
+    )
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def note_lapse_attempt(
+    conn: sqlite3.Connection,
+    loop_id: str,
+    attempt_id: str,
+    turn_id: str,
+) -> Dict[str, Any]:
+    return _call(_note_lapse_attempt, conn, loop_id, attempt_id, turn_id)
+
+
+def _note_lapse_attempt(
+    conn: sqlite3.Connection, loop_id: str, attempt_id: str, turn_id: str
+) -> Dict[str, Any]:
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute(
+        """
+        UPDATE loops
+           SET lapse_attempt_id = ?, lapse_attempt_turn_id = ?
+         WHERE id = ? AND status = 'expired' AND lapse_told = 0
+        """,
+        (attempt_id, turn_id, loop_id),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def confirm_surface_attempt(
+    conn: sqlite3.Connection,
+    attempt_id: str,
+    turn_id: str,
+    *,
+    now: Optional[datetime] = None,
+    ttl_seconds: int,
+    reinject_cap: int,
+) -> Dict[str, Any]:
+    # P9-SURFACE: confirmation is the same turn and the same attempt — P9-D10
+    return _call(
+        _confirm_surface_attempt,
+        conn,
+        attempt_id,
+        turn_id,
+        now=now,
+        ttl_seconds=ttl_seconds,
+        reinject_cap=reinject_cap,
+    )
+
+
+def _confirm_surface_attempt(conn: sqlite3.Connection, attempt_id: str, turn_id: str, **kwargs: Any) -> Dict[str, Any]:
+    clock = _now(kwargs.get("now"))
+    stamp = _iso(clock)
+    earliest = _iso(clock - timedelta(seconds=int(kwargs["ttl_seconds"])))
+    cap = int(kwargs["reinject_cap"])
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute(
+        """
+        UPDATE items
+           SET conversation = 'selected',
+               inject_count = inject_count + 1,
+               selected_at = ?,
+               updated_at = ?,
+               attempt_id = NULL,
+               attempt_turn_id = NULL,
+               attempt_at = NULL
+         WHERE attempt_id = ?
+           AND attempt_turn_id = ?
+           AND attempt_at >= ?
+           AND closed_at IS NULL
+           AND content_state = 'available'
+           AND acknowledged_at IS NULL
+           AND inject_count < ?
+           AND (
+             (processing = 'ranked' AND eligibility = 'eligible')
+             OR (loop_matched = 1 AND eligibility NOT IN ('suppressed', 'expired'))
+           )
+        """,
+        (stamp, stamp, attempt_id, turn_id, earliest, cap),
+    )
+    confirmed = cur.rowcount
+    lapses = conn.execute(
+        """
+        UPDATE loops
+           SET lapse_told = 1
+         WHERE lapse_attempt_id = ?
+           AND lapse_attempt_turn_id = ?
+           AND lapse_told = 0
+        """,
+        (attempt_id, turn_id),
+    )
+    if confirmed < 1 and lapses.rowcount < 1:
+        _rollback(conn)
+        return _no("attempt_mismatch")
+    conn.execute("COMMIT")
+    return _ok(confirmed=confirmed, lapses=lapses.rowcount)
+
+
+def dismiss_item(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    now: Optional[datetime] = None,
+    turn_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    # P9-SURFACE: dismiss is a ticketed close, distinct from age_out — P9-D10
+    return _call(_dismiss_item, conn, item_id, now=now, turn_id=turn_id)
+
+
+def _dismiss_item(conn: sqlite3.Connection, item_id: str, **kwargs: Any) -> Dict[str, Any]:
+    if not _ticket_ok(kwargs.get("turn_id")):
+        return _no("origin")
+    stamp = _iso(_now(kwargs.get("now")))
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute(
+        """
+        UPDATE items
+           SET closed_at = ?, updated_at = ?, closed_reason = 'dismissed'
+         WHERE id = ?
+           AND closed_at IS NULL
+           AND delivery NOT IN ('claimed', 'speech_started')
+           AND content_state = 'available'
+        """,
+        (stamp, stamp, item_id),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def open_loop_source_ids(conn: sqlite3.Connection) -> Dict[str, Any]:
+    try:
+        found: Set[str] = set()
+        for loop in conn.execute("SELECT source_ids_json FROM loops WHERE status = 'open'"):
+            try:
+                values = json.loads(loop["source_ids_json"] or "[]")
+            except json.JSONDecodeError:
+                values = []
+            for value in values:
+                if value:
+                    found.add(str(value))
+        return _ok(ids=sorted(found))
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("error")
+
+
+def read_watcher_health(conn: sqlite3.Connection) -> Dict[str, Any]:
+    # P9-SURFACE: the token store is not the watcher — P9-D12
+    try:
+        row = conn.execute("SELECT * FROM watcher_health WHERE id = 1").fetchone()
+        if row is None:
+            return _ok(row=None)
+        return _ok(row=dict(row))
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("error")

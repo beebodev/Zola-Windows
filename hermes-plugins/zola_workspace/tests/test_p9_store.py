@@ -563,6 +563,12 @@ class LoopTests(unittest.TestCase):
         self.assertIn("ask him which one before you call create", text)
         self.assertIn("names the sender and subject", text)
         self.assertIn("do not pass a message id, thread id, event id, or email address", text)
+        self.assertIn("not for the mail watcher's health; use workspace_status for that", text)
+        self.assertTrue(
+            " ".join(loops._DESCRIPTION.split()).startswith(
+                "What Brian asked you to watch for: list, add, or close."
+            )
+        )
 
     def test_one_handle_several_ambiguous_and_explicit(self) -> None:
         only = self._remember(name="Ada Synthetic", subject="Only subject", address="ada@example.com")

@@ -27,6 +27,7 @@ TOOLSET_NAME = "zola_workspace"
 # P9-STORE: list is the only source for what she is watching; memory is not — P9-D09
 _DESCRIPTION = (
     "What Brian asked you to watch for: list, add, or close. "
+    "Not for the mail watcher's health; use workspace_status for that. "
     "When Brian says what are you watching for, what are you keeping an eye on, "
     "what am I waiting on, any open loops, or what did I ask you to watch, call list. "
     "The list result is the only source of what you are watching. "

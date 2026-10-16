@@ -18,6 +18,7 @@ try:
     from . import send_gate
     from . import turn_context
     from . import loops as zola_loops
+    from . import surface as zola_surface
 except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import auth
     import contacts
@@ -30,6 +31,7 @@ except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import send_gate
     import turn_context
     import loops as zola_loops
+    import surface as zola_surface
 
 # P8-HARDEN / P8-CONNECT: named tool / toolset constants — P8-D01 / P8-D08
 TOOL_NAME = "workspace_status"
@@ -43,6 +45,8 @@ HOOK_ON_SESSION_END = "on_session_end"
 HOOK_AGENT_LOOP_STOPPED = "agent_loop_stopped"
 
 _WORKSPACE_STATUS_DESCRIPTION = (
+    "Mail watcher health and Google connection: when mail was last checked, "
+    "and whether Google needs reconnecting. "
     "Report whether Google Workspace is connected for Zola and whether this "
     "conversation may use Workspace tools. Does not call Google."
 )
@@ -76,6 +80,7 @@ def workspace_status_handler(args: dict, **kwargs) -> str:
             "allowed_here": bool(allowed),
             "posture_ok": bool(ok_posture),
         }
+        outcome.update(zola_surface.status_fields())
     except Exception:
         outcome = {
             "ok": True,
@@ -84,6 +89,11 @@ def workspace_status_handler(args: dict, **kwargs) -> str:
             "missing_scopes": [],
             "allowed_here": False,
             "posture_ok": False,
+            "watcher_state": "unknown",
+            "gmail_ok_at": "",
+            "calendar_ok_at": "",
+            "watcher_needs_reconnect": 0,
+            "watcher_sentence": "I can't tell whether the watcher is running.",
         }
     elapsed_ms = int((time.monotonic() - started) * 1000)
     try:
@@ -119,6 +129,8 @@ def register(ctx) -> None:
     ctx.register_hook(HOOK_PRE_LLM_CALL, turn_context.pre_llm_call_hook)
     # P8-SEND: review the read-back, then drop this turn's authorization — P8-D05
     ctx.register_hook(HOOK_POST_LLM_CALL, send_gate.post_llm_call_hook)
+    # P9-SURFACE: confirm the attempt on the generated reply — P9-D10
+    ctx.register_hook(HOOK_POST_LLM_CALL, zola_surface.post_llm_call_hook)
     ctx.register_hook(HOOK_ON_SESSION_END, send_gate.on_session_end_hook)
     ctx.register_hook(HOOK_AGENT_LOOP_STOPPED, send_gate.agent_loop_stopped_hook)
     # P8-HARDEN / P8-CONNECT: config self-edit + memory-taint — P8-D02 / P8-D09
@@ -159,6 +171,15 @@ def register(ctx) -> None:
             description=description,
             is_async=False,
         )
+    # P9-SURFACE: whats_pending is the only "what's pending" source — P9-D10
+    ctx.register_tool(
+        name=zola_surface.TOOL_NAME,
+        toolset=TOOLSET_NAME,
+        schema=zola_surface.whats_pending_schema(),
+        handler=zola_surface.whats_pending_handler,
+        description=zola_surface._DESCRIPTION,
+        is_async=False,
+    )
     # P9-STORE: same toolset as the other Brian-only tools; no config.yaml line — P9-D09
     ctx.register_tool(
         name=zola_loops.TOOL_NAME,

@@ -234,11 +234,27 @@ def pre_llm_call_hook(**kwargs: Any) -> None:
         try:
             import taint  # type: ignore
         except Exception:
-            return None
+            taint = None  # type: ignore
     try:
-        if taint.is_tainted(session_id=session_id or None, task_id=task_id or None):
+        if taint is not None and taint.is_tainted(session_id=session_id or None, task_id=task_id or None):
             if session_id:
                 taint.mark_tainted(session_id, task_id=task_id or None)
     except Exception:
         pass
-    return None
+    # P9-SURFACE: after the ticket is consumed and the ranker has seen the turn — P9-D10
+    try:
+        try:
+            from . import surface
+        except ImportError:
+            import surface  # type: ignore
+        block = surface.pre_llm_call_hook(**kwargs)
+    except Exception:
+        block = None
+    return block or None
+
+
+# P9-SURFACE: load surface (and its config binding) at import, before any test patches get_hermes_home — P9-D10
+try:
+    from . import surface as _surface_at_import  # noqa: F401
+except ImportError:
+    import surface as _surface_at_import  # type: ignore  # noqa: F401
