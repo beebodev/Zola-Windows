@@ -174,6 +174,21 @@ def register(ctx) -> None:
     except ImportError:
         import origin  # type: ignore
     origin.install_for_serve()
+    # P9-RANK: the worker starts only in serve, and only when the config flag is true — P9-D08
+    try:
+        try:
+            from . import ranker
+        except ImportError:
+            import ranker
+        unload = getattr(ctx, "on_unload", None)
+        if callable(unload):
+            unload(ranker.stop_worker)
+        ranker.start_from_register(ctx)
+    except Exception:
+        try:
+            wslog.write_warning(wslog.LOG_EVENT_RANKER, reason="start_failed", state="worker_failed")
+        except Exception:
+            pass
     # P9-STORE: purge only in serve; tests do not pass that argv — P9-D07
     try:
         try:

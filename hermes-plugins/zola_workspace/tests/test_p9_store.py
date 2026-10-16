@@ -89,8 +89,10 @@ class StoreTests(unittest.TestCase):
 
     def _eligible(self, item_id: str, *, now: datetime = T0):
         self._rank(item_id, now=now)
-        marked = proactive_store.mark_eligible(self.conn, item_id, now=now)
-        self.assertTrue(marked["ok"], marked)
+        # P9-RANK: complete_rank writes eligibility. mark_eligible remains the sweep path.
+        if _row(self.conn, item_id)["eligibility"] == "pending":
+            marked = proactive_store.mark_eligible(self.conn, item_id, now=now)
+            self.assertTrue(marked["ok"], marked)
 
     def test_allowed_transitions_once(self) -> None:
         item_id = self._gmail()

@@ -205,6 +205,15 @@ def pre_llm_call_hook(**kwargs: Any) -> None:
             _origin().log_refuse("origin_check_error", str(kwargs.get("turn_id") or ""))
         except Exception:
             pass
+    # P9-RANK: the ranker sees this turn on its own thread — P9-D08
+    try:
+        try:
+            from . import ranker
+        except ImportError:
+            import ranker
+        ranker.note_turn_started()
+    except Exception:
+        pass
     # P8-SEND: authorization is created here only, and only for a reviewed draft — P8-D02
     try:
         try:

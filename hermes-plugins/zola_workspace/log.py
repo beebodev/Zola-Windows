@@ -21,6 +21,8 @@ LOG_EVENT_CONTACTS = "zola_workspace.contacts_lookup"
 LOG_EVENT_LOOPS = "zola_workspace.loops"
 # P8-SEND: send-gate metadata only — P8-D11
 LOG_EVENT_SEND_GATE = "zola_workspace.send_gate"
+# P9-RANK: metadata only. Never subject, gist, body, address, or model text — P8-D11
+LOG_EVENT_RANKER = "zola_workspace.ranker"
 
 _logger = logging.getLogger("zola_workspace")
 _file_handler_ready = False
@@ -50,8 +52,7 @@ def _ensure_file_handler() -> None:
         _logger.debug("zola_workspace log handler setup failed", exc_info=True)
 
 
-def write_event(event: str, **fields: Any) -> None:
-    """Append one metadata-only log line. Never pass message/command/path text."""
+def _format_event(event: str, fields: dict) -> str:
     parts = [event]
     for key, value in fields.items():
         if value is None:
@@ -60,10 +61,24 @@ def write_event(event: str, **fields: Any) -> None:
             parts.append(f"{key}={str(value).lower()}")
         else:
             parts.append(f"{key}={value}")
-    line = " ".join(parts)
+    return " ".join(parts)
+
+
+def write_event(event: str, **fields: Any) -> None:
+    """Append one metadata-only log line. Never pass message/command/path text."""
+    _emit(logging.INFO, event, fields)
+
+
+def write_warning(event: str, **fields: Any) -> None:
+    """Same metadata line at WARNING. Never pass message text."""
+    _emit(logging.WARNING, event, fields)
+
+
+def _emit(level: int, event: str, fields: dict) -> None:
+    line = _format_event(event, fields)
     try:
         _ensure_file_handler()
-        _logger.info(line)
+        _logger.log(level, line)
     except Exception:
         pass
 
