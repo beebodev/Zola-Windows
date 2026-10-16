@@ -900,4 +900,5 @@ Modified: `hermes-plugins/zola_workspace/__init__.py`, `hermes-plugins/zola_work
 | Turn flag cleared on the real end-of-turn hook | MET. `turn_flag_expired` is 0. The idle window held new calls for 20 seconds after the finished turns. |
 
 Implementation commit: `df68dd432b92a634ce4e2b519499d715a8f2179b`.
+Merge commit on `main`: `5def3d3ed90bcea2cebe087fd7d4ef52cb801bb1`.
 
