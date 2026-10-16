@@ -23,6 +23,8 @@ LOG_EVENT_LOOPS = "zola_workspace.loops"
 LOG_EVENT_SEND_GATE = "zola_workspace.send_gate"
 # P9-RANK: metadata only. Never subject, gist, body, address, or model text — P8-D11
 LOG_EVENT_RANKER = "zola_workspace.ranker"
+# P9-SURFACE: counts, lengths, and reasons only — P9-D10
+LOG_EVENT_SURFACE = "zola_workspace.surface"
 
 _logger = logging.getLogger("zola_workspace")
 _file_handler_ready = False

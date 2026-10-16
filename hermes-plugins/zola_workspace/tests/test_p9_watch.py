@@ -282,7 +282,7 @@ class WatchTests(unittest.TestCase):
         raw.close()
         conn = proactive_store.connect(legacy, retry=False)
         version = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "3")
+        self.assertEqual(version, str(proactive_store.SCHEMA_VERSION))
         self.assertIn("calendar_events", {row[0] for row in conn.execute("SELECT name FROM sqlite_master")})
         self.assertIn("watcher_rejects", {row[0] for row in conn.execute("SELECT name FROM sqlite_master")})
         columns = {row[1] for row in conn.execute("PRAGMA table_info(watcher_health)")}

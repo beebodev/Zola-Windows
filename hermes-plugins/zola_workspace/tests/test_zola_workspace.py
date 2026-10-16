@@ -296,6 +296,20 @@ class WorkspaceStatusTests(unittest.TestCase):
     def tearDown(self) -> None:
         turn_context.clear_all_for_tests()
 
+    def test_description_leads_with_mail_watcher_health(self) -> None:
+        text = " ".join(plugin._WORKSPACE_STATUS_DESCRIPTION.split())
+        self.assertTrue(
+            text.startswith(
+                "Mail watcher health and Google connection: when mail was last checked, "
+                "and whether Google needs reconnecting."
+            )
+        )
+        self.assertIn(
+            "Report whether Google Workspace is connected for Zola and whether this "
+            "conversation may use Workspace tools. Does not call Google.",
+            text,
+        )
+
     def test_14_brian_turn_allowed(self) -> None:
         # Use the same turn_context module object the plugin bound
         tc = plugin.turn_context
@@ -389,6 +403,7 @@ class RegisterTests(unittest.TestCase):
                 "contacts_lookup",
                 "gmail_draft",
                 "gmail_send_draft",
+                "whats_pending",
                 "zola_loops",
             },
         )
