@@ -39,7 +39,7 @@ G-SCOPE, G-NOCHANGE, G-ARCH, G-QUALITY, G-CLOSEOUT, G-NO-LIVE, G-TIMING-LOGS, G-
 | 7 Proof plan | Complete (design only) |
 | 8 Reconciliation | Complete |
 | 9 Synthesis | Complete |
-| 10 Closeout | Content committed. Integration not done in this commit. |
+| 10 Closeout | Complete. Merged to `main`. |
 
 ## Limitations
 
@@ -93,4 +93,5 @@ Approved with "proceed to closeout". No `AGENTS.md` in the Zola-Windows tree. Pr
 
 - Audit-content SHA: `543b36819e38704f815b6f77bed67f0228ebea79`
 - Content preparation: complete
-- Integration: not merged. No clean `main` worktree existed when this metadata was written.
+- Merge SHA: `4ef1fd983965a3545db41e645f8943a51aeb2ee6` (`--no-ff` into a new clean `main` worktree; primary `p9-speak` was not switched)
+- Integration: merged. This metadata commit is the integration tip after that merge.
