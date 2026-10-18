@@ -39,7 +39,7 @@ G-SCOPE, G-NOCHANGE, G-ARCH, G-QUALITY, G-CLOSEOUT, G-NO-LIVE, G-TIMING-LOGS, G-
 | 7 Proof plan | Complete (design only) |
 | 8 Reconciliation | Complete |
 | 9 Synthesis | Complete |
-| 10 Closeout | Content prepared. SHA and integration status follow in the metadata commit. |
+| 10 Closeout | Content committed. Integration not done in this commit. |
 
 ## Limitations
 
@@ -89,4 +89,8 @@ Counts: 4 MATCH, 6 GAP, 5 RISK. HIGH 5, MEDIUM 5, LOW 1.
 
 ## Closeout
 
-Approved with "proceed to closeout". Primary checkout stays on dirty `p9-speak`. No `AGENTS.md` in the Zola-Windows tree. Content SHA and integration result are recorded after this commit.
+Approved with "proceed to closeout". No `AGENTS.md` in the Zola-Windows tree. Primary checkout remains dirty `p9-speak` and is not the integration target.
+
+- Audit-content SHA: `543b36819e38704f815b6f77bed67f0228ebea79`
+- Content preparation: complete
+- Integration: not merged. No clean `main` worktree existed when this metadata was written.
