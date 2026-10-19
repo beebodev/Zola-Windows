@@ -32,5 +32,16 @@
     <!-- P9-WATCH: watcher policy and job limit, no WinUI — P9-D02 -->
     <Compile Include="..\Zola.Client\Supervision\WatcherSupervisor.cs" Link="Supervision\WatcherSupervisor.cs" />
     <Compile Include="..\Zola.Client\Supervision\WatcherJob.cs" Link="Supervision\WatcherJob.cs" />
+    <!-- P9-SPEAK: coordinator, phrases, echo, and HUD are pure — P9-D11 -->
+    <Compile Include="..\Zola.Client\Speech\SpeechConstants.cs" Link="Speech\SpeechConstants.cs" />
+    <Compile Include="..\Zola.Client\Speech\SpeechDenyLog.cs" Link="Speech\SpeechDenyLog.cs" />
+    <Compile Include="..\Zola.Client\Speech\SpeechPhrases.cs" Link="Speech\SpeechPhrases.cs" />
+    <Compile Include="..\Zola.Client\Speech\SpeechEchoGuard.cs" Link="Speech\SpeechEchoGuard.cs" />
+    <Compile Include="..\Zola.Client\Speech\WatcherHud.cs" Link="Speech\WatcherHud.cs" />
+    <Compile Include="..\Zola.Client\Speech\SystemsCopy.cs" Link="Speech\SystemsCopy.cs" />
+    <Compile Include="..\Zola.Client\Speech\SpeechTypes.cs" Link="Speech\SpeechTypes.cs" />
+    <Compile Include="..\Zola.Client\Speech\ProactiveDeliveryCoordinator.cs" Link="Speech\ProactiveDeliveryCoordinator.cs" />
+    <Compile Include="..\Zola.Client\Speech\ISpeechGateway.cs" Link="Speech\ISpeechGateway.cs" />
+    <Compile Include="..\Zola.Client\Speech\ProactiveSpeechSession.cs" Link="Speech\ProactiveSpeechSession.cs" />
   </ItemGroup>
 </Project>

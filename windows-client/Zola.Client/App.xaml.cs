@@ -23,7 +23,7 @@ public partial class App : Application
         _backend = new HermesProcessManager();
         // P9-WATCH: polling continues while serve is down, so the watcher is not serve's child — P9-D02
         _watcher = new WatcherProcess(_backend.ProfileDirectory);
-        _window = new MainWindow(_backend);
+        _window = new MainWindow(_backend, _watcher);
         _window.Closed += (_, _) =>
         {
             _watcher.StopDeliberate();

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 # P9-STORE: marker so zola_memory can find this module without a hard import cycle — P9-D06
 PROACTIVE_STORE_MARKER = "p9-store"
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # P9-STORE: why a loop ended; NULL means the live row was already closed before this column — P9-D09
 CLOSED_INTENTS = frozenset(
     {"reply", "cancelled", "status_change", "confirm_close", "expired", "forgotten"}
@@ -31,6 +31,14 @@ META_SCHEMA_VERSION = "schema_version"
 RANK_LEASE_SECONDS = 120
 SPEECH_CLAIM_LEASE_SECONDS = 30
 SPEECH_OUTCOME_LEASE_SECONDS = 120
+# P9-SPEAK: a loop match older than this waits for a conversation — P9-D11
+SPEECH_MAX_AGE_SECONDS = 7200
+# P9-SPEAK: same 600 s window as a surface attempt; only an unexpired open one blocks speech — P9-D11
+SURFACE_ATTEMPT_TTL_SECONDS = 600
+# P9-SPEAK: one follow-up note after evidenced speech, inside the surface gap — P9-D07
+POST_SPEECH_WINDOW_SECONDS = 900
+META_SPEECH_POST_NOTED = "speech_post_noted_attempt"
+NAME_SOURCES = frozenset({"mail", "contacts_ticket", "brian_message"})
 RANK_ATTEMPT_CAP = 5
 BODY_MAX_AGE_DAYS = 7
 TEXT_MAX_AGE_DAYS = 7
@@ -197,6 +205,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if current < 4:
             _migrate_v4(conn)
             current = 4
+        if current < 5:
+            _migrate_v5(conn)
+            current = 5
         conn.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -377,6 +388,19 @@ def _migrate_v4(conn: sqlite3.Connection) -> None:
     for name, ddl in loop_columns:
         if name not in existing_loops:
             conn.execute(ddl)
+
+
+def _migrate_v5(conn: sqlite3.Connection) -> None:
+    # P9-SPEAK: provenance is code-checked; existing rows stay mail and are spoken as someone — P9-D11
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(loops)")}
+    if "name_source" in existing:
+        return
+    conn.execute(
+        """
+        ALTER TABLE loops ADD COLUMN name_source TEXT NOT NULL DEFAULT 'mail'
+        CHECK (name_source IN ('mail', 'contacts_ticket', 'brian_message'))
+        """
+    )
 
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
@@ -1326,6 +1350,33 @@ def claim_speech(
     return _call(_claim_speech, conn, item_id, now=now)
 
 
+def _speech_block_reason(row: Optional[sqlite3.Row], earliest_surface: str, oldest: str) -> Optional[str]:
+    # P9-SPEAK: the label is not a speech check. An open surface attempt blocks only inside its TTL — P9-D11
+    if row is None:
+        return "not_found"
+    if int(row["loop_matched"] or 0) != 1:
+        return "not_loop_matched"
+    if row["eligibility"] != "eligible":
+        return "not_eligible"
+    if row["delivery"] != "none":
+        return "delivery_held"
+    if row["closed_reason"] == "dismissed":
+        return "dismissed"
+    if row["closed_at"]:
+        return "closed"
+    if row["acknowledged_at"] or row["conversation"] == "acknowledged":
+        return "acknowledged"
+    if row["content_state"] == "content_expired":
+        return "content_expired"
+    if row["content_state"] != "available":
+        return "content_unavailable"
+    if row["attempt_id"] and row["attempt_at"] and row["attempt_at"] >= earliest_surface:
+        return "surface_attempt_open"
+    if row["detected_at"] < oldest:
+        return "too_old"
+    return None
+
+
 def _claim_speech(
     conn: sqlite3.Connection,
     item_id: str,
@@ -1335,17 +1386,37 @@ def _claim_speech(
     clock = _now(now)
     stamp = _iso(clock)
     lease = _iso(clock + timedelta(seconds=SPEECH_CLAIM_LEASE_SECONDS))
+    earliest_surface = _iso(clock - timedelta(seconds=SURFACE_ATTEMPT_TTL_SECONDS))
+    oldest = _iso(clock - timedelta(seconds=SPEECH_MAX_AGE_SECONDS))
+    # P9-SPEAK: recovery commits on its own. A refused claim must not roll it back — P9-D11
+    recovered = _recover_speech(conn, now=clock)
+    if not recovered.get("ok"):
+        return recovered
     conn.execute("BEGIN IMMEDIATE")
+    reason = _speech_block_reason(_item(conn, item_id), earliest_surface, oldest)
+    if reason:
+        _rollback(conn)
+        return _no(reason)
     cur = conn.execute(
         """
         UPDATE items
            SET delivery = 'claimed', updated_at = ?
          WHERE id = ?
+           AND loop_matched = 1
            AND eligibility = 'eligible'
            AND delivery = 'none'
            AND closed_at IS NULL
+           AND acknowledged_at IS NULL
+           AND conversation != 'acknowledged'
+           AND content_state = 'available'
+           AND (
+             attempt_id IS NULL
+             OR attempt_at IS NULL
+             OR attempt_at < ?
+           )
+           AND detected_at >= ?
         """,
-        (stamp, item_id),
+        (stamp, item_id, earliest_surface, oldest),
     )
     if cur.rowcount != 1:
         _rollback(conn)
@@ -1361,6 +1432,90 @@ def _claim_speech(
     )
     conn.execute("COMMIT")
     return _ok(attempt_id=attempt_id)
+
+
+def claim_next_speech(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    return _call(_claim_next_speech, conn, now=now)
+
+
+def _claim_next_speech(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    """Recovery commits first. The next transaction claims the oldest speakable row."""
+    clock = _now(now)
+    recovered = _recover_speech(conn, now=clock)
+    if not recovered.get("ok"):
+        return recovered
+    stamp = _iso(clock)
+    lease = _iso(clock + timedelta(seconds=SPEECH_CLAIM_LEASE_SECONDS))
+    earliest_surface = _iso(clock - timedelta(seconds=SURFACE_ATTEMPT_TTL_SECONDS))
+    oldest = _iso(clock - timedelta(seconds=SPEECH_MAX_AGE_SECONDS))
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        """
+        SELECT id, source FROM items
+         WHERE loop_matched = 1
+           AND eligibility = 'eligible'
+           AND delivery = 'none'
+           AND closed_at IS NULL
+           AND acknowledged_at IS NULL
+           AND conversation != 'acknowledged'
+           AND content_state = 'available'
+           AND (
+             attempt_id IS NULL
+             OR attempt_at IS NULL
+             OR attempt_at < ?
+           )
+           AND detected_at >= ?
+         ORDER BY detected_at, id
+         LIMIT 1
+        """,
+        (earliest_surface, oldest),
+    ).fetchone()
+    if row is None:
+        conn.execute("COMMIT")
+        return _no("nothing_speakable")
+    cur = conn.execute(
+        """
+        UPDATE items
+           SET delivery = 'claimed', updated_at = ?
+         WHERE id = ?
+           AND loop_matched = 1
+           AND eligibility = 'eligible'
+           AND delivery = 'none'
+           AND closed_at IS NULL
+           AND acknowledged_at IS NULL
+           AND conversation != 'acknowledged'
+           AND content_state = 'available'
+           AND (
+             attempt_id IS NULL
+             OR attempt_at IS NULL
+             OR attempt_at < ?
+           )
+           AND detected_at >= ?
+        """,
+        (stamp, row["id"], earliest_surface, oldest),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    attempt_id = _new_id()
+    conn.execute(
+        """
+        INSERT INTO item_attempts (
+          attempt_id, item_id, purpose, status, lease_expires_at, created_at
+        ) VALUES (?, ?, 'speech', 'open', ?, ?)
+        """,
+        (attempt_id, row["id"], lease, stamp),
+    )
+    conn.execute("COMMIT")
+    return _ok(item_id=row["id"], attempt_id=attempt_id, source=row["source"])
 
 
 def mark_speech_started(
@@ -1429,6 +1584,24 @@ def _mark_delivered(
 ) -> Dict[str, Any]:
     stamp = _iso(_now(now))
     conn.execute("BEGIN IMMEDIATE")
+    # P9-SPEAK: a retry of the same completion is the lost response, not a second delivery — P9-D11
+    already = _speech_outcome_already(conn, item_id, attempt_id, "delivered", "completed")
+    if already == "same":
+        conn.execute("COMMIT")
+        return _ok(already=True)
+    if already == "other":
+        _rollback(conn)
+        return _no("illegal_transition")
+    attempt = conn.execute(
+        """
+        SELECT status FROM item_attempts
+         WHERE attempt_id = ? AND item_id = ? AND purpose = 'speech' AND status = 'open'
+        """,
+        (attempt_id, item_id),
+    ).fetchone()
+    if attempt is None:
+        _rollback(conn)
+        return _no("attempt_mismatch")
     cur = conn.execute(
         """
         UPDATE items
@@ -1482,6 +1655,14 @@ def _mark_delivery_uncertain(
 ) -> Dict[str, Any]:
     stamp = _iso(_now(now))
     conn.execute("BEGIN IMMEDIATE")
+    # P9-SPEAK: a retry of the same uncertain outcome does not speak again — P9-D11
+    already = _speech_outcome_already(conn, item_id, attempt_id, "delivery_uncertain", "uncertain")
+    if already == "same":
+        conn.execute("COMMIT")
+        return _ok(already=True)
+    if already == "other":
+        _rollback(conn)
+        return _no("illegal_transition")
     cur = conn.execute(
         """
         UPDATE items
@@ -1508,6 +1689,86 @@ def _mark_delivery_uncertain(
     return _ok()
 
 
+def _speech_outcome_already(
+    conn: sqlite3.Connection,
+    item_id: str,
+    attempt_id: str,
+    delivery: str,
+    status: str,
+) -> Optional[str]:
+    attempt = conn.execute(
+        """
+        SELECT status FROM item_attempts
+         WHERE attempt_id = ? AND item_id = ? AND purpose = 'speech'
+        """,
+        (attempt_id, item_id),
+    ).fetchone()
+    if attempt is None:
+        return None
+    item = _item(conn, item_id)
+    if item is None:
+        return None
+    if item["delivery"] == delivery and attempt["status"] == status:
+        return "same"
+    if attempt["status"] in ("completed", "released", "uncertain"):
+        return "other"
+    if item["delivery"] in ("delivered", "delivery_uncertain", "none") and item["delivery"] != "none":
+        return "other"
+    return None
+
+
+def release_speech_claim(
+    conn: sqlite3.Connection,
+    item_id: str,
+    attempt_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-SPEAK: cancel before audio releases this claim only — P9-D11
+    return _call(_release_speech_claim, conn, item_id, attempt_id, now=now)
+
+
+def _release_speech_claim(
+    conn: sqlite3.Connection,
+    item_id: str,
+    attempt_id: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    attempt = conn.execute(
+        """
+        SELECT status FROM item_attempts
+         WHERE attempt_id = ? AND item_id = ? AND purpose = 'speech'
+        """,
+        (attempt_id, item_id),
+    ).fetchone()
+    item = _item(conn, item_id)
+    if attempt is not None and attempt["status"] == "released" and item is not None and item["delivery"] == "none":
+        conn.execute("COMMIT")
+        return _ok(already=True)
+    if attempt is None or attempt["status"] != "open" or item is None or item["delivery"] != "claimed":
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute(
+        """
+        UPDATE items SET delivery = 'none', updated_at = ?
+         WHERE id = ? AND delivery = 'claimed'
+        """,
+        (stamp, item_id),
+    )
+    conn.execute(
+        """
+        UPDATE item_attempts SET status = 'released'
+         WHERE attempt_id = ? AND item_id = ? AND purpose = 'speech' AND status = 'open'
+        """,
+        (attempt_id, item_id),
+    )
+    conn.execute("COMMIT")
+    return _ok()
+
+
 def release_speech_lease(
     conn: sqlite3.Connection,
     *,
@@ -1516,14 +1777,8 @@ def release_speech_lease(
     return _call(_recover_speech, conn, now=now)
 
 
-def _recover_speech(
-    conn: sqlite3.Connection,
-    *,
-    now: Optional[datetime],
-) -> Dict[str, Any]:
-    """Claimed and expired returns to none. Speech started and expired becomes uncertain."""
-    stamp = _iso(_now(now))
-    conn.execute("BEGIN IMMEDIATE")
+def _recover_speech_locked(conn: sqlite3.Connection, stamp: str) -> tuple:
+    """Caller holds the transaction. Expired claims return to none. Expired speech becomes uncertain."""
     released = conn.execute(
         """
         SELECT item_id, attempt_id FROM item_attempts
@@ -1563,6 +1818,18 @@ def _recover_speech(
                 (attempt["attempt_id"],),
             )
             uncertain_n += 1
+    return released_n, uncertain_n
+
+
+def _recover_speech(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    """Claimed and expired returns to none. Speech started and expired becomes uncertain."""
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    released_n, uncertain_n = _recover_speech_locked(conn, stamp)
     conn.execute("COMMIT")
     return _ok(released=released_n, uncertain=uncertain_n)
 
@@ -1616,6 +1883,7 @@ def insert_loop(
     address_hashes: Optional[Sequence[str]] = None,
     now: Optional[datetime] = None,
     expiry_days: int = LOOP_DEFAULT_EXPIRY_DAYS,
+    name_source: str = "mail",
 ) -> Dict[str, Any]:
     # P9-STORE: a loop row is created only on a ticket turn — P9-D09
     return _call(
@@ -1631,6 +1899,7 @@ def insert_loop(
         address_hashes=list(address_hashes or []),
         now=now,
         expiry_days=expiry_days,
+        name_source=name_source,
     )
 
 
@@ -1639,6 +1908,9 @@ def _insert_loop(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
         return _no("origin")
     days = int(kwargs["expiry_days"])
     if days < 1 or days > LOOP_MAX_EXPIRY_DAYS:
+        return _no("bad_args")
+    name_source = str(kwargs.get("name_source") or "mail")
+    if name_source not in NAME_SOURCES:
         return _no("bad_args")
     clock = _now(kwargs.get("now"))
     stamp = _iso(clock)
@@ -1650,8 +1922,8 @@ def _insert_loop(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
         INSERT INTO loops (
           id, status, intent, predicate_json, created_at, expires_at, matched_at,
           lapse_told, session_id, entity_id, source_ids_json, address_hashes_json,
-          sender_display_name, subject
-        ) VALUES (?, 'open', ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?)
+          sender_display_name, subject, name_source
+        ) VALUES (?, 'open', ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             loop_id,
@@ -1665,6 +1937,7 @@ def _insert_loop(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
             json.dumps(list(kwargs["address_hashes"]), separators=(",", ":")),
             str(kwargs.get("sender_display_name") or ""),
             str(kwargs.get("subject") or ""),
+            name_source,
         ),
     )
     conn.execute("COMMIT")
@@ -2014,7 +2287,13 @@ def _purge_retention(
                gist = NULL,
                sender_display_name = NULL
          WHERE content_state != 'forgotten'
-           AND (delivery = 'delivered' OR detected_at <= ?)
+           AND (
+             detected_at <= ?
+             OR (
+               delivery = 'delivered'
+               AND (acknowledged_at IS NOT NULL OR closed_at IS NOT NULL)
+             )
+           )
            AND (
              subject IS NOT NULL OR snippet IS NOT NULL OR gist IS NOT NULL
              OR sender_display_name IS NOT NULL
@@ -3056,7 +3335,8 @@ def _dismiss_item(conn: sqlite3.Connection, item_id: str, **kwargs: Any) -> Dict
     cur = conn.execute(
         """
         UPDATE items
-           SET closed_at = ?, updated_at = ?, closed_reason = 'dismissed'
+           SET closed_at = ?, updated_at = ?, closed_reason = 'dismissed',
+               subject = NULL, snippet = NULL, gist = NULL, sender_display_name = NULL
          WHERE id = ?
            AND closed_at IS NULL
            AND delivery NOT IN ('claimed', 'speech_started')
@@ -3102,3 +3382,64 @@ def read_watcher_health(conn: sqlite3.Connection) -> Dict[str, Any]:
         return _no("locked" if "locked" in text or "busy" in text else "error")
     except Exception:
         return _no("error")
+
+
+def post_speech_candidate(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+    window_seconds: int = POST_SPEECH_WINDOW_SECONDS,
+) -> Dict[str, Any]:
+    # P9-SPEAK: the first note after evidenced speech, bound to that attempt — P9-D07
+    try:
+        clock = _now(now)
+        earliest = _iso(clock - timedelta(seconds=int(window_seconds)))
+        noted = _meta_get(conn, META_SPEECH_POST_NOTED) or ""
+        row = conn.execute(
+            """
+            SELECT d.attempt_id AS speech_attempt_id, i.*
+              FROM deliveries d
+              JOIN items i ON i.id = d.item_id
+             WHERE d.outcome = 'delivered'
+               AND d.at >= ?
+               AND i.closed_at IS NULL
+               AND i.acknowledged_at IS NULL
+               AND i.content_state = 'available'
+               AND d.attempt_id != ?
+             ORDER BY d.at DESC
+             LIMIT 1
+            """,
+            (earliest, noted),
+        ).fetchone()
+        if row is None:
+            return _ok(item=None, speech_attempt_id="")
+        item = {key: row[key] for key in row.keys() if key != "speech_attempt_id"}
+        return _ok(item=item, speech_attempt_id=row["speech_attempt_id"])
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("error")
+
+
+def note_post_speech(
+    conn: sqlite3.Connection,
+    attempt_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P9-SPEAK: one note per evidenced attempt — P9-D07
+    return _call(_note_post_speech, conn, attempt_id, now=now)
+
+
+def _note_post_speech(conn: sqlite3.Connection, attempt_id: str, **kwargs: Any) -> Dict[str, Any]:
+    if not attempt_id:
+        return _no("bad_args")
+    conn.execute("BEGIN IMMEDIATE")
+    current = _meta_get(conn, META_SPEECH_POST_NOTED) or ""
+    if current == attempt_id:
+        conn.execute("COMMIT")
+        return _ok(already=True)
+    _meta_set(conn, META_SPEECH_POST_NOTED, attempt_id)
+    conn.execute("COMMIT")
+    return _ok()

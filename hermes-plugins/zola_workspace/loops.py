@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 try:
@@ -112,10 +113,11 @@ def compile_predicate(intent: str, record: Optional[Dict[str, Any]], *, created_
         labels = {str(item).upper() for item in (record.get("labels") or [])}
         hashes = list(record.get("address_hashes") or [])
         thread_id = str(record.get("thread_id") or "")
+        message_id = str(record.get("message_id") or "")
         if labels & _SENT_LABELS:
             # P9-STORE: a message he sent does not name the other party — P9-D09
             return _refuse("sent_only")
-        if not thread_id or not hashes:
+        if not thread_id or not hashes or not message_id:
             return _refuse("not_compilable")
         return {
             "ok": True,
@@ -124,6 +126,8 @@ def compile_predicate(intent: str, record: Optional[Dict[str, Any]], *, created_
                 "args": [
                     {"op": "gmail_thread", "thread_id": thread_id},
                     {"op": "sender_is", "address_hash": hashes[0]},
+                    # P9-SPEAK: the message the loop was compiled from is not a reply — P9-D09
+                    {"op": "not_source", "message_ids": [message_id]},
                     {"op": "after", "at": created_at},
                 ],
             },
@@ -139,6 +143,7 @@ def compile_predicate(intent: str, record: Optional[Dict[str, Any]], *, created_
                 "args": [
                     {"op": "calendar_event", "event_id": event_id},
                     {"op": "calendar_cancelled"},
+                    {"op": "after", "at": created_at},
                 ],
             },
         }
@@ -154,10 +159,37 @@ def compile_predicate(intent: str, record: Optional[Dict[str, Any]], *, created_
                 "args": [
                     {"op": "calendar_event", "event_id": event_id},
                     {"op": "calendar_status_differs", "from_status": status},
+                    {"op": "after", "at": created_at},
                 ],
             },
         }
     return _refuse("bad_args")
+
+
+def _instant(value: str) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        try:
+            return datetime.fromtimestamp(int(text) / 1000.0, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _occurred_at(item: Dict[str, Any]) -> Optional[datetime]:
+    if str(item.get("source") or "") == "calendar" or item.get("event_id"):
+        return _instant(str(item.get("event_updated") or ""))
+    return _instant(str(item.get("internal_date") or ""))
 
 
 def _node_matches(node: Dict[str, Any], item: Dict[str, Any]) -> bool:
@@ -172,8 +204,19 @@ def _node_matches(node: Dict[str, Any], item: Dict[str, Any]) -> bool:
         return str(item.get("message_id") or "") == str(node.get("message_id") or "")
     if op == "sender_is":
         return str(item.get("sender_address_hash") or "") == str(node.get("address_hash") or "")
+    if op == "not_source":
+        message_id = str(item.get("message_id") or "")
+        banned = {str(value) for value in (node.get("message_ids") or []) if str(value)}
+        if not message_id or not banned:
+            return False
+        return message_id not in banned
     if op == "after":
-        return str(item.get("detected_at") or "") >= str(node.get("at") or "")
+        # P9-SPEAK: message time or event updated, not the watcher insert time — P9-D09
+        occurred = _occurred_at(item)
+        threshold = _instant(str(node.get("at") or ""))
+        if occurred is None or threshold is None:
+            return False
+        return occurred >= threshold
     if op == "calendar_event":
         return str(item.get("event_id") or "") == str(node.get("event_id") or "")
     if op == "calendar_cancelled":
@@ -218,9 +261,11 @@ def create_loop(conn: Any, args: Dict[str, Any]) -> Dict[str, Any]:
     intent = str(args.get("intent") or "")
     if intent not in _INTENTS:
         return _refuse("bad_args")
-    session_id, _turn_id = _session()
+    session_id, turn_id = _session()
     if not session_id:
         return _refuse("origin")
+    turn_record = turn_context.get_record(turn_id) if turn_id else None
+    user_message = turn_record.user_message if turn_record and isinstance(turn_record.user_message, str) else ""
     record = None
     if intent != "confirm_close":
         kind = _kind_for(intent)
@@ -234,12 +279,27 @@ def create_loop(conn: Any, args: Dict[str, Any]) -> Dict[str, Any]:
     compiled = compile_predicate(intent, record, created_at=created_at)
     if not compiled.get("ok"):
         return compiled
+    try:
+        try:
+            from . import speech
+        except ImportError:
+            import speech
+        source, chosen = speech.provenance(
+            session_id,
+            "" if record is None else str(record.get("sender_display_name") or ""),
+            [] if record is None else list(record.get("address_hashes") or []),
+            user_message,
+        )
+    except Exception:
+        source, chosen = "mail", "" if record is None else str(record.get("sender_display_name") or "")
+    display_name = chosen if source != "mail" else ("" if record is None else str(record.get("sender_display_name") or ""))
     stored = proactive_store.insert_loop(
         conn,
         intent=intent,
         predicate=compiled["predicate"],
         session_id=session_id,
-        sender_display_name="" if record is None else str(record.get("sender_display_name") or ""),
+        sender_display_name=display_name,
+        name_source=source,
         subject="" if record is None else str(record.get("subject") or ""),
         source_ids=[]
         if record is None

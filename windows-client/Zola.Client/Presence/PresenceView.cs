@@ -227,6 +227,13 @@ internal sealed class PresenceView : UserControl, IDisposable
         _animator.AttachPlaybackMonitor(serveProcessId);
     }
 
+    internal void EnsurePlaybackMonitor()
+    {
+        _animator.EnsurePlaybackMonitor();
+    }
+
+    internal DateTimeOffset? LastBoutStoppedUtc => _animator.LastBoutStoppedUtc;
+
     internal void KillOwnedPlayback()
     {
         _animator.KillOwnedPlayback();

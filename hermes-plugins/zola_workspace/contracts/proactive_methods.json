@@ -1,0 +1,11 @@
+{
+  "methods": [
+    "proactive.snapshot",
+    "proactive.recover",
+    "proactive.claim",
+    "proactive.speech_started",
+    "proactive.outcome",
+    "proactive.release",
+    "proactive.watcher_health"
+  ]
+}

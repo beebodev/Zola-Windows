@@ -20,6 +20,7 @@ internal sealed class TtsPlaybackMonitor : IDisposable
     private bool _monitoring;
     private bool _disposed;
     private bool _segmentActive;
+    private bool _forcedRelease;
     private bool _boutActive;
     private bool _fallbackLogged;
     private bool _foreignRejectLogged;
@@ -559,8 +560,17 @@ internal sealed class TtsPlaybackMonitor : IDisposable
 
         if (hadBout)
         {
+            // P9-SPEAK: a forced release is serve death or an explicit stop, not a clean end — P9-D11
+            _forcedRelease = true;
             Raise(BoutStopped);
         }
+    }
+
+    internal bool TakeForcedRelease()
+    {
+        var forced = _forcedRelease;
+        _forcedRelease = false;
+        return forced;
     }
 
     private void RefreshOwnershipRoots(bool log)

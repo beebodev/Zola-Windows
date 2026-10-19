@@ -12,6 +12,7 @@ using Windows.System;
 using Windows.UI.Core;
 using Windows.UI.ViewManagement;
 using Zola.Client.Presence;
+using Zola.Client.Speech;
 using Zola.Client.Supervision;
 using Zola.Client.Voice;
 
@@ -57,6 +58,9 @@ public sealed partial class MainWindow : Window
     private PresenceView? _presence;
     // P4-LOCK: one app-level lock/sleep watcher — P4-D01
     private SessionLockWatcher? _lockWatcher;
+    private readonly WatcherProcess? _watcher;
+    private ProactiveSpeechSession? _speech;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _speechTimer;
     private const int SessionIdDisplayLength = 8;
     private const string SessionHudPrefix = "SESSION ";
     private const string SessionHudEmpty = "SESSION —";
@@ -135,7 +139,7 @@ public sealed partial class MainWindow : Window
     private readonly HashSet<string> _quietClarifyIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _noAnswerPanelOpenedIds = new(StringComparer.Ordinal);
 
-    public MainWindow(HermesProcessManager backend)
+    public MainWindow(HermesProcessManager backend, WatcherProcess? watcher = null)
     {
         // P1-CLIENT: the window subscribes before start so the first ready state can open the socket — P1-D01
         InitializeComponent();
@@ -165,6 +169,7 @@ public sealed partial class MainWindow : Window
         _clockTimer.IsRepeating = true;
         _clockTimer.Tick += OnClockTick;
         _backend = backend;
+        _watcher = watcher;
         _chat = new ChatSocket(backend);
         // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
         _voice = new VoiceController(
@@ -187,6 +192,29 @@ public sealed partial class MainWindow : Window
         // P4-ASK: monitor bout forward + question speech wiring — P4-D13
         _presence.PlaybackBoutStarted += () => _voice.NotePlaybackBoutStarted();
         _presence.PlaybackBoutStopped += forced => _voice.NotePlaybackBoutStopped(forced);
+        // P9-SPEAK: one coordinator. The poll is the snapshot. Claim is the last step before the reservation — P9-D11
+        _speech = new ProactiveSpeechSession(
+            new ChatSpeechGateway(_chat),
+            ReadSpeechFacts,
+            () => _watcher?.Latch ?? WatcherProcessLatch.Stopped,
+            () => _presence?.KillOwnedPlayback(),
+            phrase => _voice.RememberProactivePhrase(phrase),
+            ShowWatcherLine,
+            prepareMonitor: PreparePlaybackMonitor,
+            noteSpoken: phrase => Dispatch(() => AddBubble("Zola", phrase, mine: false)));
+        _voice.ProactiveEcho = _speech.Echo;
+        _voice.SpeechStamp += stamp => _speech.OnStampAsync(stamp);
+        _presence.PlaybackBoutStarted += () => { _ = _speech.NotePlayback(active: true, forced: false); };
+        _presence.PlaybackBoutStopped += forced => { _ = _speech.NotePlayback(active: false, forced: forced); };
+        _speechTimer = DispatcherQueue.CreateTimer();
+        _speechTimer.IsRepeating = true;
+        _speechTimer.Interval = TimeSpan.FromSeconds(SpeechConstants.PollSeconds);
+        _speechTimer.Tick += OnSpeechPoll;
+        _speechTimer.Start();
+        if (_watcher is not null)
+        {
+            _watcher.LatchChanged += () => Dispatch(PaintSystems);
+        }
         // P7-VOICEAUTH: broker query scoped to clarify id + current session (never "any open") — P7-D05
         _voice.ConfigureQuestionSpeech(
             () => _presence?.PlaybackMonitorAvailable == true,
@@ -240,7 +268,11 @@ public sealed partial class MainWindow : Window
         _requests.ApprovalOpened += (id, view) => Dispatch(() => OnApprovalOpened(id, view));
         _requests.RequestClosed += (id, outcome) => Dispatch(() => OnRequestClosed(id, outcome));
         _backend.StateChanged += (_, _) => DispatcherQueue.TryEnqueue(Render);
-        Composer.TextChanged += (_, _) => UpdateChrome();
+        Composer.TextChanged += (_, _) =>
+        {
+            _speech?.NoteComposer(DateTimeOffset.UtcNow);
+            UpdateChrome();
+        };
         Composer.PreviewKeyDown += OnComposerKeyDown;
         Closed += (_, _) =>
         {
@@ -249,6 +281,11 @@ public sealed partial class MainWindow : Window
             // P3-SHELL: window close also stops the HUD clock — P3-D06
             _clockTimer.Stop();
             _clockTimer.Tick -= OnClockTick;
+            if (_speechTimer is not null)
+            {
+                _speechTimer.Stop();
+                _speechTimer.Tick -= OnSpeechPoll;
+            }
             _dockHideTimer.Stop();
             _dockHideTimer.Tick -= OnDockHideTimerTick;
             _noticeHoldTimer.Stop();
@@ -505,6 +542,8 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            // P9-SPEAK: the submit stamp is taken before the socket call, and it clears a held reservation — P9-D11
+            _speech?.NoteSubmit(DateTimeOffset.UtcNow);
             await _chat.SubmitAsync(text).ConfigureAwait(false);
             // P7-LATENCY: submit clock for turn_timing (typed vs voice) — P7-D10
             _voice.NoteTurnSubmit(turnKind, DateTimeOffset.Now);
@@ -762,6 +801,105 @@ public sealed partial class MainWindow : Window
         UpdateChrome();
     }
 
+    private Task PreparePlaybackMonitor()
+    {
+        var done = new TaskCompletionSource();
+        if (!DispatcherQueue.TryEnqueue(() =>
+        {
+            _presence?.EnsurePlaybackMonitor();
+            done.TrySetResult();
+        }))
+        {
+            done.TrySetResult();
+        }
+
+        return done.Task;
+    }
+
+    private SpeechFacts ReadSpeechFacts()
+    {
+        // P9-SPEAK: stamps and the bout clock are copied here. The monitor does not take this lock — P9-D11
+        return new SpeechFacts
+        {
+            UtcNow = DateTimeOffset.UtcNow,
+            LocalNow = DateTimeOffset.Now,
+            Locked = _voice.SystemLocked,
+            Suspended = _voice.SystemSuspended,
+            TextMode = _voice.Mode == VoiceController.ModeText,
+            Capture = _voice.CaptureActive,
+            Turn = _voice.TurnRunning,
+            Playback = _voice.Speaking,
+            Clarify = _voice.AwaitingAnswer || _voice.QuestionSpeaking,
+            BackendUp = _voice.BackendReachable && !_unreachable,
+            MonitorAvailable = _presence?.PlaybackMonitorAvailable != false,
+            LastComposerInputUtc = _speech?.LastComposerInputUtc,
+            LastWakeUtc = _voice.LastWakeUtc,
+            LastPushToTalkUtc = _voice.LastPushToTalkUtc,
+            LastSubmitUtc = _speech?.LastSubmitUtc,
+            LastTurnUtc = _voice.LastTurnUtc,
+            LastBoutStoppedUtc = _presence?.LastBoutStoppedUtc,
+        };
+    }
+
+    private void OnSpeechPoll(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        _ = _speech?.PollAsync();
+    }
+
+    private WatcherHudResult? _systemsHealth;
+
+    private void ShowWatcherLine(WatcherHudResult result)
+    {
+        Dispatch(() =>
+        {
+            _systemsHealth = result;
+            PaintSystems();
+        });
+    }
+
+    private void PaintSystems()
+    {
+        if (SystemsHost is null)
+        {
+            return;
+        }
+
+        SystemsHost.Width = SystemsCopy.PanelWidth;
+        SystemsHeader.Text = SystemsCopy.Header;
+        var health = _systemsHealth;
+        var rows = SystemsCopy.Rows(new SystemsFacts(
+            _voice.BackendReachable && _backend.WebSocketPermitted && !_unreachable && !_keepsFailing,
+            _unreachable && !_keepsFailing,
+            _keepsFailing,
+            _watcher?.Latch ?? WatcherProcessLatch.Running,
+            health?.Health,
+            health?.HealthSeen == true,
+            health?.GoogleConnected,
+            health?.RankerState,
+            health?.RankerProgressAt,
+            DateTimeOffset.UtcNow,
+            _voice.Mode != VoiceController.ModeVoice || (_voice.IsAvailable && !_voice.WakeUnavailable),
+            _voice.TtsRestoreActive));
+        ApplySystemRow(SystemsBackend, SystemsBackendLabel, SystemsBackendState, SystemsBackendDot, rows[0]);
+        ApplySystemRow(SystemsWatcher, SystemsWatcherLabel, SystemsWatcherState, SystemsWatcherDot, rows[1]);
+        ApplySystemRow(SystemsGoogle, SystemsGoogleLabel, SystemsGoogleState, SystemsGoogleDot, rows[2]);
+        ApplySystemRow(SystemsRanking, SystemsRankingLabel, SystemsRankingState, SystemsRankingDot, rows[3]);
+        ApplySystemRow(SystemsVoice, SystemsVoiceLabel, SystemsVoiceState, SystemsVoiceDot, rows[4]);
+    }
+
+    private void ApplySystemRow(Grid row, TextBlock label, TextBlock state, Microsoft.UI.Xaml.Shapes.Ellipse dot, SystemsCopy.View view)
+    {
+        row.Visibility = view.Visible ? Visibility.Visible : Visibility.Collapsed;
+        label.Text = view.Label;
+        var problem = view.State is not null;
+        state.Text = view.State ?? "";
+        state.Visibility = problem ? Visibility.Visible : Visibility.Collapsed;
+        dot.Visibility = problem ? Visibility.Collapsed : Visibility.Visible;
+        state.Foreground = view.Level == SystemsCopy.Level.Down
+            ? Token<Brush>("ZolaErrorBrush")
+            : Token<Brush>("ZolaAlertGlowBrush");
+    }
+
     private void ApplyVoiceChrome()
     {
         // P3-STATE: the window assigns chrome from the display record — P3-D03
@@ -777,6 +915,7 @@ public sealed partial class MainWindow : Window
         var s = _display.Current;
         // P3-SHELL: HUD and dock labels are presentation-only upper-case; the model strings stay as they are — P3-D06
         VoiceStateText.Text = VoiceBulletPrefix + s.VoiceLabel.ToUpperInvariant();
+        PaintSystems();
         // P4-FEEDBACK: activity line under VOICE; empty when Waiting or reply text — P4-D16
         if (string.IsNullOrEmpty(s.ActivityLine))
         {

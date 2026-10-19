@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Zola.Client.Speech;
 using Zola.Client.Supervision;
 using Zola.Client.Voice;
 
@@ -317,6 +318,7 @@ sealed class VoiceController
     public long AdmittedConnectionEpoch => Interlocked.Read(ref _admittedEpoch);
 
     public bool? TtsBeforeGap { get; private set; }
+    public bool TtsRestoreActive { get; private set; }
 
     public bool PreserveTtsAcrossNextSync { get; set; }
 
@@ -361,6 +363,41 @@ sealed class VoiceController
     public bool BackendReachable { get; private set; }
 
     public bool TurnRunning { get; private set; }
+
+    // P9-SPEAK: idle stamps. The wake stamp is an admitted wake, not a detector re-arm — P9-D11
+    public DateTimeOffset? LastWakeUtc { get; private set; }
+
+    public DateTimeOffset? LastPushToTalkUtc { get; private set; }
+
+    public DateTimeOffset? LastTurnUtc { get; private set; }
+
+    public SpeechEchoGuard? ProactiveEcho { get; set; }
+
+    public event Action<string>? SpeechStamp;
+
+    public void RememberProactivePhrase(string phrase)
+    {
+        RememberSpokenEcho(phrase);
+    }
+
+    private void NoteSpeechStamp(string stamp)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (stamp == SpeechConstants.StampWake)
+        {
+            LastWakeUtc = now;
+        }
+        else if (stamp == SpeechConstants.StampPushToTalk)
+        {
+            LastPushToTalkUtc = now;
+        }
+        else if (stamp == SpeechConstants.StampTurn)
+        {
+            LastTurnUtc = now;
+        }
+
+        SpeechStamp?.Invoke(stamp);
+    }
 
     // P2-SPEAK: Speaking is an estimate from the simulated playback clock, not measured audio — P2-D08
     // P4-ASK: also held true while QuestionSpeaking drives the Speaking display/monitor path — P4-D13
@@ -1038,9 +1075,15 @@ sealed class VoiceController
             return;
         }
 
+        var turnStarted = turnRunning && !TurnRunning;
         SessionReady = sessionReady;
         BackendReachable = backendReachable;
         TurnRunning = turnRunning;
+        if (turnStarted)
+        {
+            NoteSpeechStamp(SpeechConstants.StampTurn);
+        }
+
         StateChanged?.Invoke();
         // P2-WAKE: TurnRunning leaving or entering Resting pauses or resumes the detector — P2-D12
         _ = ReconcileWakeRestingAsync(turnRunning ? "turn-start" : "turn-end");
@@ -1122,6 +1165,7 @@ sealed class VoiceController
     // P4-FEEDBACK: Stop = toggle off + restore availability; no interrupt; no AbandonPendingQuestion — P4-FB-STOP
     public async Task StopSpeakingAsync()
     {
+        NoteSpeechStamp(SpeechConstants.StampStop);
         WriteTimeline(StopSpeakingRequested);
         if (SystemLocked || SystemSuspended || _gateHolding)
         {
@@ -1639,6 +1683,10 @@ sealed class VoiceController
 
         var sameProcess = TtsRestore.IsSameProcessGeneration(_generationAtOutage, _processGeneration());
         var session = new TtsRestoreSession(sameProcess, TtsBeforeGap.Value);
+        TtsRestoreActive = true;
+        StateChanged?.Invoke();
+        try
+        {
         for (var step = 0; step < TtsRestore.MaxDecisions; step++)
         {
             switch (session.Next())
@@ -1704,6 +1752,12 @@ sealed class VoiceController
                     StateChanged?.Invoke();
                     return;
             }
+        }
+        }
+        finally
+        {
+            TtsRestoreActive = false;
+            StateChanged?.Invoke();
         }
     }
 
@@ -1771,6 +1825,8 @@ sealed class VoiceController
 
         if (!CaptureActive)
         {
+            // P9-SPEAK: push-to-talk cancels a proactive line before the capture starts — P9-D11
+            NoteSpeechStamp(SpeechConstants.StampPushToTalk);
             await StartCaptureAsync(CaptureKind.Manual, requiredGeneration: null).ConfigureAwait(false);
             return;
         }
@@ -1941,6 +1997,13 @@ sealed class VoiceController
         // P4-LOCK: every capture path refuses while the system gate holds — P4-D02
         if (RefuseIfGated(GateRefuseCaptureStart))
         {
+            return StartDisposition.Rejected;
+        }
+
+        // P9-SPEAK: a capture that started while a proactive line was queued or inside the tail is refused — P9-D11
+        if (ProactiveEcho is not null && !ProactiveEcho.AllowsCapture(kind == CaptureKind.Manual, DateTimeOffset.UtcNow))
+        {
+            WriteTimeline("proactive.deliver attempt=- outcome=deny reason=echo phrase=- name_source=-");
             return StartDisposition.Rejected;
         }
 
@@ -4208,6 +4271,7 @@ sealed class VoiceController
         }
 
         WriteTimeline($"wake.detected phrase={phrase} profile={profile}");
+        NoteSpeechStamp(SpeechConstants.StampWake);
         _wakeCapturePending = true;
         try
         {

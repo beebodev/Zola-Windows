@@ -930,7 +930,9 @@ sealed class ChatSocket : IDisposable
             ReadOpenRequests(result),
             result.TryGetProperty("pending_approval", out var pending) && pending.ValueKind == JsonValueKind.Object,
             // P8-READ: slash.exec compress returns output as one system line — P8-D09
-            ReadString(result, "output"));
+            ReadString(result, "output"),
+            // P9-SPEAK: proactive replies keep their own fields in the raw result — P9-D11
+            result.GetRawText());
     }
 
     private static string? DeltaChunk(JsonElement payload)
@@ -1066,7 +1068,8 @@ sealed class ChatSocket : IDisposable
         // P4-REQUEST: optional open_requests from resume/activate — P4-D11
         IReadOnlyList<OpenRequestSnapshot>? OpenRequests = null,
         bool PendingApprovalPresent = false,
-        string? Output = null);
+        string? Output = null,
+        string? Payload = null);
 
     // P4-REQUEST: one open_requests row cloned for the broker — P4-D11
     internal readonly record struct OpenRequestSnapshot(string Id, string Method, Dictionary<string, JsonElement> Params);

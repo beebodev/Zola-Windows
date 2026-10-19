@@ -819,6 +819,12 @@ def agent_loop_stopped_hook(**kwargs: Any) -> None:
         pass
 
 
+def has_reviewed_draft() -> bool:
+    # P9-SPEAK: a reviewed draft still inside its TTL denies unprompted speech — P9-D11
+    with _lock:
+        return any(_live(draft) for draft in _pending.values())
+
+
 def pending_for_tests(session_id: str) -> Optional[Dict[str, Any]]:
     with _lock:
         draft = _pending.get(session_id)

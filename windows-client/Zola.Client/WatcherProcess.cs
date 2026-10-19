@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Zola.Client.Speech;
 using Zola.Client.Supervision;
 
 namespace Zola.Client;
@@ -13,7 +14,31 @@ public sealed class WatcherProcess
     private Process? _child;
     private SafeHandle? _job;
     private bool _stopped;
+    private WatcherProcessLatch _latch = WatcherProcessLatch.Stopped;
     private readonly ServeStderrLog _output;
+
+    public WatcherProcessLatch Latch
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _latch;
+            }
+        }
+    }
+
+    public event Action? LatchChanged;
+
+    private void SetLatch(WatcherProcessLatch value)
+    {
+        lock (_gate)
+        {
+            _latch = value;
+        }
+
+        LatchChanged?.Invoke();
+    }
 
     public WatcherProcess(string profileDirectory)
     {
@@ -47,6 +72,8 @@ public sealed class WatcherProcess
         {
             _stopped = true;
         }
+
+        SetLatch(WatcherProcessLatch.Stopped);
 
         KillChild();
     }
@@ -115,6 +142,8 @@ public sealed class WatcherProcess
         {
             _child = child;
         }
+
+        SetLatch(WatcherProcessLatch.Running);
     }
 
     private void OnExit(long generation, Process child)
@@ -142,6 +171,8 @@ public sealed class WatcherProcess
         restarts = _supervisor.Policy.AttemptsInWindow(now);
         if (kind == WatcherExitKind.Spawn)
         {
+            SetLatch(WatcherProcessLatch.Restarting);
+
             SupervisionLog.Write(SupervisionConstants.ProcWatcher, SupervisionConstants.EventRestart, restarts, generation);
             Task.Delay(TimeSpan.FromSeconds(SupervisionConstants.RestartBackoffSeconds))
                 .ContinueWith(_ => Start());
@@ -154,6 +185,11 @@ public sealed class WatcherProcess
             WatcherExitKind.Terminal => SupervisionConstants.EventKeepsFailing,
             _ => "stop",
         };
+        if (kind == WatcherExitKind.Terminal)
+        {
+            SetLatch(WatcherProcessLatch.Stopped);
+        }
+
         SupervisionLog.Write(SupervisionConstants.ProcWatcher, eventName, restarts, generation);
         child.Dispose();
     }

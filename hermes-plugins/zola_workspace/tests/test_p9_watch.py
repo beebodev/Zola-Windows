@@ -220,6 +220,7 @@ class WatchTests(unittest.TestCase):
             self.assertTrue(done["ok"], done)
         if proactive_store._item(self.conn, item_id)["eligibility"] == "pending":
             self.assertTrue(proactive_store.mark_eligible(self.conn, item_id, now=T0)["ok"])
+        self.assertTrue(proactive_store.set_loop_matched(self.conn, item_id, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, item_id, now=T0)
         self.assertTrue(speech["ok"], speech)
         self.assertTrue(
@@ -326,7 +327,7 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(other["new"], 1)
         self.assertIsNone(self.conn.execute("SELECT matched_at FROM loops").fetchone()[0])
         self.fake.history_added = [{"id": "m-good", "thread": "thread-good"}]
-        self.fake.messages["m-good"] = _message("m-good", "thread-good")
+        self.fake.messages["m-good"] = _message("m-good", "thread-good", internal_ms="1780272000000")
         self.fake.history_id = "h-4"
         good = watcher.run_gmail(self.conn, now=T0)
         self.assertEqual(good["new"], 1)
@@ -366,7 +367,7 @@ class WatchTests(unittest.TestCase):
             now=T0,
         )
         self.fake.history_added = [{"id": "m-crash", "thread": "thread-good"}]
-        self.fake.messages["m-crash"] = _message("m-crash", "thread-good")
+        self.fake.messages["m-crash"] = _message("m-crash", "thread-good", internal_ms="1780272000000")
         self.fake.history_id = "h-9"
         original = loops.evaluate
         calls = {"n": 0}
@@ -392,6 +393,46 @@ class WatchTests(unittest.TestCase):
             self.conn.execute("SELECT loop_matched FROM items").fetchone()[0],
             1,
         )
+
+    def test_old_message_seen_after_the_loop_does_not_match(self) -> None:
+        watcher.run_gmail(self.conn, now=T0)
+        address_hash = proactive_store.address_hash(ADDRESS)
+        proactive_store.insert_loop(
+            self.conn,
+            intent="reply",
+            predicate={
+                "op": "all",
+                "args": [
+                    {"op": "gmail_thread", "thread_id": "thread-good"},
+                    {"op": "sender_is", "address_hash": address_hash},
+                    {"op": "after", "at": "2026-06-01T00:00:00Z"},
+                ],
+            },
+            session_id="sess",
+            expiry_days=7,
+            now=T0,
+        )
+        before = str(int(datetime(2026, 5, 1, tzinfo=timezone.utc).timestamp() * 1000))
+        after = str(int(datetime(2026, 6, 2, tzinfo=timezone.utc).timestamp() * 1000))
+        self.fake.history_added = [{"id": "m-old", "thread": "thread-good"}]
+        self.fake.messages["m-old"] = _message("m-old", "thread-good", internal_ms=before)
+        self.fake.history_id = "h-old"
+        ingested = watcher.run_gmail(self.conn, now=T0)
+        self.assertEqual(ingested["new"], 1)
+        self.assertIsNone(self.conn.execute("SELECT matched_at FROM loops").fetchone()[0])
+        self.fake.history_added = [{"id": "m-reply", "thread": "thread-good"}]
+        self.fake.messages["m-reply"] = _message("m-reply", "thread-good", internal_ms=after)
+        self.fake.history_id = "h-reply"
+        replied = watcher.run_gmail(self.conn, now=T0)
+        self.assertEqual(replied["new"], 1)
+        self.assertIsNotNone(self.conn.execute("SELECT matched_at FROM loops").fetchone()[0])
+        matched = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT message_id FROM items WHERE loop_matched = 1"
+            )
+        }
+        self.assertEqual(matched, {"m-reply"})
 
     def test_partial_get_holds_the_cursor(self) -> None:
         watcher.run_gmail(self.conn, now=T0)
