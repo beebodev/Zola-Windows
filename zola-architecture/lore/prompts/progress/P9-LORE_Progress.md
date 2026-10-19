@@ -19,7 +19,7 @@
 | 4 | Draft ROADMAP.md | COMPLETE (STOP) — revised for the old candidate list, not applied |
 | 5 | Live, identity, and external verification | COMPLETE (STOP) — read-only, below |
 | 6 | Apply, verify, STOP | COMPLETE (STOP) — applied, not committed |
-| 7 | Commit and merge | Implementation `748534b19d570741dd22196896e6fe8efee2e46b`. Merge SHA recorded after the merge. |
+| 7 | Commit and merge | COMPLETE. Implementation `748534b19d570741dd22196896e6fe8efee2e46b`. Merge `8842d315420574a012f2a2d0cd103507560bd376`. |
 
 Phase 5 addition, run below. The ACL of `%LOCALAPPDATA%\ZolaClient\secrets\` and of the key file was read. The contents were not.
 
@@ -1044,7 +1044,10 @@ S86 records that this paragraph is drafted and waiting for Brian to publish.
 | Smoke after each track boundary | ✅ Recorded in each track progress doc. Not re-run here. |
 | Lore closeout | ⚠️ Decisions, open questions, roadmap, and `VOICE_CONFIG.md` are applied. The lore-closeout paragraph (unprompted speech, 7-day and 30-day retention, sent mail not watched) is drafted and waiting for Brian to publish. |
 
-STOP. The closeout commit is `748534b19d570741dd22196896e6fe8efee2e46b`. The merge SHA is recorded in the next commit.
+Implementation commit: `748534b19d570741dd22196896e6fe8efee2e46b`.
+Merge commit on `main`: `8842d315420574a012f2a2d0cd103507560bd376`.
+
+Phase 9 CLOSED.
 
 
 
