@@ -1154,6 +1154,6 @@ Modified: `hermes-plugins/zola_workspace/__init__.py`, `log.py`, `loops.py`, `pr
 | Client builds; suites pass | Plan wording, unchanged | The tested build is the Debug client from `dotnet run`, not the Release exe. | MET. DLL hash and suite counts above. |
 
 Implementation commit: `20ea9aeffebabb632eb2b55fb5f36c1189fb514f`.
-Merge commit on `main`: `MERGE_SHA`.
+Merge commit on `main`: `abeff7e516bc4c4a9fb9d060cdd414c83b57f5af`.
 
 
