@@ -35,7 +35,7 @@ SURFACE_SUBJECT_CAP = 120
 SURFACE_GIST_CAP = 280
 SURFACE_AGE_SECONDS = 24 * 3600
 SURFACE_REINJECT_CAP = 2
-SURFACE_ATTEMPT_TTL_SECONDS = 600
+SURFACE_ATTEMPT_TTL_SECONDS = proactive_store.SURFACE_ATTEMPT_TTL_SECONDS
 SURFACE_HANDLE_TTL_SECONDS = 900
 SURFACE_LIST_LINE_CAP = 10
 SURFACE_BUSY_MS = 200
@@ -306,23 +306,28 @@ def _label_phrase(row: Dict[str, Any]) -> str:
     return "Worth a look."
 
 
+def _with_spoken(row: Dict[str, Any], line: str) -> str:
+    # P9-SPEAK: a delivered item inside the post-speech window says it was already spoken — P9-D07
+    if row.get("post_speech"):
+        return line + " I already mentioned this out loud."
+    return line
+
+
 def _line_for(row: Dict[str, Any]) -> str:
     if row.get("source") == "calendar":
         start = _parse_iso(row.get("start_at"))
         day = start.strftime("%A") if start else "a later day"
-        return "A calendar change is on the books for %s." % day
+        return _with_spoken(row, "A calendar change is on the books for %s." % day)
     if int(row.get("loop_matched") or 0) and not (row.get("gist") or "").strip():
-        return "A watched thread has new mail, still being sorted."
+        return _with_spoken(row, "A watched thread has new mail, still being sorted.")
     name = _clip(row.get("sender_display_name") or "Someone", SURFACE_NAME_CAP) or "Someone"
     domain = _domain(str(row.get("sender_address") or "")) or "unknown"
     subject = _clip(row.get("subject") or "a message", SURFACE_SUBJECT_CAP) or "a message"
     gist = _clip(row.get("gist") or "", SURFACE_GIST_CAP)
-    return "Name: %s. Domain: %s. Subject: %s. %s %s" % (
-        name,
-        domain,
-        subject,
-        gist,
-        _label_phrase(row),
+    return _with_spoken(
+        row,
+        "Name: %s. Domain: %s. Subject: %s. %s %s"
+        % (name, domain, subject, gist, _label_phrase(row)),
     )
 
 
@@ -546,6 +551,29 @@ def _finish_text(
     return text
 
 
+def _post_speech_note(conn, session_id, task_id, turn_id, now, item, speech_attempt, started) -> Optional[str]:
+    # P9-SPEAK: inside the gap, one note bound to the speech attempt, without a new injection — P9-D07
+    row = dict(item)
+    row["post_speech"] = 1
+    text = _finish_text(session_id, now, [row], {"ordinary": 0, "held": 0, "older": 0}, 0)
+    if not text:
+        return None
+    if _line_is_mail(row) and not _mark(session_id, task_id):
+        _log("taint_failed", gap=0, returned=0, items=0, chars=0, ms=_ms(started))
+        return None
+    _attempts[session_id] = {
+        "attempt_id": "",
+        "turn_id": turn_id,
+        "pending": True,
+        "post_speech_only": True,
+        "post_speech_attempt_id": speech_attempt,
+        "rows": {row["id"]: row},
+    }
+    returned = _present(text, _has_loop([row]))
+    _log("ok", gap=0, returned=1, items=1, chars=len(returned), ms=_ms(started))
+    return returned
+
+
 def pre_llm_call_hook(**kwargs: Any) -> Optional[str]:
     """Return the block, or nothing. Never raises into Hermes."""
     started = time.perf_counter()
@@ -572,11 +600,22 @@ def _pre_llm(**kwargs: Any) -> Optional[str]:
         return None
     try:
         now = _clock()
+        # P9-SPEAK: the next note sees delivery_uncertain without waiting for the hourly purge — P9-D11
+        proactive_store.release_speech_lease(conn, now=now)
         marker = proactive_store.read_surface_marker(conn)
         if not marker.get("ok"):
             _log(marker.get("refused_reason") or "locked", gap=0, returned=0, items=0, chars=0, ms=_ms(started))
             return None
+        post = proactive_store.post_speech_candidate(
+            conn, now=now, window_seconds=proactive_store.POST_SPEECH_WINDOW_SECONDS
+        )
+        post_item = post.get("item") if post.get("ok") else None
+        post_attempt = str(post.get("speech_attempt_id") or "") if post.get("ok") else ""
         if not _gap_open(marker, now):
+            if post_item and post_attempt:
+                return _post_speech_note(
+                    conn, session_id, task_id, turn_id, now, post_item, post_attempt, started
+                )
             wrote = proactive_store.write_surface_marker(conn, now=now, attempt_id="", confirmed=True)
             if not wrote.get("ok"):
                 _log("marker_failed", gap=0, returned=0, items=0, chars=0, ms=_ms(started))
@@ -591,7 +630,12 @@ def _pre_llm(**kwargs: Any) -> Optional[str]:
         if not lapses.get("ok"):
             _log("locked", gap=1, returned=0, items=0, chars=0, ms=_ms(started))
             return None
-        _text, picked, counts = _build_block(list(listed.get("items") or []), now, session_id)
+        rows = list(listed.get("items") or [])
+        if post_item:
+            for row in rows:
+                if row.get("id") == post_item.get("id"):
+                    row["post_speech"] = 1
+        _text, picked, counts = _build_block(rows, now, session_id)
         lapse_ids = list(lapses.get("ids") or [])
         attempt_id = str(uuid.uuid4())
         kept: List[Dict[str, Any]] = []
@@ -642,6 +686,7 @@ def _pre_llm(**kwargs: Any) -> Optional[str]:
             "attempt_id": attempt_id,
             "turn_id": turn_id,
             "pending": True,
+            "post_speech_attempt_id": post_attempt if any(row.get("post_speech") for row in kept) else "",
             "rows": {row["id"]: row for row in kept},
         }
         _seen_block.add(session_id)
@@ -688,6 +733,11 @@ def _post_llm(**kwargs: Any) -> None:
         return
     try:
         now = _clock()
+        if state.get("post_speech_only"):
+            proactive_store.note_post_speech(conn, str(state.get("post_speech_attempt_id") or ""), now=now)
+            state["pending"] = False
+            _log("confirmed", gap=0, returned=0, items=1, chars=0, ms=0, confirmed=1)
+            return
         confirmed = proactive_store.confirm_surface_attempt(
             conn,
             state["attempt_id"],
@@ -706,6 +756,8 @@ def _post_llm(**kwargs: Any) -> None:
             for item_id, row in state.get("rows", {}).items():
                 if _reply_names_item(reply, row):
                     proactive_store.mark_possibly_surfaced(conn, item_id, now=now)
+            if state.get("post_speech_attempt_id"):
+                proactive_store.note_post_speech(conn, state["post_speech_attempt_id"], now=now)
         _log(
             "confirmed",
             gap=0,

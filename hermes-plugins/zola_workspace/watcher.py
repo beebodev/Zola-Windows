@@ -478,6 +478,7 @@ def _ingest_message(
         "message_id": message.get("message_id") or message_id,
         "thread_id": message.get("thread_id") or thread_id,
         "sender_address_hash": proactive_store.address_hash(message.get("from_address") or ""),
+        "internal_date": str(message.get("internal_date") or ""),
         "detected_at": _iso(now),
     }
     if _finish_item(conn, inserted["id"], view, now, close_terminal=False) == "held":
@@ -685,6 +686,7 @@ def _apply_event(
         "source": "calendar",
         "event_id": event["event_id"],
         "calendar_status": event.get("calendar_status") or "",
+        "event_updated": str(event.get("event_updated") or ""),
         "detected_at": _iso(now),
     }
     try:

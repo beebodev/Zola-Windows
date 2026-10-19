@@ -100,12 +100,7 @@ class StoreTests(unittest.TestCase):
         self._eligible(item_id)
         self.assertEqual(_row(self.conn, item_id)["eligibility"], "eligible")
         self.assertIsNone(_row(self.conn, item_id)["body"])
-        selected = proactive_store.select_for_conversation(self.conn, item_id, now=T0)
-        self.assertTrue(selected["ok"], selected)
-        surfaced = proactive_store.mark_possibly_surfaced(self.conn, item_id, now=T0)
-        self.assertTrue(surfaced["ok"], surfaced)
-        acked = proactive_store.acknowledge(self.conn, item_id, now=T0)
-        self.assertTrue(acked["ok"], acked)
+        self.assertTrue(proactive_store.set_loop_matched(self.conn, item_id, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, item_id, now=T0)
         self.assertTrue(speech["ok"], speech)
         started = proactive_store.mark_speech_started(
@@ -117,6 +112,12 @@ class StoreTests(unittest.TestCase):
         )
         self.assertTrue(delivered["ok"], delivered)
         self.assertEqual(_row(self.conn, item_id)["delivery"], "delivered")
+        selected = proactive_store.select_for_conversation(self.conn, item_id, now=T0)
+        self.assertTrue(selected["ok"], selected)
+        surfaced = proactive_store.mark_possibly_surfaced(self.conn, item_id, now=T0)
+        self.assertTrue(surfaced["ok"], surfaced)
+        acked = proactive_store.acknowledge(self.conn, item_id, now=T0)
+        self.assertTrue(acked["ok"], acked)
         closed = proactive_store.close_item(self.conn, item_id, now=T0)
         self.assertTrue(closed["ok"], closed)
         self.assertIsNotNone(_row(self.conn, item_id)["closed_at"])
@@ -134,6 +135,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(_snap(self.conn, item_id), before)
         held = self._gmail("held-close")
         self._eligible(held)
+        self.assertTrue(proactive_store.set_loop_matched(self.conn, held, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, held, now=T0)
         self.assertTrue(speech["ok"], speech)
         held_before = _snap(self.conn, held)
@@ -163,6 +165,7 @@ class StoreTests(unittest.TestCase):
     def test_delivery_uncertain_is_not_claimable(self) -> None:
         item_id = self._gmail()
         self._eligible(item_id)
+        self.assertTrue(proactive_store.set_loop_matched(self.conn, item_id, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, item_id, now=T0)
         started = proactive_store.mark_speech_started(
             self.conn, item_id, speech["attempt_id"], now=T0
@@ -178,6 +181,7 @@ class StoreTests(unittest.TestCase):
     def test_expired_claim_returns_to_none(self) -> None:
         item_id = self._gmail()
         self._eligible(item_id)
+        self.assertTrue(proactive_store.set_loop_matched(self.conn, item_id, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, item_id, now=T0)
         self.assertTrue(speech["ok"], speech)
         recovered = proactive_store.release_speech_lease(self.conn, now=_at(seconds=31))
@@ -189,9 +193,12 @@ class StoreTests(unittest.TestCase):
     def test_retention_nulls_content_and_keeps_inflight_delivery(self) -> None:
         old = _at(days=-8)
         idle = self._gmail("old-idle", now=old, subject="old subject", body="old body")
-        held = self._gmail("old-held", now=old, subject="held subject", body="held body")
-        self._eligible(held, now=old)
+        held = self._gmail("old-held", now=T0, subject="held subject", body="held body")
+        self._eligible(held, now=T0)
+        self.assertTrue(proactive_store.set_loop_matched(self.conn, held, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, held, now=T0)
+        self.conn.execute("UPDATE items SET detected_at = ? WHERE id = ?", (proactive_store._iso(old), held))
+        self.conn.commit()
         self.assertTrue(speech["ok"], speech)
         first = proactive_store.purge_retention(self.conn, now=T0)
         self.assertTrue(first["ok"], first)
@@ -314,6 +321,7 @@ class StoreTests(unittest.TestCase):
         item_id = self._gmail(subject="speak this")
         proactive_store.set_sender_resolution(self.conn, item_id, entity_id="ent-fly")
         self._eligible(item_id)
+        self.assertTrue(proactive_store.set_loop_matched(self.conn, item_id, now=T0)["ok"])
         speech = proactive_store.claim_speech(self.conn, item_id, now=T0)
         result = proactive_store.forget_subject(self.conn, entity_id="ent-fly")
         self.assertTrue(result["ok"], result)
@@ -630,8 +638,11 @@ class LoopTests(unittest.TestCase):
         compiled = loops.compile_predicate("reply", record, created_at="2026-01-02T00:00:00Z")
         self.assertTrue(compiled["ok"], compiled)
         incoming = {
+            "source": "gmail",
             "thread_id": "thread-1",
+            "message_id": "mid-later",
             "sender_address_hash": record["address_hashes"][0],
+            "internal_date": str(int(datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp() * 1000)),
             "detected_at": "2026-01-03T00:00:00Z",
         }
         self.assertTrue(loops.evaluate(compiled["predicate"], incoming))
@@ -649,6 +660,68 @@ class LoopTests(unittest.TestCase):
             loops.compile_predicate("reply", draft, created_at="2026-01-02T00:00:00Z").get("refused_reason"),
             "sent_only",
         )
+
+    def test_reply_refuses_its_source_and_uses_message_time(self) -> None:
+        handle = self._remember(name="Ada Synthetic", subject="Only subject", address="ada@example.com")
+        with self._ticket():
+            record = recorded_results.resolve("sess-1", recorded_results.KIND_GMAIL, handle)["record"]
+        created_at = "2026-01-02T00:00:00Z"
+        compiled = loops.compile_predicate("reply", record, created_at=created_at)
+        self.assertTrue(compiled["ok"], compiled)
+        predicate = compiled["predicate"]
+        source_id = record["message_id"]
+        sender = record["address_hashes"][0]
+        before = str(int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000))
+        later = str(int(datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp() * 1000))
+        sent_then_seen_late = str(int(datetime(2026, 1, 3, 0, 0, tzinfo=timezone.utc).timestamp() * 1000))
+
+        def item(message_id: str, internal_date: str, **extra: str) -> dict:
+            row = {
+                "source": "gmail",
+                "thread_id": "thread-1",
+                "message_id": message_id,
+                "sender_address_hash": sender,
+                "internal_date": internal_date,
+                "detected_at": "2026-01-03T00:10:00Z",
+            }
+            row.update(extra)
+            return row
+
+        source = item(source_id, later)
+        self.assertFalse(loops.evaluate(predicate, source))
+        earlier = item("mid-earlier", before)
+        self.assertFalse(loops.evaluate(predicate, earlier))
+        genuine = item("mid-reply", later)
+        self.assertTrue(loops.evaluate(predicate, genuine))
+        own = item("mid-own", later, sender_address_hash=proactive_store.address_hash("brian-sent@example.com"))
+        self.assertFalse(loops.evaluate(predicate, own))
+        delayed = item("mid-delayed", sent_then_seen_late, detected_at="2026-01-03T00:05:00Z")
+        self.assertTrue(loops.evaluate(predicate, delayed))
+
+    def test_calendar_after_uses_updated_not_ingest_time(self) -> None:
+        created_at = "2026-01-02T00:00:00Z"
+        record = {"event_id": "evt-1", "calendar_status": "confirmed", "event_updated": "2026-01-01T00:00:00Z"}
+        cancelled = loops.compile_predicate("cancelled", record, created_at=created_at)
+        changed = loops.compile_predicate("status_change", record, created_at=created_at)
+        self.assertTrue(cancelled["ok"], cancelled)
+        self.assertTrue(changed["ok"], changed)
+        stale = {
+            "source": "calendar",
+            "event_id": "evt-1",
+            "calendar_status": "cancelled",
+            "event_updated": "2026-01-01T12:00:00Z",
+            "detected_at": "2026-01-03T00:00:00Z",
+        }
+        self.assertFalse(loops.evaluate(cancelled["predicate"], stale))
+        fresh = dict(stale)
+        fresh["event_updated"] = "2026-01-03T00:00:00Z"
+        self.assertTrue(loops.evaluate(cancelled["predicate"], fresh))
+        moved = dict(fresh)
+        moved["calendar_status"] = "tentative"
+        self.assertTrue(loops.evaluate(changed["predicate"], moved))
+        moved_early = dict(moved)
+        moved_early["event_updated"] = "2026-01-01T12:00:00Z"
+        self.assertFalse(loops.evaluate(changed["predicate"], moved_early))
 
     def test_match_does_not_close_and_close_needs_list_and_ticket(self) -> None:
         self._remember(name="Ada Synthetic", subject="Only subject", address="ada@example.com")

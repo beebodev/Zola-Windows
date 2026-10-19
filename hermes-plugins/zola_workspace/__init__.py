@@ -195,6 +195,15 @@ def register(ctx) -> None:
     except ImportError:
         import origin  # type: ignore
     origin.install_for_serve()
+    # P9-SPEAK: gateway methods, serve process only, no Hermes edit — P9-D11
+    try:
+        try:
+            from . import speech
+        except ImportError:
+            import speech
+        speech.install_methods()
+    except Exception:
+        pass
     # P9-RANK: the worker starts only in serve, and only when the config flag is true — P9-D08
     try:
         try:

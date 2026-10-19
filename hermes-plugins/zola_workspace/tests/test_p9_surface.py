@@ -459,10 +459,12 @@ class SurfaceTests(unittest.TestCase):
         raw.close()
         conn = proactive_store.connect(legacy, retry=False)
         version = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "4")
+        self.assertEqual(version, "5")
         columns = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
         self.assertIn("closed_reason", columns)
         self.assertIn("inject_count", columns)
+        loop_columns = {row[1] for row in conn.execute("PRAGMA table_info(loops)")}
+        self.assertIn("name_source", loop_columns)
         self.assertEqual(conn.execute("SELECT subject FROM items WHERE id = 'kept'").fetchone()[0], "kept subject")
         old = self._gmail("old-mail", label="normal", gist="old gist", now=_at(days=-8))
         watched = self._gmail("watched", label="important", gist="watch gist", now=_at(days=-8), thread_id="thread-live")

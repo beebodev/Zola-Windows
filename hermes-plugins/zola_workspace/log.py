@@ -25,6 +25,8 @@ LOG_EVENT_SEND_GATE = "zola_workspace.send_gate"
 LOG_EVENT_RANKER = "zola_workspace.ranker"
 # P9-SURFACE: counts, lengths, and reasons only — P9-D10
 LOG_EVENT_SURFACE = "zola_workspace.surface"
+# P9-SPEAK: attempt hash, outcome, reason, phrase index, name source. Never the name — P9-D11
+LOG_EVENT_SPEAK = "proactive.deliver"
 
 _logger = logging.getLogger("zola_workspace")
 _file_handler_ready = False

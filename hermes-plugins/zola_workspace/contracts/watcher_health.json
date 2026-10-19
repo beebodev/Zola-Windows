@@ -1,0 +1,14 @@
+{
+  "gmail_limit_seconds": 360,
+  "calendar_limit_seconds": 14400,
+  "note": "For up to 360 s the HUD can say watcher stopped while the spoken answer is still healthy. spoken is the health row. hud_line is the client process latch.",
+  "cases": [
+    {"name": "missing_row", "row": null, "spoken": "unknown", "hud_process": "running", "hud_line": ""},
+    {"name": "needs_reconnect", "row": {"needs_reconnect": 1, "gmail_ok_at": "2026-10-16T11:59:00Z", "calendar_ok_at": "2026-10-16T11:00:00Z"}, "spoken": "needs_reconnect", "hud_process": "running", "hud_line": ""},
+    {"name": "healthy_just_now", "row": {"needs_reconnect": 0, "gmail_ok_at": "2026-10-16T11:59:30Z", "calendar_ok_at": "2026-10-16T10:00:00Z"}, "spoken": "healthy", "hud_process": "running", "hud_line": ""},
+    {"name": "stopped_under_360", "row": {"needs_reconnect": 0, "gmail_ok_at": "2026-10-16T11:58:00Z", "calendar_ok_at": "2026-10-16T10:00:00Z"}, "spoken": "healthy", "hud_process": "stopped", "hud_line": "watcher stopped"},
+    {"name": "gmail_stale", "row": {"needs_reconnect": 0, "gmail_ok_at": "2026-10-16T11:50:00Z", "calendar_ok_at": "2026-10-16T10:00:00Z"}, "spoken": "degraded", "hud_process": "running", "hud_line": ""},
+    {"name": "gmail_error", "row": {"needs_reconnect": 0, "gmail_error": "poll", "gmail_ok_at": "2026-10-16T11:59:30Z", "calendar_ok_at": "2026-10-16T11:00:00Z"}, "spoken": "degraded", "hud_process": "running", "hud_line": ""},
+    {"name": "calendar_stale", "row": {"needs_reconnect": 0, "gmail_ok_at": "2026-10-16T11:59:30Z", "calendar_ok_at": "2026-10-16T06:00:00Z"}, "spoken": "degraded", "hud_process": "running", "hud_line": ""}
+  ]
+}

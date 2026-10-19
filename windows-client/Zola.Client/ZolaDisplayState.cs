@@ -141,6 +141,20 @@ public sealed class ZolaDisplayStateModel : IDisposable
 
     public event Action? Changed;
 
+    // P9-SPEAK: one HUD line under the voice label. The latch cannot turn a stale row healthy — P9-D12
+    public string WatcherLine { get; private set; } = "";
+
+    public void SetWatcherLine(string line)
+    {
+        var next = line ?? "";
+        if (next == WatcherLine)
+        {
+            return;
+        }
+
+        WatcherLine = next;
+    }
+
     // P3-STATE: the window pushes facts, then the controller keeps the one mic-gate write — P3-D03
     public void UpdateWindowFacts(
         bool sessionReady,

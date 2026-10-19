@@ -136,6 +136,11 @@ def _live(session_id: str, kind: str) -> List[Dict[str, Any]]:
     ]
 
 
+def live_records(session_id: str, kind: str) -> List[Dict[str, Any]]:
+    # P9-SPEAK: a contact recorded this process, not a name the model typed — P9-D11
+    return [dict(row) for row in _live(session_id, kind)]
+
+
 def resolve(session_id: str, kind: str, handle: str = "") -> Dict[str, Any]:
     """One live candidate, or an explicit handle. Several and no handle is ambiguous."""
     if handle:

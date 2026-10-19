@@ -111,10 +111,25 @@ internal sealed class PresenceAnimator
         _playback.SegmentStopped += OnPlaybackSegmentStopped;
     }
 
+    // P9-SPEAK: proactive speech checks the monitor before a bout exists. Start it so unavailable means the
+    // device or the serve root is missing, not that Speaking has not begun yet — P9-D11
+    internal void EnsurePlaybackMonitor()
+    {
+        if (_playback is null)
+        {
+            return;
+        }
+
+        _playback.ApplyLife(_life);
+        _playback.StartMonitoring();
+    }
+
     internal void KillOwnedPlayback()
     {
         _playback?.KillOwnedPlayers();
     }
+
+    internal DateTimeOffset? LastBoutStoppedUtc => _playback?.LastBoutStoppedUtc;
 
     internal void AttachDisplay(ZolaDisplayStateModel model)
     {
@@ -564,7 +579,7 @@ internal sealed class PresenceAnimator
 
     private void OnPlaybackBoutStopped()
     {
-        var forced = _forwardForcedBoutStop;
+        var forced = _forwardForcedBoutStop || _playback?.TakeForcedRelease() == true;
         _forwardForcedBoutStop = false;
         // P4-ASK: forward forced flag; forced stops are never question rule-1 releases — P4-D13
         PlaybackBoutStopped?.Invoke(forced);
