@@ -1060,13 +1060,13 @@ The mic capture started (generation 15, Manual) and was then cancelled at 07:18:
 
 `echo_suspect` 0. `origin_unresolved` 0. Phase 7 is not complete.
 
-### Conversation list
+### Conversation list — approved Phase 7 deviation
 
-Brian: proactive messages are not logged in the conversation list.
+Brian: proactive messages are not logged in the conversation list. He approved the change during the smoke: "Tested and now the proactive speech shows in the conversation."
 
 The list is the live transcript. It is filled by chat turns (`message.start` / the local send bubble) and, on a session resume, by stored user and assistant messages. `voice.tts` does not write a turn, so a spoken proactive line never appeared there.
 
-An accepted line is now added as a Zola bubble in that list, with the phrase she was given to speak. A refused speak does not add one. Client checks exit 0, speech rows 38/38. The running client is still the 17:50 build, so this shows up after the next `dotnet run`. The line is not written into the stored session, so switching away and resuming that session still rebuilds the list without it. Lines spoken before this change are not backfilled.
+An accepted line is now added as a Zola bubble in that list, with the phrase she was given to speak. A refused speak does not add one. The line is not written into the stored session, so switching away and resuming that session still rebuilds the list without it. Lines spoken before this change are not backfilled. That limit is a residual for the lore closeout.
 
 Residual, not fixed: at 900×640 the top-right VOICE / MIC lines overlap her hair. That predates this track.
 
@@ -1099,8 +1099,7 @@ Lore files other than this progress doc are not edited here. Claude reviews this
   2. Push-to-talk while `voice.tts` is in flight: for up to the 2 second call bound, audio can begin before the cancelled attempt is stopped. The capture proceeds. The item is uncertain, never delivered.
   3. The proactive phrase replaces the last-reply echo haystack. A proactive line is only dispatched after 20 seconds of idle.
 - K4's harness-only gates: quiet hours, a reviewed draft, a locked PC, and a serve-unreachable snapshot. Text mode was run live (`reason=text_mode`, then restored). The flag-off line is K0 (`reason=speak_disabled`).
-
-The live conversation list now shows an accepted proactive line. Brian confirmed that on the 07:25 Debug build. The line is not written into the stored session, so a resume still rebuilds the list without it. Lines spoken before that build are not backfilled.
+- An accepted proactive line is shown as a Zola bubble in the live conversation list. It is not saved into the stored session, so resuming that session rebuilds the list without it, and earlier lines are not backfilled.
 
 ### Smoke rows
 
@@ -1122,7 +1121,16 @@ Dry run after that, the claim predicate read-only: speakable 0.
 
 Tested build: the Debug client from Brian's `dotnet run --project C:\Users\test\Dev\zola-windows\windows-client\Zola.Client\Zola.Client.csproj`. `Zola.Client.dll` SHA-256 `0FDFCE6C0165CC20217C41BEC8B4F8F09FF6459A52A3F2C84AFED8DF837F4FA0`, 648,192 bytes, written 2026-10-19 07:25:13. Client 25748, parent dotnet 13384. Serve shim 20196, child 20888, listening `127.0.0.1:53409`. Watcher shim 26896, child 9380. One of each. Blender and P10 were left running.
 
-Plugin suites, not re-run after this prose: store 26, watch 34, surface 29, speak 29, 118 OK in 13.801s. Client checks exit 0. Coverage: lifecycle 22/22, admission 13/13, start 9/9, invalid pairs 6/6, stop_phrase 4/4, amendments 7/7, latch 18/18, wiring 9/9, clarify 20/20, timing 8/8, compress 8/8, supervision 38/38, speech 38/38.
+Full plugin suites, run on `main` after the merge. The tree matches `abeff7e516bc4c4a9fb9d060cdd414c83b57f5af`; the only later commit at the time of the run, `6c180cca9cf4cc5e241d46cbee39fed94fe28058`, changes this progress doc's merge-SHA line. Commands from each plugin directory, `PYTHONPATH` the Hermes checkout, venv `python.exe`. Workspace: `python -m unittest discover -s tests -t tests`. Memory, tools, and TTS: `python -m unittest discover -s tests -t .`.
+
+| Suite | Result |
+|---|---|
+| zola_workspace | 335 OK in 19.700s |
+| zola_memory | 134 OK in 6.604s |
+| zola_tools | 44 OK in 0.034s |
+| zola_tts | 8 OK in 0.132s |
+
+Client checks: `dotnet run --project windows-client\Zola.Client.Checks\Zola.Client.Checks.csproj -c Release`, exit 0, wall time 9.808s. Coverage: lifecycle 22/22, admission 13/13, start 9/9, invalid pairs 6/6, stop_phrase 4/4, amendments 7/7, latch 18/18, wiring 9/9, clarify 20/20, timing 8/8, compress 8/8, supervision 38/38, speech 38/38.
 
 Live plugin tree equals the repo: 28 `.py` and `.json` files at the plugin root, 0 mismatches, after `contracts/proactive_methods.json` and `contracts/watcher_health.json` were copied into the profile. Live `SOUL.md` equals `zola-architecture/identity/SOUL.md`: 9,708 bytes, SHA-256 `FD0C09CD7677E7AF2C63E7CADC7DBCA2C8EF834E0E48528E1EFACC70A6CADD14`. `hermes-agent` is clean at `345cd2b057a452236de401d3534b8502a7465e8d`, tag `v2026.9.14`. `.gitignore` still has `**/proactive.db`, `**/proactive.db-wal`, `**/proactive.db-shm`, and `**/taint.sqlite`. None of those names are tracked.
 
