@@ -1153,7 +1153,7 @@ Modified: `hermes-plugins/zola_workspace/__init__.py`, `log.py`, `loops.py`, `pr
 | HUD healthy; stopping the watcher shows unknown within two intervals; `needs_reconnect` shows | Plan wording, unchanged | D12 (b), and D16's HUD narrowing. For up to 360 seconds the HUD can say the watcher is stopped while the spoken answer is still healthy. `needs_reconnect` is the account row. | MET on the fixture and on K8 (`WATCHER RESTARTING`, then `HEALTHY`). The live token was not touched, so live `needs_reconnect` was not produced. |
 | Client builds; suites pass | Plan wording, unchanged | The tested build is the Debug client from `dotnet run`, not the Release exe. | MET. DLL hash and suite counts above. |
 
-Implementation commit: `IMPLEMENTATION_SHA`.
+Implementation commit: `20ea9aeffebabb632eb2b55fb5f36c1189fb514f`.
 Merge commit on `main`: `MERGE_SHA`.
 
 
