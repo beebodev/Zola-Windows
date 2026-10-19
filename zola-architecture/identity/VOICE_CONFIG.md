@@ -8,11 +8,19 @@ stt:
   provider: local
   local:
     model: base
+# P9-FIX-TTS: Deepgram command provider; the Edge block stays in the file — P9-D14
 tts:
-  provider: edge
+  provider: deepgram
   edge:
     voice: en-GB-SoniaNeural
     speed: 0.95
+  providers:
+    deepgram:
+      type: command
+      command: '"C:\Users\test\Dev\hermes-agent\.venv\Scripts\python.exe" "C:\Users\test\AppData\Local\hermes\profiles\zola\zola-tts\deepgram_tts.py" "{input_path}" "{output_path}" "{model}" "{speed}"'
+      output_format: mp3
+      model: aura-2-pandora-en
+      speed: 0.95
 agent:
   clarify_timeout: 300
 approvals:
@@ -41,9 +49,9 @@ wake_word:
 
 - `stt.provider`: `local` selects faster-whisper and disables the cloud fallback (`P2-D02`).
 - `stt.local.model`: `base` is the starting on-device model. This machine has no CUDA, so it runs on CPU (`P2-D02`, `P2-D09`).
-- `tts.provider`: `edge` (built-in). Phase 6 command provider `sonia_cmd` was tried at `--pitch=+0Hz` then **restored** — first-audio median ~855–1030 ms worse than built-in (gate +300 ms); pitch dropped. Command block kept in progress notes / failed snapshot only.
-- `tts.edge.voice`: `en-GB-SoniaNeural` at speed 0.95 (`P4-D19` + speed A/B; was Aria, then provisional Sonia 1.1).
-- `tts.edge.speed` / command `--rate` (if command provider is re-enabled): **literal duplicate.** Hermes does **not** sync them — both must change together.
+- `tts.provider`: `deepgram` (`P9-D14`). The Edge block remains in the live file and is not the active provider.
+- `tts.providers.deepgram`: command provider. The script is `%LOCALAPPDATA%\hermes\profiles\zola\zola-tts\deepgram_tts.py`. Model `aura-2-pandora-en`. Speed `0.95`. Output `mp3`.
+- The key file is `%LOCALAPPDATA%\ZolaClient\secrets\deepgram_api_key`. The key is not in `config.yaml` and not in this document.
 - `voice.silence_duration`: `1.5` seconds of quiet after speech ends a capture. The Hermes default of 3.0 is too slow for a conversation (`P2-D09`).
 - `voice.barge_in`: `false` (`P4-D28`, applied under `P4-D25` / P4-ASK Option A). Was `true` under `P2-D09`; talking over her no longer interrupts (Cancel / "Hey Zola" after she finishes still work).
 - `voice.stop_phrases`: `["stop"]` ends the voice exchange when that is the whole utterance (`P2-D09`).
