@@ -1630,3 +1630,293 @@ place. The same session keeps its taint.
 - Name test items unambiguously. Two messages shared a smoke subject, and a
   file Brian thought was a PDF was a converted Google Doc.
 - A closeout line has to match the evidence. "Orange was not saved" did not.
+
+## Phase 9 — Proactive Foundation
+
+Recorded from `PHASE9_BUILD_PLAN.md` Appendix A (locked 2026-10-09), the progress docs `P9-KICKOFF`, `P9-FIX-ARM`, `P9-SUPERVISE`, `P9-FIX-TTS`, `P9-STORE`, `P9-WATCH`, `P9-RANK`, `P9-SURFACE`, and `P9-SPEAK`, and Appendix Q of the P9-LORE prompt. Appendix A governs where a summary differs. This section is the lore pointer, what shipped, the narrowings, and the measured limits.
+
+**Brian's lock (verbatim, 2026-10-09):** "lock it".
+
+**Scope (verbatim, 2026-10-09):** "I feel like this is limiting.  I get the slow approach, but why don't we build it all.  The proactive, the watcher, so it doesn't have to run when I ask. The information is already queued up.  The loops, the authority.  Let's just knock it all out systematically in one Phase." And: "That looks right.  SMS, phone call and talking to each agent can't happen yet.  A requirement for this phase is that I publish the app so that the background watcher can do it's job.  I think background ranking is a requirement.  I'll work on publishing the app while the audit runs."
+
+**Answers (verbatim, 2026-10-09):** "I think the watcher should be able to read the full email and provide a gist.  It doesn't have to read the whole thing.  That could take forever." "1. a separate process 2. Yes, either my words, or Zola offers in turn 3. I agree.  I'm not sure if I like the same wording every time though.  We can work on some common phrases to add some variety. 4. Gmail can be every 2 minutes.  Calendar can be every 2hrs.  My calendar doesn't change that frequently throughout the course of a day. 5. I'll take your recommendation 6. OK 7. Yes" "1.  Agree on 10pm - 7am 2. OK"
+
+### P9-D01 — Only code acts in the background
+
+**As locked.** Polling, ranking, queueing, and delivery are Zola code. They are never a Hermes turn. Brian-only actions keep the P9-FIX-ARM client-origin ticket.
+
+**P9-FIX-ARM, execution notes.** Brian (verbatim): "Let's do the hotfix." Choices, as relayed: "Option 1 via a runtime wrap of prompt.submit, no Hermes edit. Crash replay gets no Brian authority. Add the guard rows and drop the cronjob toolset as defense in depth. Bring zola_memory into scope." Smoke (verbatim): "done.  smoke test passed."
+
+The wrap is around `_methods["prompt.submit"]`. A ticket is issued only when `_current_rpc_method` is `prompt.submit`, and never when the params carry a hosted task, a hosted terminal callback, or a delivery author. Crash replay gets no ticket. `cronjob` was dropped from `platform_toolsets.cli`. `zola_memory` is in scope. Residuals, as that progress doc records them: a still-live ticket can be consumed by another turn in the same session whose hooked text hashes equal; slash-command prompts, mid-turn steers, redirects, a merged busy-queue body, and an `@` expansion that changes the hooked text get no ticket; a command that does not name `state.db`, a copy of the database under another name, SQL through a tool other than `terminal`, `write_file`, or `patch`, and a `prompt.submit` forged on the local socket with the session token are not blocked.
+
+**Origin-loss repair.** From the P9-FIX-ARM deploy on 2026-10-09 until the P9-STORE fix, `pre_llm_call` set the origin ContextVar on Hermes's timeout worker. That worker's context was discarded when the hook returned. The turn thread's turn id stayed empty. Episode retrieval returned nothing on client turns, forget holds did not arm, and `forget_memory` refused Brian. The last `forget_hold` line in that window is 2026-10-09 09:49. The repair looks up one unexpired sync permit whose text hash equals the message (`resolve_turn_from_permit`). The forget token is passed through `pre_tool_call`. Zero or several matches log `origin_unresolved` and fail closed. Phase 5 scanned the plugin source. No proactive code calls `prompt.submit`. The ranker heartbeat is a state write, not a Hermes turn.
+
+### P9-D02 — Backend supervision
+
+**As locked, with Track 1 verdicts.** The client restarts `hermes serve` after an unexpected exit. Voice fails closed during the gap. Crash replay has no Brian authority. Serve stderr goes to a rotating, user-only log. WER local dumps for `python.exe` are a privacy decision: a dump can hold tokens and conversation text.
+
+Brian's Track 1 verdicts, recorded verbatim from the Phase 4 proceed message (`P9-SUPERVISE_Progress.md`):
+
+1. Restart policy: approved as proposed (3 in a rolling 10 minutes, 2 s backoff, quit and reopen clears KeepsFailing, tree-kill the previous generation before every spawn, smoke kills the CPython child).
+2. Unreachable policy: approved with two changes.
+   a. Fail closed on the first health failure, but declare "hung" and tree-kill only after HungHealthFailureLimit consecutive failed probes (3, about 20 s). Named constant.
+   b. When reconnects are exhausted (5 attempts / 30 s) with health OK, tree-kill and restart, counting against RestartLimit. Do not leave that process running.
+3. Generations: keep two counters. Process generation bumps on every spawn. Connection epoch bumps on every connectivity loss, including socket-only loss on the same process. Transcript admission, SubmitTurnAsync and clarify answers refuse anything from an earlier connection epoch. Both counters are thread-safe (Interlocked or equivalent); show where each is bumped and checked.
+4. Gap behavior and status text: approved as proposed.
+5. Crash replay: the recommended option. Resume the stored session, and set desktop.auto_continue.enabled: false in the live config.yaml exactly as shown, applied in Phase 6 with a backup.
+6. Playback: approved. After a reconnect, restore the TTS state Brian had before the loss; do not force it on.
+7. WER: approved as proposed (user + SYSTEM ACL, mini dumps, count 3, client prunes after 14 days). I will run the reg add commands myself.
+8. Scratch crash test: approved as an exception to "never induce a native crash." One throwaway python.exe from the scratch folder only, report name/size/timestamp, then delete the dump.
+9. stderr log: approved as proposed.
+10. Tests: approved, linked into Zola.Client.Checks, no new packages. Add tests for 2a, 2b and 3.
+
+Shipped: `RestartPolicy` is pure. `HungHealthFailureLimit` is 3, spaced by `HungProbeSpacingSeconds` 10. `RestartBackoffSeconds` is 2. The HKLM key `LocalDumps\python.exe` was read back as dump count 3, dump type 1 (mini), folder under the Zola client profile. The key covers every `python.exe` on the machine. Track 3 reuses `RestartPolicy` for the watcher and does not use `ProcessSupervisor`. That is an accepted deviation.
+
+**WER folder, narrowed.** Appendix A: "a folder under Brian's profile readable only by him". Track 1 verdict 7: "WER: approved as proposed (user + SYSTEM ACL, mini dumps, count 3, client prunes after 14 days)." The closeout read-back is `NT AUTHORITY\SYSTEM:(OI)(CI)(F)` and Brian's user only (`P9-SUPERVISE_Progress.md`).
+
+### P9-D03 — Watcher host
+
+**As locked.** A separate process, `python -m zola_workspace.watcher`, started by the client, lifetime tied to the client, one instance (`Local\ZolaWatcher`). No model, no tools, no Hermes turn. Its own restart policy, 3 in 10 minutes. Job Object kill-on-close. If the job cannot be assigned, it watches the parent pid and exits. Brian's launch verdict was (a): with the client, independent of serve. The other option was after serve is ready, and keep running if serve later dies (`P9-WATCH_Progress.md`, question 10). Shipped: started from `App.OnLaunched`, not as a child of serve.
+
+### P9-D04 — Background read authority
+
+**As locked. Revises P8-D02.** A fixed read API used only by the watcher: Gmail history and a bounded message get; Calendar events with a sync token. No drafts, sends, Drive, Contacts, or any other Google operation from the watcher. Tool paths stay Brian-only. All content stays untrusted.
+
+Shipped: the allowlist runs inside `google_http.request` when the background capability is passed. Tool calls omit it. Brian's verdict: "7. Allowlist: (a), inside google_http.request." The refresh POST takes `Local\ZolaOAuthRefresh`. A lock timeout or a local failure does not set `needs_reconnect`. A rotated refresh token in the response is ignored. That is Brian's verdict 8 (a), "per process, not persisted, rotated refresh token ignored" (`P9-WATCH_Progress.md` question 8 and the Phase 4 build line). It is a decided choice, not a residual. If Google returns a new refresh token, the store keeps the old one. Sender resolution is (a): address hash only. The watcher never calls Contacts. Brian: "3. Sender resolution: (a)."
+
+### P9-D05 — Change detection and cadence
+
+**As locked.** Gmail every 2 minutes (`GMAIL_POLL_SECONDS` 120). Calendar every 2 hours (`CALENDAR_POLL_SECONDS` 7200). A wall-clock jump triggers a catch-up. Gmail `history.list` is `messageAdded` in INBOX. A 404 takes a bounded resync. Calendar 410 writes a resync marker instead of clearing the cursor. Baseline sync creates zero items. An item is a new event first seen after the baseline, or a later cancel or status change that matches an open loop. The item key stays `calendar:<event id>:<updated>`. Brian: "1. Calendar model: (a), with one change. Keep the existing item idempotency key calendar:<event id>:<updated>; do not change it to calendar:<event id>. calendar_events holds known state (ids, status, times; no titles or people). An item is created only for (i) a new event first seen after the baseline, or (ii) a change that matches an open loop (cancelled or status change), and each such change is its own new item, so a cancellation of an already-delivered event can still be told and spoken. Baseline sync creates zero items. The items key needs no v3 change; the v3 migration adds calendar_events, watcher_rejects and the health columns only. Add a test: event created after baseline → item delivered → event cancelled with a loop open → a second, new item that is pending, then loop-eligible." The series-delete match is (a), a residual: no `recurringEventId` match. Recovery window 7 days. `getProfile` returns `historyId` only. A calendar id is percent-encoded (`quote(calendar_id, safe="")`). A segment that still contains `#`, `@`, or `/` is refused.
+
+Brian's own sent mail is not watched, because it is not INBOX. The watch progress doc records that, and records a "Brian replied" signal as a possible later feature. Claude's Phase 5 fixes F1–F11, one line from that progress doc: a cycle exception stays in the process; transport errors, 429, and 5xx hold the cursor and do not count toward the poison cap; Gmail 404 recovery takes `historyId` before `messages.list` and skips mail older than the cursor time minus 120 seconds, using `internalDate`; calendar mode comes from the cursor; a 410 writes the resync marker; stdout and stderr are drained into a user-only log; the watcher calls `purge_retention` at start and on the purge interval.
+
+Poison: `watcher_rejects`, cap 5. Brian: "6. Poison: (a), watcher_rejects, cap 5."
+
+### P9-D06 — One proactive store
+
+**As locked.** `proactive.db` (WAL) under the profile `proactive` directory, owned by `zola_workspace`, separate from memory. Items commit before the cursor advances. Claims are leases with an attempt id. A late completion for an old attempt changes nothing. `forget_memory` cascades into this store. The client does not open SQLite.
+
+Schema, one line each: v1 the store; v2 `closed_intent`; v3 `calendar_events`, `watcher_rejects`, per-source health; v4 surface bookkeeping and `closed_reason`; v5 `loops.name_source` and the speech attempt columns. Live schema at the Track 6 closeout was 5.
+
+Speech and surface attempts stay apart. Brian (SPEAK D18, verbatim): "keep them apart, no new column, with both cross-attempt tests." A confirmed surface note clears `items.attempt_id`. The claim blocks only while that id is set and `attempt_at` is inside 600 seconds.
+
+Recovery. Brian (SPEAK D19, verbatim): "yes to recovery inside the claim transaction, once at coordinator startup, and in the hourly purge. Not on the snapshot: the snapshot stays read-only, because it runs every poll. Instead, surface runs the same recovery in its pre_llm_call before it selects, so the next note sees delivery_uncertain. Same transition function everywhere." Shipped amendment (P4-R2): recovery commits before the claim transaction, so a refused claim does not roll the recovery back.
+
+Gateway methods: `proactive.snapshot`, `proactive.claim`, `proactive.speech_started`, `proactive.outcome`, `proactive.release`, `proactive.recover`, `proactive.watcher_health`. The names live in `contracts/proactive_methods.json` and `contracts/watcher_health.json`, asserted from the Python install and from the client gateway.
+
+### P9-D07 — Retention, narrowed
+
+**Locked wording.** Email body deleted right after ranking, or at 7 days if never ranked, then `content_expired`, never a silent row delete. Subject, snippet, and gist until delivered, 7 days at most, then ids and times only. Delivery history 30 days. Cursors carry no content.
+
+**Narrowed wording (SPEAK D8).** Brian: "D8: yes." Delivered rows keep subject, snippet, gist, and display name until acknowledged, dismissed, closed, forgotten, or 7 days. The body is never kept. Purge nulls any body older than 7 days, as a backstop, because ranking already deletes the body in the same write. `TEXT_MAX_AGE_DAYS` is 7. `DELIVERY_KEEP_DAYS` is 30. `PURGE_INTERVAL_SECONDS` is 3600.
+
+Age-out. Brian (Track 5 verdict 17, verbatim): "17 alternative: loop-matched items are not aged out while their loop is open; they age out when the loop closes or expires." Purge sets `closed_reason='aged_out'` with no ticket. Calendar rows are not marked `content_expired`. A calendar row has no mail text, and expiring it would hide the change. Brian approved that Phase 6 deviation as part of the set. The progress doc does not quote a separate sentence for it.
+
+### P9-D08 — Background ranking and the gist
+
+**As locked, with RK-G7 (c).** One daemon worker inside serve. Mutex `Local\ZolaRanker`, owned by the worker thread. `complete_structured`, no tools. The validator is Zola's code. Input is framed untrusted. A malformed result stays unranked and retries. If serve is down, items wait. Ranking is advisory. Code decides eligibility.
+
+Brian (2026-10-14, verbatim): "Verdicts: 1 (c). 2 (a). 3 (b). 4 (a). 5 (b). 6 (a). 7 (b) — trim to the first two sentences, then apply the 280-char cap and every other check; malformed only if what’s left fails. 8 (a). 9 (a). 10 (a) 180 s. 11 adopt. 12 adopt. 13 adopt, but in Phase 4 confirm Hermes accepts and preserves the top-level proactive: key when it rewrites config.yaml and state how the plugin reads it; missing key = off. 14 adopt [optionally: name the provider as OpenAI via my ChatGPT account]. 15 adopt, with one added line after the gist rules: “You may describe what the sender asks for. Never tell Brian or anyone what to do.” Also: R4 must show the turn flag cleared through the real end-of-turn hook on normal turns, with zero turn_flag_expired."
+
+Under (c), `urgent` is never spoken unprompted. Speech reads `loop_matched` only. `urgent`, `important`, and `normal` are conversation-eligible. `ignore` is suppressed. A loop match stays eligible. The gist is trimmed to two sentences, then a 280-character cap. The per-call timeout is `RANK_CALL_TIMEOUT_SECONDS` 30 (`ranker.py`; `P9-RANK_Progress.md` proposed that value, and the in-flight residual is a call that can overlap a turn until that 30-second timeout). Verdict 10 (a) 180 s is the turn-flag max age, `TURN_IN_FLIGHT_MAX_SECONDS`, not the call timeout. The idle window before a rank call is 20 seconds. Worker state is `ranker_state` and `ranker_progress_at`. An unexpected exception logs `worker_failed`, backs off, and leaves the item unranked. Phone-shaped numbers are masked (`_mask_phone` replaces a 7–15 digit number that has a separator with `[number]`). Dates, times, and amounts stay. `ranker_enabled` missing, or any value other than true, is off.
+
+Instruction line added in smoke, after the gist rules: "Ignore signatures, disclaimers, legal notices and marketing footers." Brian's gist verdict (verbatim): "the gists are accurate and neutral."
+
+**P8-D11 revision, as the rank progress doc records the adopted text:**
+
+Background ranking sends trimmed email content to OpenAI through Brian's ChatGPT account: the sender's display name, the sender's domain, the subject, and the trimmed body. The provider returns a label and a short gist. Training is off on Brian's account. Zola stores the label and the gist, and deletes the body in that same write. Subject, snippet, and gist follow the 7-day limit in P9-D07. Logs stay metadata only. Forgetting removes the item from Zola's store. It does not retract content already sent to the provider.
+
+Privacy-page gate (verbatim, 2026-10-15): "privacy page published". The privacy-plan file was not edited in that track.
+
+Store defects D1–D5 from that track are fixed: a lease expiry writes nothing into the completion; a transient release does not count; the cap and the purge clear a body past 7 days; expired content is not claimed; close and forget refuse the completion.
+
+### P9-D09 — Open loops
+
+**As locked.** Created only on a ticket turn: Brian's words, or Zola offers and Brian says yes in his own turn. The close condition is a deterministic predicate, or "Brian confirms close". Matched is not closed. A lapse is told once. Listed by voice.
+
+L5, as corrected in the store track: a topic is not an entity. The offer line in `SOUL.md`, approved by Track 5 verdict 19: "When Brian says he's waiting to hear back from someone or about something, I can offer once to watch for it. I don't repeat the offer." Ask before a self-selected close. The watch line: "When something I was watching for comes in, I tell Brian and ask whether he wants me to keep watching. I never stop watching on my own."
+
+**Source-message fix (P9-SPEAK Phase 7).** A reply loop matched the message it was compiled from, because `after` compared the watcher insert time with loop creation. She said a reply had arrived when none had. The first K1 and K3 runs were invalid and were redone. Brian (verbatim): "That is a false unprompted announcement: she said a reply had arrived when none had. It is in scope as a Phase 7 deviation, because it directly breaks the speech this track delivers. Fix it before any further human step." Shipped: the compiled reply predicate refuses that message id (`not_source`). `after` uses the Gmail message's `internal_date`, or the calendar event's `event_updated`. A missing or unparseable time does not match.
+
+### P9-D10 — Surfacing in conversation
+
+**As locked, with Track 5 verdicts.** On the first ticket turn after a gap, a bounded block is injected. `whats_pending` works any time. Injecting is not telling. The store is the authority.
+
+Brian (2026-10-16, recorded verbatim in `P9-SURFACE_Progress.md`):
+
+1 yes. 2 yes. 3 600. 4 yes. 5 yes. 6 yes. 7 yes. 8 yes. 9 yes. 10 yes. 11 yes. 12 B. 13 yes. 14 yes, accept the residual collision. 15 yes. 16 yes.
+17 alternative: loop-matched items are not aged out while their loop is open; they age out when the loop closes or expires.
+18 yes.
+19 offer, bounded: "When Brian says he's waiting to hear back from someone or about something, I can offer once to watch for it. I don't repeat the offer." Plus the other five SOUL lines as proposed.
+20 yes. 21 yes.
+22 option (a): bounded smoke-only config.yaml overrides, gap 120 s and quiet 300 s, backed up before, removed and hash-verified before closeout. Add the override keys with a floor so they can't be set to zero.
+23 yes, draft only; I'll decide on publishing at the enable gate.
+Accept the session-wide taint cost after a block.
+Smoke change: the two test emails are written to warrant "important" (a real request with a deadline). Cursor reports each label before S1; if either is "normal" or "ignore", I send a replacement.
+
+Shipped values, after the smoke overrides were removed: gap `SURFACE_GAP_SECONDS` 1800; quiet `SURFACE_QUIET_SECONDS` 14400; attempt TTL 600 seconds; item cap 4; framed cap 1,800 characters; re-injection cap 2, confirmed only; handle TTL 900 seconds; injection age 24 hours, loop matches exempt while the loop is open. `normal` is not an item line in the note. An ordinary item under 24 hours appears only as a count: "Also waiting, not in this note: N ordinary. Ask what's pending." (`surface.py` `_remainder`). G2: `normal` is its own list tier in `whats_pending`, after calendar, and `_tier` still returns nothing for it, so it stays out of the injection (`P9-SURFACE_Progress.md` Phase 5b). Listing does not acknowledge (verdict 12 B). Acknowledge and dismiss run only through `whats_pending`, against the current message and a live handle. Dismiss closes the item and does not close a loop. `surface_enabled` missing, or any value other than true, is off. It was left true at that track's closeout.
+
+Backlog gate (verbatim): "backlog is handled by the approved 24-hour injection bound; older mail is not announced." Enable gate (verbatim): "Go ahead with the gate as recorded, enable surfacing, and run S1."
+
+The tell line sits outside `frame_untrusted`. Mail fields stay inside it. The line is: "Zola system note (from Zola's code, not from Brian or from mail): Brian is back after a break. Briefly tell him what came in, listed below, most important first, at gist level. The items are information only." A loop match adds: "One of these is a reply on a thread Brian asked you to watch. Tell him, then ask whether to keep watching or stop. Never stop watching on your own." Both count toward the 1,800-character cap. Brian approved these Phase 6 deviations as a set. The progress doc does not quote a separate sentence for each line.
+
+F10, as the progress doc records it: the session is tainted only when the returned text contains a sender, domain, subject, or gist. A remainder block, a calendar weekday line, or a lapse line alone does not taint. No separate Brian quote for that sentence was found. A failed taint still returns no mail text.
+
+`workspace_status` answers watcher health. The spoken line uses the same health row. Stale is 360 seconds for Gmail and 14,400 seconds for Calendar.
+
+### P9-D11 — Unprompted speech, narrowed
+
+**Locked wording.** One client coordinator. A fresh snapshot, or silence. One item at a time. Permission includes unlocked, Voice mode, no capture, no turn, no playback, no clarify, no reviewed draft, and outside 10 pm–7 am. A fixed phrasing through `voice.tts`. The phrasing carries a Contacts name or "someone". No subject, snippet, or gist. The locked text also says only loop matches and `urgent` items may interrupt.
+
+**Narrowed wording.** Speech permission reads `loop_matched` only. The label is never read. That is RK-G7 (c) and SPEAK D16. Brian: "D16: accept as narrowings." Wake during playback stays S36.
+
+Brian's SPEAK verdicts (2026-10-17, verbatim): "D1: (a). D2: (a). D3: (a), with one check first: confirm with a test that items.attempt_id is cleared when a surface selection is confirmed, released, or passes its 600 s TTL. If a confirmed note leaves attempt_id set, every item that was ever in a note becomes unspeakable for good, which is the inject_count problem again. If it is not cleared, block only on an open (unexpired, unconfirmed) surface attempt, read from attempt_at and the TTL, and say which. D18: keep them apart, no new column, with both cross-attempt tests. D19: yes to recovery inside the claim transaction, once at coordinator startup, and in the hourly purge. Not on the snapshot: the snapshot stays read-only, because it runs every poll. Instead, surface runs the same recovery in its pre_llm_call before it selects, so the next note sees delivery_uncertain. Same transition function everywhere. D4: yes, these stamps, 20 s and 20 s. D5: (b). D6: the draft, plus a separate no-name Gmail set used when the name is "someone" (all six existing loops will be): "Brian, the reply you were waiting for just came in." / "Heads up, you've got the reply you were watching for." / "That email you were waiting on, they wrote back." Do not put "someone" into the named lines. D7: (a). D8: yes. D9: (i) and (ii), 2 s tail. D10: yes. D11: yes, locked. D12: (b). Document in the progress doc that for up to 360 s the HUD can say "watcher stopped" while her spoken answer is still healthy. D13: both. D14: off. Enabling for the smoke is decided at the Phase 6 STOP. D15: that line. D16: accept as narrowings. D17: yes. D21: yes."
+
+Name (D5 (b)): from Brian's own message, or a Contacts lookup on a ticket turn. Never from mail. Otherwise the no-name set. Do not put "someone" into the named lines.
+
+Idle since the last interaction and idle since the last speech bout are each 20 seconds (D4). Neither figure is the poll. The poll is `SPEECH_POLL_SECONDS` 20 (`SpeechConstants.PollSeconds`). A proactive line does not open a follow-up listen (D7 (a)).
+
+Echo, three separate items:
+
+- (i) The proactive-line guard as shipped (D9): the exact phrase is in the haystack, a capture that starts while the line is queued, playing, or inside a 2 second tail is refused, and push-to-talk cancels the line first.
+- (ii) The tail-restart defect: `NoteCompleted` ran on every bout stop, so each ordinary reply restarted the 2 second tail and follow-up was refused `reason=echo`. Brian (verbatim, `P9-SPEAK_Progress.md`): "follow up isn't working. I have to hit the Mic button for each response." `NoteCompleted` now runs only when the proactive attempt ends.
+- (iii) The ordinary-reply echo, the one that can turn her own speech into a ticketed Brian turn, is still an accepted risk. Brian (verbatim, 2026-10-13, Appendix Q): "I'll take the risk.  We aren't in production yet.  We will keep that in the future release.  Let' move to Track 3."
+
+Cancel (D10): push-to-talk, typing, a submit, Stop speaking, a turn starting, and a wake word detected before audio starts. Before start is recorded, the claim is released. After that, playback stops and the outcome is `delivery_uncertain`. K7 met for the store outcome through the mic button, not through the wake word the plan named. Attempt `a85996c0f7828952` ended `delivery_uncertain`, reason `cancelled_by_push_to_talk`, and was not re-spoken. Stop and Cancel are not shown during a proactive line. The mic is the interrupt. Observation (`P9-SPEAK_Progress.md` Phase 7): "Stop and cancel were not present. This time I tried clicking the mic button while she was speaking. I may have done it too late." Acceptance (Appendix Q, Track 6 working chat, 2026-10-19): "I don't need this fix.  I'm good with them not being available.  It was an observation and Cursor explained.  We are good to closeout."
+
+Quiet hours are 22:00–07:00 local (D11). At 07:00 an item speaks only if `detected_at` is still inside `SPEECH_MAX_AGE_SECONDS` (7200).
+
+Evidence (D17): accepted, started, and completed are separate. `delivered` requires evidenced completion of the same attempt. Idle is not completion. Uncertain speech is not spoken again.
+
+Proactive calls use a 2 second timeout (D20). The default RPC timeout stays 45 seconds. `speak_enabled` missing, or any value other than true, is off. Brian, at the Track 6 closeout (`P9-SPEAK_Progress.md` Phase 8): "speak enabled should remain on." The live file was left true.
+
+An accepted proactive line is shown as a Zola bubble in the live conversation list. Brian (verbatim): "Tested and now the proactive speech shows in the conversation." The line is not written into the stored session. A resume rebuilds the list without it. Earlier lines are not backfilled.
+
+`SOUL.md` D15, as shipped: "When I have just told Brian out loud that someone got back to him, a follow-up about what they said uses that note or what's pending. I open the mail only if he asks."
+
+Accepted Phase 5 residuals, no code change: a stamp after `speech_started` and before dispatch records `delivery_uncertain` for a line that was never sent; push-to-talk while `voice.tts` is in flight can let audio begin for up to the 2 second call bound; the proactive phrase replaces the last-reply echo haystack, and a proactive line is dispatched only after 20 seconds of idle.
+
+K4's quiet hours, reviewed draft, locked PC, and serve-unreachable snapshot were harness-only. Text mode was run live.
+
+### P9-D12 — HUD and spoken status, narrowed
+
+**Locked wording.** The client shows healthy, degraded, needs reconnect, or unknown from the watcher's last poll and error class, and computes staleness itself. "How's the watcher?" uses the same data.
+
+**Narrowed wording (SPEAK D12 (b), and D16).** `degraded` at 360 seconds. `unknown` only when there is no row or no fresh snapshot. For up to 360 seconds the HUD can say the watcher stopped while the spoken answer is still healthy. Brian: "D12: (b). Document in the progress doc that for up to 360 s the HUD can say "watcher stopped" while her spoken answer is still healthy."
+
+The Systems panel replaced the single HEALTHY line. Brian (Appendix Q, Track 6 working chat, 2026-10-17): "I noticed that there is now a health status in the Hud. This is not what I intended. I was thinking more like the left panel in the Android app." On the rows: "It should only be what is intended for Zola Windows (workspace watcher or something like that, companion watcher or something like that, backend, memory.) Any others you can think of?" "At some point, I may want to change the wording of some of these, but for now it is a go." On colour: "One thing that we might want to add is a color change for any status that needs attention.  Maybe red when it is down."
+
+Shipped rows: Backend, Workspace watcher, Google account, Ranking, Voice. Memory has no health signal, so no row. The Companion watcher row waits for Phase 10. Colour is keyed by row and state. Attention is gold `#FFE7A5` (`ZolaAlertGlow`). Down is red `#D9534F` (`ZolaError`). Ranking `UNAVAILABLE` is Attention. Voice `UNAVAILABLE` is Down. Live `needs_reconnect` on that panel was not produced. The live token was not touched.
+
+The progress doc's Phase 7 deviation is a paraphrase of these quotes, not a second source.
+
+### P9-D13 — Track order
+
+**As locked.** Supervision, store, watcher, ranking, surfacing, speech and HUD, then this lore closeout. P9-FIX-TTS ran between Tracks 1 and 2 as maintenance. It is not a seventh product track.
+
+### P9-D14 — Voice is Deepgram Aura-2 Pandora
+
+**New. Revises `P2` / `P2-D03` / `P4-D19`.** Those entries set Edge. `P2-D03` records `en-US-AriaNeural`, then annotates: "spoken voice superseded — `en-GB-SoniaNeural` at speed 0.95 (was Aria / provisional Sonia 1.1)." `P4-D19`'s heading is "Voice: `en-GB-SoniaNeural` at speed 1.1, provisional until a live trial." The next sentence is "Live trial rejected 1.1; blind speed A/B picked **0.95**." Neither entry records +10%. The live voice is no longer Edge.
+
+Brian (verbatim): "I used Deepgram for the Android client.  Could we just use that? I really liked the Thalia voice." "I don't know that this is the right Thalia voice.  This one is american and the one that I liked was South African.  I think it was from Cartesia maybe.  There  is also the idea of Flux TTS from Deepgram." "I will stick with Deepgram for now though because I have a ton of credits.  I would just want to change to a different voice.  Something a bit deeper and slower paced." "Pandora is the voice I would like" "She feels a bit too slow and a bit too deep.  Perhaps we should try 1.0" "1.0 was too fast.  I bumped it to .95.  I think we will stay there."
+
+Live settings, from the profile config recorded in `P9-FIX-TTS_Progress.md`: provider Deepgram, model `aura-2-pandora-en`, speed 0.95. The key file is named `deepgram_api_key`. The guard names the folder `%LOCALAPPDATA%\ZolaClient\secrets`. Contents were not read. The folder ACL, read 2026-10-19, is `DESKTOP-VRB5NB9\test:(OI)(CI)(F)` only. The key file ACL is `DESKTOP-VRB5NB9\test:(I)(F)` only. Brian chose: Approve all three. (2026-10-19). The key is not in `.env`. No key value is recorded here. Guard rows from that hotfix stay. The secrets row blocks `terminal`, `read_file`, `write_file`, and `patch` when the path matches that folder or the file name. The second row, `profiles[/\\]+zola[/\\]+zola-tts`, blocks `write_file`, `patch`, and `terminal`. `read_file` of that folder stays allowed (`P9-FIX-TTS_Progress.md`). `execute_code` is not in either list. `VOICE_CONFIG.md` records this provider.
+
+Voice quality, deferred (verbatim, 2026-10-13): "Speech is working.  I think we have some tightening to to on timing, prosody and emotion.  She sounds more robotic than on Edge.  We can tackle that later though."
+
+### Annotations on earlier entries
+
+- **P8-D02.** Revised by P9-D04: the watcher has a fixed background read. Revised by P9-FIX-ARM: Brian-only means the client-origin ticket, not `platform == "tui"` and an empty `parent_session_id`.
+- **P8-D03.** The Testing deviation ended. Brian (verbatim, 2026-10-09): "Okay.  We are "In production".  Audit is still running." The Testing-era refresh token expired, as AUD-14 predicted. Setup was re-run 2026-10-16. The new token is under "In production".
+- **P8-D09.** Injected surfacing still taints before the model sees mail text (P9-D10). F10 narrows that to a returned block that contains a sender, domain, subject, or gist.
+- **P8-D11.** Revised by P9-D08. The adopted paragraph is under P9-D08.
+- **P2-D01.** Unchanged. Proactive speech uses the client's own `voice.tts` path.
+- **P2-D17.** No Phase 9 package install is claimed. Phase 5 found no pre-Phase-9 package list, so nothing new is proven.
+- **S7.** Proactive work does not use Hermes cron (P9-D01). `cronjob` was also dropped from the cli toolset (P9-FIX-ARM).
+
+### Named constants
+
+Values are the ones the progress docs record. The decision column names the source. Phase 5 checks each against the code on `main` and records the file. A mismatch is reported there, not corrected here.
+
+| Name | Value | Decision |
+|---|---|---|
+| `RestartLimit` / window | 3 in 10 minutes | P9-D02 |
+| `RestartBackoffSeconds` | 2 | P9-D02 |
+| `HungHealthFailureLimit` | 3 | P9-D02 |
+| `HungProbeSpacingSeconds` | 10 | P9-D02 |
+| Reconnect exhaustion | 5 attempts or 30 s | P9-D02 |
+| WER dump count / type / prune | 3 / mini / 14 days | P9-D02 |
+| `GMAIL_POLL_SECONDS` | 120 | P9-D05 |
+| `CALENDAR_POLL_SECONDS` | 7200 | P9-D05 |
+| Gmail stale / Calendar stale | 360 / 14400 | P9-D12 |
+| `POISON_ATTEMPT_CAP` | 5 | P9-D05 |
+| `GMAIL_RECOVERY_MARGIN_SECONDS` | 120 | P9-D05 |
+| `RANK_LEASE_SECONDS` | 120 | P9-D08 |
+| `RANK_CALL_TIMEOUT_SECONDS` | 30 | P9-D08 |
+| `TURN_IN_FLIGHT_MAX_SECONDS` | 180 | P9-D08 |
+| Rank idle window | 20 s | P9-D08 |
+| `SPEECH_CLAIM_LEASE_SECONDS` | 30 | P9-D06 |
+| `SPEECH_OUTCOME_LEASE_SECONDS` | 120 | P9-D06 |
+| `SPEECH_MAX_AGE_SECONDS` | 7200 | P9-D11 |
+| Idle since last interaction / last speech bout | 20 s / 20 s | P9-D11 |
+| `SPEECH_POLL_SECONDS` | 20 | P9-D11 |
+| Quiet hours | 22:00–07:00 local | P9-D11 |
+| `SPEECH_ECHO_TAIL_SECONDS` | 2 | P9-D11 |
+| Proactive RPC timeout | 2 s | P9-D11 |
+| `SPEECH_START_TIMEOUT_SECONDS` | 15 | P9-D11 |
+| `SPEECH_COMPLETE_TIMEOUT_SECONDS` | 60 | P9-D11 |
+| Reservation lock bound | 50 ms | P9-D11 |
+| `POST_SPEECH_WINDOW_SECONDS` | 900 | P9-D11 |
+| `BODY_MAX_AGE_DAYS` / `TEXT_MAX_AGE_DAYS` | 7 / 7 | P9-D07 |
+| `DELIVERY_KEEP_DAYS` | 30 | P9-D07 |
+| `PURGE_INTERVAL_SECONDS` | 3600 | P9-D07 |
+| `SURFACE_GAP_SECONDS` | 1800 | P9-D10 |
+| `SURFACE_QUIET_SECONDS` | 14400 | P9-D10 |
+| Surface attempt TTL | 600 s | P9-D10 |
+| Surface item cap / character cap | 4 / 1800 | P9-D10 |
+| Re-injection cap | 2, confirmed only | P9-D10 |
+| Handle TTL | 900 s | P9-D10 |
+| Injection age | 24 h, loop matches exempt while open | P9-D10 |
+| Body trim cap | 4000 characters | P9-D04 / P9-D08 |
+| Gist cap | 280 characters, two sentences first | P9-D08 |
+
+Gateway methods are the seven names under P9-D06. Deny reasons recorded for speech: `speak_disabled`, `locked`, `suspended`, `text_mode`, `capture`, `turn`, `playback`, `clarify`, `reviewed_draft`, `quiet_hours`, `snapshot_stale`, `snapshot_timeout`, `backend_down`, `reservation_lost`, `one_at_a_time`. The client log line is `proactive.deliver` with attempt hash, outcome, reason, phrase index, and `name_source`. No name and no mail text. Live flags at the Track 6 closeout: `ranker_enabled` true, `surface_enabled` true, `speak_enabled` true.
+
+### Known limits
+
+- The ordinary-reply echo remains an accepted risk (Appendix Q, 2026-10-13). Track 6 closed the echo for the proactive line only (`P9-SPEAK_Progress.md`).
+- K7 met on the mic button. The wake-word path in the plan was not the path that met it. Stop and Cancel stay hidden during a proactive line. Brian (Appendix Q, Track 6 working chat, 2026-10-19): "I don't need this fix.  I'm good with them not being available.  It was an observation and Cursor explained.  We are good to closeout." (`P9-SPEAK_Progress.md` records the store outcome; it does not contain this sentence.)
+- The conversation bubble is not stored. A resume rebuilds the list without it (`P9-SPEAK_Progress.md`).
+- K4 quiet hours, reviewed draft, locked PC, and a serve-unreachable snapshot are harness-only (`P9-SPEAK_Progress.md`).
+- Live `needs_reconnect` on the Systems panel was not produced (`P9-SPEAK_Progress.md`).
+- No live capture was attempted inside a proactive tail, so the echo refusal line was not produced live (`P9-SPEAK_Progress.md`).
+- The false unprompted announcement happened, and was fixed in the track. The first K1 and K3 runs do not count (`P9-SPEAK_Progress.md`).
+- The origin ticket failed silently from the 2026-10-09 deploy until the P9-STORE fix (`P9-STORE_Progress.md`).
+- The Testing-era token expired. For about two days the watcher held `needs_reconnect` while Zola answered "connected" from the local token check. Setup on 2026-10-16, then polling resumed, is the live proof (`P9-RANK_Progress.md`).
+- Painted screenshots were Pillow composites. Brian (verbatim, `P9-SPEAK_Progress.md`): "Cursor was incorrect. The live window did not reflect the change. I closed it and restarted it and it still does not reflect the change." A later capture of the running Debug client is the panel evidence.
+- Stale and needs-reconnect watcher wording was proven in scratch only, and was never heard live (`P9-SURFACE_Progress.md` S11).
+- `needs_reconnect` resume was unit-tested in Track 3 (`P9-WATCH_Progress.md`: the resume path did not occur live). The 2026-10-16 re-setup proved it live (`P9-RANK_Progress.md`: setup wrote a new token, and the next cycle polled).
+- An in-flight ranking call cannot be cancelled at the pin. It overlapped a live turn once: Track 4 R4, turn 6 began while load 7's call was still running (`P9-RANK_Progress.md`).
+- Forget-by-person misses an address known only in Contacts (`P9-WATCH_Progress.md`: a scratch row whose address was not a memory alias remained).
+- A shell stopped every listener on TCP 8765 and killed the P10 transport listener. The rule adopted: stop only processes this track started, by PID. Zola serve uses `--port 0`. It does not share 8765 (`P9-SPEAK_Progress.md`).
+- `forget_subject` redacts, and does not delete, a row whose delivery is `claimed`, `speech_started`, or `delivery_uncertain`. No store function deletes a closed loop (`P9-SPEAK_Progress.md` closeout; the rule is in the store).
+- Confirmed notes are sometimes not spoken on a short greeting. Twenty-two real items reached `inject_count` 2 during the Track 5 smoke (`P9-SURFACE_Progress.md`).
+- The 24-hour injection bound uses `detected_at`, not the message's own received time (`P9-SURFACE_Progress.md`).
+- Hermes logs an 80-character preview of every user message to `agent.log`. This phase does not edit Hermes (`P9-SURFACE_Progress.md`).
+- At 900×640 the top-right VOICE / MIC lines overlap her hair. That predates Track 6 (`P9-SPEAK_Progress.md`).
+
+### Process lessons
+
+- A fail-closed gate has to fail loudly. The origin ticket failed for days with empty retrieves. A client poll returned before the HUD and the log. `reservation_lost` hid three different causes.
+- A test that passes only against a fake gateway is not integration evidence. The shared method-name contract caught that class. Session checks found order and race defects that policy checks did not.
+- Retrying a smoke step until it passes is not proof. The failing check comes first.
+- "After" is the source system's own timestamp, not the time we ingested the row.
+- Claude's own G-POISON wording ("transient past the cap becomes terminal") would have dropped real mail during a 10-minute outage (`PHASE9_TRACK_LOG.md`). The fix, recorded as F2 in `P9-WATCH_Progress.md` Phase 5, is never to cap transient errors.
+- The model does not act on text it was told to treat as data. The tell line had to sit outside the frame.
+- Tool routing uses the first words of a tool description. The deferred catalog clips at about 60 characters.
+- `time.monotonic()` ticks about 15.6 ms on Windows. Python durations use `perf_counter`.
+- Dry-run the selection before a live step whose result depends on what will be selected.
+- Smoke the build Brian runs (`dotnet run`, Debug), and check the process tree after every restart.
+- Anything that is not an unedited capture of the running client is labelled MOCKUP.
+- Stop only processes this track started, and stop them by PID.
+- Claude's reviews, cited to `PHASE9_TRACK_LOG.md` except the Track 2 line, which that progress doc names itself. Track 2, `P9-STORE_Progress.md` Phase 5, "Claude's read of the store, loops, and recorded results": a loop belongs to Brian, not to a session; listing a loop taints the session and frames the display name and subject; closing or expiring a loop nulls that text. Track 3, `P9-WATCH_Progress.md` Phase 5: a cycle exception must never kill the watcher (F1); transport, 429, and 5xx must never become terminal (F2). Track 4, `P9-RANK_Progress.md` Phase 5 ("Brian's fixes A–H"): a worker must not die silently (A); a provider 4xx is a per-item rejection, so one bad item does not block the queue (B). Track 5, `P9-SURFACE_Progress.md` Phase 5: a count-only note was never confirmed, so it repeated every turn (F1); the `possibly_surfaced` detector was inverted (F4). Tracks 1 and 6: no line.

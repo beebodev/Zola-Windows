@@ -324,7 +324,7 @@ Define which processing must stay on-device, which can go to cloud services, and
 - voice biometric processing if implemented
 - real-time security camera analysis
 - health and biometric signal processing
-- content of messages and emails during summarization processing — only summaries or metadata may be transmitted, never raw content
+- content of messages and emails during summarization processing — summaries or metadata, except background ranking, which sends the sender's display name, the sender's domain, the subject, and a trimmed body. The provider returns a label and a short gist. Those are stored, and the body is deleted in that same write
 - any data the user has explicitly designated as local-only
 
 **May use cloud processing with disclosure:**
@@ -349,7 +349,7 @@ When data must be transmitted to cloud services:
 - transmit the minimum necessary for the task — do not send full context when a summary suffices
 - strip identifying information where the task can be completed without it
 - do not transmit Tier 1 data to cloud services under any circumstances
-- do not transmit raw communication content — process locally, transmit only summaries or intent signals
+- do not transmit raw communication content, except the trimmed body sent for background ranking (display name, sender domain, subject, and that trimmed body). Store the label and the gist, and delete the body in that same write
 - treat third-party API responses as untrusted and validate before using
 
 ### Local-First Memory Option

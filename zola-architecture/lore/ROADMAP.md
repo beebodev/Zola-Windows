@@ -300,43 +300,84 @@ One-line track results:
 - **P8-READ** — Gmail, Drive, Contacts, PDF; Office fail-closed; `/compress`.
 - **P8-SEND** — drafts, passphrase send, 900 s review, send-time re-check.
 
-## Current stage — Phase 9 (scope is Brian's call)
-Candidates only (not a committed order); each with one line of evidence:
-- **Workspace expansions (`S60`, `S61`, `S62`, `S64`, `S66`)** — mark read / archive
-  / label, calendar writes, attachment bytes, Office extraction (an install
-  decision), and proactive surfacing were deferred on purpose.
-- **Summary selectivity (`S67`)** — triage summaries and one gist omitted
-  addresses; Brian accepted the smoke and did not ask for a fix.
-- **OAuth publishing (`S68`)** — Testing, about 7-day refresh tokens; production
-  needs a homepage and a privacy-policy URL.
-- **Voice I/O ownership study (`S56`)** — every upstream-blocked voice item
-  sits in the voice/audio layer; Brian asked whether to fork. Related: `S69`
-  (Hermes-injected text versus whole-message matches) and `S70` (no
-  playback-completion signal).
-- **`agent.execution_guidance` decision (`S54`)** — largest measured latency
-  lever (tool rounds ≈ +8–12 s/turn; 17.8 s vs 5.4 s submit→audio). The
-  Gmail skill route is gone; the decision stays open.
-- **Backend crash / recovery (`S51`)** — five APPCRASHes in two days after
-  zero 09-01→10-04; no automatic relaunch. Phase 8 added a process death on
-  2026-10-08 whose replay carried an interrupted-turn note.
-- **Memory round two (`S46`–`S50`, P6-D01 migration, `S63`)** — associative
-  recall, fact-authority migration, and provenance that would allow an
-  attributed save. Option B was not chosen.
-- **Phase 7 voice items still open** — `S52` (stop-vs-silence race), `S55`
-  (streaming TTS bake-off), `S57` (no cards in voice; Workspace sends are
-  done, batch and command approvals are not), `S58` (smaller Whisper models),
-  `S59` (`silence_duration`, data only).
-- **Carried, not closed by Phase 8 (`S35`, `S40`, `S28`)** — session/always
-  approvals; UI polish; session UI retirement (episodes exist; evaluate).
-- **Also open from Phase 8: `S65`** — an OS-level credential boundary, if the
-  application boundary proves insufficient.
-- **Brainstorm intake (P9-KICKOFF, 2026-10-09; candidates, nothing decided)** —
-  open loops (`S71`) as the foundation for proactive surfacing (`S66`; quiet
-  first, and the `P8-D02` Brian-only conflict to resolve); background agents
-  with HUD and spoken status (`S72`); Android companion and distributed
-  presence (`S73`, strawman committed); remote escalation (`S74`, late);
-  speaker and face recognition as signals (`S75`); Kasa lights (`S76`, small).
+## Phase 9 — COMPLETE: Proactive Foundation
 
+Phase 9 shipped the proactive foundation. Complete means every planned track shipped. Push and webhooks were deferred by the plan, and the ordinary-reply echo remains an accepted risk.
+
+| Item | Implementation | Merge |
+|---|---|---|
+| P9-KICKOFF | `86b96a7d70af56744724e6b59fc3c7443829ede9` | `9d50ebcc7d6370c289419f7122536366b1e25df3` |
+| P9PRE | `4bf9a32497efc5c589b2d7b792466bc98f6ab4b4` | `925fa2c7951e9415e09c156209270bb0d3504f7d` |
+| P9-FIX-ARM | `f348c2db25d908fad7ee95182a659840144efe59` | `18d4062a84c6ed37e6d9c4f22fbcdec81f1b207f` |
+| Build plan | `d3f62cfaed970a69ff5cfc75f156e173411851f2` | `19eaebcd755418985943d6140e01d97ad06f8ca0` |
+| P9-SUPERVISE | `48ec49b90ed92ea312ad2409decb95134d0c9503` | `574fe43fb4532878eaff32c2c9f6e4baa9291c9a` |
+| P9-FIX-TTS | `0d6e56c94b29458c3e0ea8a9134a8a50f74a2a02` | `72243cb5fa3384ccee19f4ace9728baa0001de06` |
+| P9-STORE | `b13989a8f96c713214cb5537e24a401a02526bff` | `7e5ea69791173822ff7cba1ea5fcfecd979ebed2` |
+| P9-WATCH | `27b56b59d8be5295501177914b22330bc0189aec` | `05ac85f5a9634be80726cb883e94476f60e74997` |
+| P9-RANK | `df68dd432b92a634ce4e2b519499d715a8f2179b` | `5def3d3ed90bcea2cebe087fd7d4ef52cb801bb1` |
+| P9-SURFACE | `bae7ac4874efff807204b977bb6dc0491d27b504` | `0f880ad00e4c1574d133f3c9e1f9ed08563072cd` |
+| P9-SPEAK | `20ea9aeffebabb632eb2b55fb5f36c1189fb514f` | `abeff7e516bc4c4a9fb9d060cdd414c83b57f5af` |
+| P9-SPEAK docs follow-up | `6c180cca9cf4cc5e241d46cbee39fed94fe28058` | merge-SHA record |
+| P9-SPEAK docs follow-up | `96155dbcfd58883a70ab42efb7b6c94ac015a518` | this `main` tip |
+
+Suites on `main` after the speech merge (`P9-SPEAK_Progress.md`): workspace 335 OK in 19.700s, memory 134 OK in 6.604s, tools 44 OK in 0.034s, tts 8 OK in 0.132s. Client checks exit 0, wall 9.808s, supervision 38/38, speech 38/38.
+
+Shipped:
+- backend supervision with a fail-closed gap and crash diagnostics;
+- the proactive store, open loops and the forget cascade;
+- the `zola-watcher` process with the fixed background read;
+- background ranking and gists (tool-less, advisory);
+- surfacing in conversation and `whats_pending`;
+- unprompted speech for loop matches, one client coordinator, quiet hours, the Systems panel;
+- the Deepgram voice (P9-FIX-TTS) and the origin ticket (P9-FIX-ARM).
+
+Narrowings:
+- P9-D07: delivered rows keep subject, snippet, gist, and display name until acknowledged, dismissed, closed, forgotten, or 7 days. The body is never kept.
+- P9-D11: speech reads `loop_matched` only. `urgent` does not speak unprompted.
+- P9-D12: degraded at 360 seconds. Unknown only with no row or no fresh snapshot. For up to 360 seconds the HUD can say the watcher stopped while the spoken answer is still healthy.
+- WER folder: Appendix A said readable only by him. The approved ACL is the user and SYSTEM.
+
+Recorded limits:
+- The ordinary-reply echo remains an accepted risk. Track 6 closed the echo for the proactive line only.
+- K7 met on the mic button, not the wake word. Stop and Cancel stay hidden during a proactive line, and Brian accepted that.
+- The conversation bubble is not stored. A resume rebuilds the list without it.
+- K4 quiet hours, reviewed draft, locked PC, and a serve-unreachable snapshot are harness-only.
+- Live `needs_reconnect` on the Systems panel was not produced. The echo refusal line was not produced live.
+- A false unprompted announcement happened. The first K1 and K3 runs do not count. The source-message fix is in the track.
+- The origin ticket failed silently from the 2026-10-09 deploy until the store fix.
+- The Testing-era token expired. For about two days the watcher held `needs_reconnect` while Zola answered "connected."
+- Painted screenshots were presented as the live window. Brian caught them.
+- A shell stopped every listener on TCP 8765. The rule adopted is to stop only this track's processes, by PID.
+- `forget_subject` redacts, and does not delete, an in-flight or uncertain row. No store function deletes a closed loop.
+- Twenty-two real items reached the re-injection cap during the surfacing smoke. The 24-hour bound uses `detected_at`.
+- Hermes logs an 80-character preview of every user message. At 900×640 the VOICE and MIC lines overlap her hair.
+
+## Next
+
+Phase 10 — Android companion: scoped separately and running in parallel; recorded at its own lore closeout.
+
+## Later candidates
+
+Brian's call. One line of evidence each. Every bullet from the previous current-stage list is here, in the shipped list, or covered by the Phase 10 line.
+
+- **Speech pipeline (S77).** Submit to first audio was about 4.6 s on a simple turn and about 16 s on a tool turn. The follow-up quiet is 0.5 s. The ordinary-reply echo is still accepted.
+- **Barge-in (S36).** Wake during playback remains. The 2026-10-12 deferral covers it. A new TTS provider does not restore it.
+- **Voice I/O ownership (S56).** The upstream-blocked voice items still sit in the voice and audio layer. `S69` (a Hermes prefix in front of a whole-message match) and `S70` (no playback-completion signal) stay open beside it.
+- **`agent.execution_guidance` (S54).** The largest measured latency lever remains (tool rounds about +8–12 s/turn; 17.8 s vs 5.4 s submit to audio). The Gmail skill route is gone. The decision stays open.
+- **Backend crash cause (S51).** Supervision and crash diagnostics shipped in P9-SUPERVISE. Three dumps on 2026-10-17 are not analyzed. Brian chose to diagnose later. The cause stays open.
+- **Phase 7 voice, still open.** `S52` stop-vs-silence race. `S55` streaming TTS bake-off. `S57` no cards in voice; Workspace sends are done, and batch and command approvals are not. `S58` smaller Whisper models. `S59` `silence_duration`, data only.
+- **Carried from Phase 8.** `S35` session and always approvals. `S40` UI polish. `S28` session UI retirement (episodes exist; evaluate).
+- **Autonomy.** Brian is scoping it separately.
+- **Memory round two (S46–S50, S63).** Associative recall and fact-authority migration were left for measured evidence. An attributed save was not chosen.
+- **Workspace expansions (S60, S61, S62, S64).** Mark read, archive, and label; calendar writes; attachment bytes; Office extraction. Each was deferred on purpose.
+- **Summary selectivity (S67).** Triage summaries and one gist omitted addresses. Brian accepted the smoke and did not ask for a fix.
+- **OS credential boundary (S65).** Still open if the application boundary proves insufficient.
+- **Phone escalation (S74).** A late rung. A phone line is a weaker channel than a spoken passphrase in the room, and it needs its own decision.
+- **Per-agent voices and direct agent conversations (S72 remainder).** The Systems panel and spoken watcher status shipped. Talking to each agent, and a voice of its own, did not.
+- **Recognition (S75).** Speaker identification, then face, as signals. Neither is authentication.
+- **Kasa (S76).** Lights only. A small local tool, and an install decision if it needs one.
+- **Store and watcher coverage (S84, S85).** A closed loop is not deleted. Series delete, Contacts-only addresses, sent mail, and watching while the client is closed remain.
+- **Privacy and logs (S86).** The chat-history sentence is still unpublished. A privacy-page paragraph is drafted and waiting for Brian to publish. The privacy plan still names Gemini for reasoning and Gemini Live for voice. `presence.log` is 177,214,171 bytes and unrotated.
 
 ## Source documents
 - Audit series: `zola-architecture/audit/winh-hermes-gap/`
