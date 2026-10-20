@@ -60,6 +60,7 @@
                     <Grid x:Name="SystemsGoogle" Height="22"><Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><FontIcon Grid.Column="0" FontFamily="{StaticResource ZolaIconFont}" Glyph="&#xE77B;" FontSize="14" Foreground="{StaticResource ZolaAmberMutedBrush}" VerticalAlignment="Center"/><TextBlock x:Name="SystemsGoogleLabel" Grid.Column="2" Style="{StaticResource ZolaMantraStyle}" VerticalAlignment="Center"/><Ellipse x:Name="SystemsGoogleDot" Grid.Column="3" Width="6" Height="6" Fill="{StaticResource ZolaAmberDarkBrush}" VerticalAlignment="Center" HorizontalAlignment="Right"/><TextBlock x:Name="SystemsGoogleState" Grid.Column="3" Style="{StaticResource ZolaMantraStyle}" FontSize="13" FontFamily="{StaticResource ZolaFontSemiBold}" VerticalAlignment="Center" HorizontalAlignment="Right"/></Grid>
                     <Grid x:Name="SystemsRanking" Height="22"><Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><FontIcon Grid.Column="0" FontFamily="{StaticResource ZolaIconFont}" Glyph="&#xE9D9;" FontSize="14" Foreground="{StaticResource ZolaAmberMutedBrush}" VerticalAlignment="Center"/><TextBlock x:Name="SystemsRankingLabel" Grid.Column="2" Style="{StaticResource ZolaMantraStyle}" VerticalAlignment="Center"/><Ellipse x:Name="SystemsRankingDot" Grid.Column="3" Width="6" Height="6" Fill="{StaticResource ZolaAmberDarkBrush}" VerticalAlignment="Center" HorizontalAlignment="Right"/><TextBlock x:Name="SystemsRankingState" Grid.Column="3" Style="{StaticResource ZolaMantraStyle}" FontSize="13" FontFamily="{StaticResource ZolaFontSemiBold}" VerticalAlignment="Center" HorizontalAlignment="Right"/></Grid>
                     <Grid x:Name="SystemsVoice" Height="22"><Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><FontIcon Grid.Column="0" FontFamily="{StaticResource ZolaIconFont}" Glyph="&#xE720;" FontSize="14" Foreground="{StaticResource ZolaAmberMutedBrush}" VerticalAlignment="Center"/><TextBlock x:Name="SystemsVoiceLabel" Grid.Column="2" Style="{StaticResource ZolaMantraStyle}" VerticalAlignment="Center"/><Ellipse x:Name="SystemsVoiceDot" Grid.Column="3" Width="6" Height="6" Fill="{StaticResource ZolaAmberDarkBrush}" VerticalAlignment="Center" HorizontalAlignment="Right"/><TextBlock x:Name="SystemsVoiceState" Grid.Column="3" Style="{StaticResource ZolaMantraStyle}" FontSize="13" FontFamily="{StaticResource ZolaFontSemiBold}" VerticalAlignment="Center" HorizontalAlignment="Right"/></Grid>
+                    <Grid x:Name="SystemsCompanion" Height="22"><Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><FontIcon Grid.Column="0" FontFamily="{StaticResource ZolaIconFont}" Glyph="&#xE8EA;" FontSize="14" Foreground="{StaticResource ZolaAmberMutedBrush}" VerticalAlignment="Center"/><TextBlock x:Name="SystemsCompanionLabel" Grid.Column="2" Style="{StaticResource ZolaMantraStyle}" VerticalAlignment="Center"/><Ellipse x:Name="SystemsCompanionDot" Grid.Column="3" Width="6" Height="6" Fill="{StaticResource ZolaAmberDarkBrush}" VerticalAlignment="Center" HorizontalAlignment="Right"/><TextBlock x:Name="SystemsCompanionState" Grid.Column="3" Style="{StaticResource ZolaMantraStyle}" FontSize="13" FontFamily="{StaticResource ZolaFontSemiBold}" VerticalAlignment="Center" HorizontalAlignment="Right"/></Grid>
                 </StackPanel>
             </StackPanel>
 
@@ -189,6 +190,22 @@
                             Glyph="{StaticResource ZolaGlyphSessions}"
                             HorizontalAlignment="Center" />
                         <TextBlock Style="{StaticResource ZolaDockLabelStyle}" Text="SESSIONS" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    x:Name="PairPhoneButton"
+                    Style="{StaticResource ZolaDockButtonStyle}"
+                    Click="OnPairPhoneClick"
+                    Visibility="Collapsed"
+                    AutomationProperties.Name="Pair phone">
+                    <StackPanel Spacing="{StaticResource ZolaSpace4}">
+                        <FontIcon
+                            FontFamily="{StaticResource ZolaIconFont}"
+                            FontSize="{StaticResource ZolaDockIconSize}"
+                            Foreground="{StaticResource ZolaAmberPrimaryBrush}"
+                            Glyph="&#xE8EA;"
+                            HorizontalAlignment="Center" />
+                        <TextBlock x:Name="PairPhoneButtonLabel" Style="{StaticResource ZolaDockLabelStyle}" />
                     </StackPanel>
                 </Button>
                 <Button

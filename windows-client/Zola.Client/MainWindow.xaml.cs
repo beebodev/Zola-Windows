@@ -59,6 +59,8 @@ public sealed partial class MainWindow : Window
     // P4-LOCK: one app-level lock/sleep watcher — P4-D01
     private SessionLockWatcher? _lockWatcher;
     private readonly WatcherProcess? _watcher;
+    private readonly PhoneProcess? _phone;
+    private string? _phoneLink;
     private ProactiveSpeechSession? _speech;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _speechTimer;
     private const int SessionIdDisplayLength = 8;
@@ -139,7 +141,7 @@ public sealed partial class MainWindow : Window
     private readonly HashSet<string> _quietClarifyIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _noAnswerPanelOpenedIds = new(StringComparer.Ordinal);
 
-    public MainWindow(HermesProcessManager backend, WatcherProcess? watcher = null)
+    public MainWindow(HermesProcessManager backend, WatcherProcess? watcher = null, PhoneProcess? phone = null)
     {
         // P1-CLIENT: the window subscribes before start so the first ready state can open the socket — P1-D01
         InitializeComponent();
@@ -170,6 +172,7 @@ public sealed partial class MainWindow : Window
         _clockTimer.Tick += OnClockTick;
         _backend = backend;
         _watcher = watcher;
+        _phone = phone;
         _chat = new ChatSocket(backend);
         // P2-VOICE: one voice controller owns this window's socket; the window only renders and forwards input — P2-D12
         _voice = new VoiceController(
@@ -214,6 +217,16 @@ public sealed partial class MainWindow : Window
         if (_watcher is not null)
         {
             _watcher.LatchChanged += () => Dispatch(PaintSystems);
+        }
+
+        if (_phone is not null)
+        {
+            _phone.LatchChanged += () => Dispatch(PaintSystems);
+            _phoneTimer = DispatcherQueue.CreateTimer();
+            _phoneTimer.IsRepeating = true;
+            _phoneTimer.Interval = TimeSpan.FromSeconds(2);
+            _phoneTimer.Tick += OnPhonePoll;
+            _phoneTimer.Start();
         }
         // P7-VOICEAUTH: broker query scoped to clarify id + current session (never "any open") — P7-D05
         _voice.ConfigureQuestionSpeech(
@@ -847,6 +860,34 @@ public sealed partial class MainWindow : Window
     }
 
     private WatcherHudResult? _systemsHealth;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _phoneTimer;
+    private int _phonePollBusy;
+
+    private void OnPhonePoll(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        var phone = _phone;
+        if (phone is null || !PhonePollGate.TryEnter(ref _phonePollBusy))
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var link = phone.ReadLink();
+                Dispatch(() =>
+                {
+                    _phoneLink = link;
+                    PaintSystems();
+                });
+            }
+            finally
+            {
+                PhonePollGate.Exit(ref _phonePollBusy);
+            }
+        });
+    }
 
     private void ShowWatcherLine(WatcherHudResult result)
     {
@@ -867,7 +908,7 @@ public sealed partial class MainWindow : Window
         SystemsHost.Width = SystemsCopy.PanelWidth;
         SystemsHeader.Text = SystemsCopy.Header;
         var health = _systemsHealth;
-        var rows = SystemsCopy.Rows(new SystemsFacts(
+        var facts = new SystemsFacts(
             _voice.BackendReachable && _backend.WebSocketPermitted && !_unreachable && !_keepsFailing,
             _unreachable && !_keepsFailing,
             _keepsFailing,
@@ -879,12 +920,20 @@ public sealed partial class MainWindow : Window
             health?.RankerProgressAt,
             DateTimeOffset.UtcNow,
             _voice.Mode != VoiceController.ModeVoice || (_voice.IsAvailable && !_voice.WakeUnavailable),
-            _voice.TtsRestoreActive));
+            _voice.TtsRestoreActive,
+            _phone?.Latch ?? WatcherProcessLatch.Running,
+            _phoneLink,
+            _phone?.KeepsFailing == true);
+        var rows = SystemsCopy.Rows(facts);
         ApplySystemRow(SystemsBackend, SystemsBackendLabel, SystemsBackendState, SystemsBackendDot, rows[0]);
         ApplySystemRow(SystemsWatcher, SystemsWatcherLabel, SystemsWatcherState, SystemsWatcherDot, rows[1]);
         ApplySystemRow(SystemsGoogle, SystemsGoogleLabel, SystemsGoogleState, SystemsGoogleDot, rows[2]);
         ApplySystemRow(SystemsRanking, SystemsRankingLabel, SystemsRankingState, SystemsRankingDot, rows[3]);
         ApplySystemRow(SystemsVoice, SystemsVoiceLabel, SystemsVoiceState, SystemsVoiceDot, rows[4]);
+        ApplySystemRow(SystemsCompanion, SystemsCompanionLabel, SystemsCompanionState, SystemsCompanionDot, rows[5]);
+        var pair = SystemsCopy.PairAction(facts);
+        PairPhoneButton.Visibility = string.IsNullOrEmpty(pair) ? Visibility.Collapsed : Visibility.Visible;
+        PairPhoneButtonLabel.Text = pair ?? "";
     }
 
     private void ApplySystemRow(Grid row, TextBlock label, TextBlock state, Microsoft.UI.Xaml.Shapes.Ellipse dot, SystemsCopy.View view)
@@ -2041,6 +2090,49 @@ public sealed partial class MainWindow : Window
         UpdateSessionHud();
         UpdateDockVisibility();
         UpdateNoticeVisibility();
+    }
+
+    private async void OnPairPhoneClick(object sender, RoutedEventArgs e)
+    {
+        var phone = _phone;
+        if (phone is null)
+        {
+            return;
+        }
+
+        var code = await Task.Run(phone.StartPairing).ConfigureAwait(true);
+        var dialog = new ContentDialog
+        {
+            Title = "Pair phone",
+            Content = string.IsNullOrEmpty(code) ? "Phone is not available." : PairCodeBody(code),
+            CloseButtonText = "Close",
+            XamlRoot = Content.XamlRoot,
+        };
+        await dialog.ShowAsync();
+    }
+
+    private UIElement PairCodeBody(string code)
+    {
+        var grouped = code.Length == 8
+            ? string.Concat(code.AsSpan(0, 4), " ", code.AsSpan(4, 4))
+            : code;
+        var panel = new StackPanel { Spacing = 12 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = grouped,
+            FontFamily = Token<FontFamily>("ZolaFontSemiBold"),
+            FontSize = 40,
+            CharacterSpacing = 200,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Expires in 5 minutes",
+            FontFamily = Token<FontFamily>("ZolaFontRegular"),
+            FontSize = 16,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        return panel;
     }
 
     private async void OnSessionsToggle(object sender, RoutedEventArgs e)

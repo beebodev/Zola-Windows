@@ -1,7 +1,10 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "magic": "ZPC1",
-  "frame_kinds": ["signed", "pairing"],
+  "frame_kinds": [
+    "signed",
+    "pairing"
+  ],
   "signature": {
     "algorithm": "ECDSA",
     "curve": "P-256",
@@ -10,13 +13,22 @@
   },
   "canonical_json": {
     "sort_keys": true,
-    "separators": [",", ":"],
+    "separators": [
+      ",",
+      ":"
+    ],
     "ensure_ascii": false
   },
   "identity_separator": "\u001f",
   "identity_separator_forbidden": true,
   "device_id": "install id, random 128-bit, not a key fingerprint",
-  "common_fields": ["type", "device_id", "seq", "sent_at_ms", "contract_version"],
+  "common_fields": [
+    "type",
+    "device_id",
+    "seq",
+    "sent_at_ms",
+    "contract_version"
+  ],
   "capabilities": [
     "receive_messages",
     "receive_notifications",
@@ -27,31 +39,193 @@
     "keepalive"
   ],
   "message_types": {
-    "hello": {"direction": "phone_to_pc", "fields": ["app_version", "capabilities", "cursors", "pending_incomplete", "notification_queue_depth"]},
-    "messages.event": {"direction": "phone_to_pc", "capability": "receive_messages", "fields": ["provider_id", "kind", "revision", "completeness", "received_at_ms", "date_sent_ms", "sender_raw", "is_group", "participant_count", "rcs_flag"]},
-    "notifications.event": {"direction": "phone_to_pc", "capability": "receive_notifications", "fields": ["package", "notification_key", "newest_message_timestamp", "revision", "app_label", "sender_display_name", "conversation_title", "is_group", "posted_at_ms"]},
-    "messages.ack": {"direction": "pc_to_phone", "fields": ["provider_id", "kind", "revision", "result"]},
-    "history.read.request": {"direction": "pc_to_phone", "capability": "read_history", "fields": ["request_id", "selector", "max_messages", "max_characters", "deadline_ms"]},
-    "history.read.result": {"direction": "phone_to_pc", "capability": "read_history", "fields": ["request_id", "status"]},
-    "notifications.read.request": {"direction": "pc_to_phone", "capability": "read_notifications", "fields": ["request_id", "max_items", "max_characters", "deadline_ms"]},
-    "notifications.read.result": {"direction": "phone_to_pc", "capability": "read_notifications", "fields": ["request_id", "status"]},
-    "code.read.request": {"direction": "pc_to_phone", "capability": "read_code", "fields": ["request_id", "provider_id", "kind"]},
-    "code.read.result": {"direction": "phone_to_pc", "capability": "read_code", "fields": ["request_id", "status"]},
-    "device.health": {"direction": "phone_to_pc", "capability": "device_health", "fields": ["service_state", "listener_bound"]},
-    "keepalive.ping": {"direction": "pc_to_phone", "capability": "keepalive", "fields": []},
-    "keepalive.pong": {"direction": "phone_to_pc", "capability": "keepalive", "fields": []}
+    "hello": {
+      "direction": "phone_to_pc",
+      "fields": [
+        "app_version",
+        "capabilities",
+        "cursors",
+        "pending_incomplete",
+        "notification_queue_depth"
+      ]
+    },
+    "messages.event": {
+      "direction": "phone_to_pc",
+      "capability": "receive_messages",
+      "fields": [
+        "provider_id",
+        "kind",
+        "revision",
+        "completeness",
+        "received_at_ms",
+        "date_sent_ms",
+        "sender_raw",
+        "is_group",
+        "participant_count",
+        "rcs_flag"
+      ]
+    },
+    "notifications.event": {
+      "direction": "phone_to_pc",
+      "capability": "receive_notifications",
+      "fields": [
+        "package",
+        "notification_key",
+        "newest_message_timestamp",
+        "revision",
+        "app_label",
+        "sender_display_name",
+        "conversation_title",
+        "is_group",
+        "posted_at_ms"
+      ]
+    },
+    "messages.ack": {
+      "direction": "pc_to_phone",
+      "fields": [
+        "provider_id",
+        "kind",
+        "revision",
+        "result"
+      ]
+    },
+    "notifications.ack": {
+      "direction": "pc_to_phone",
+      "fields": [
+        "package",
+        "notification_key",
+        "newest_message_timestamp",
+        "revision",
+        "result"
+      ]
+    },
+    "history.read.request": {
+      "direction": "pc_to_phone",
+      "capability": "read_history",
+      "fields": [
+        "request_id",
+        "selector",
+        "max_messages",
+        "max_characters",
+        "deadline_ms"
+      ]
+    },
+    "history.read.result": {
+      "direction": "phone_to_pc",
+      "capability": "read_history",
+      "fields": [
+        "request_id",
+        "status"
+      ]
+    },
+    "notifications.read.request": {
+      "direction": "pc_to_phone",
+      "capability": "read_notifications",
+      "fields": [
+        "request_id",
+        "max_items",
+        "max_characters",
+        "deadline_ms"
+      ]
+    },
+    "notifications.read.result": {
+      "direction": "phone_to_pc",
+      "capability": "read_notifications",
+      "fields": [
+        "request_id",
+        "status"
+      ]
+    },
+    "code.read.request": {
+      "direction": "pc_to_phone",
+      "capability": "read_code",
+      "fields": [
+        "request_id",
+        "provider_id",
+        "kind"
+      ]
+    },
+    "code.read.result": {
+      "direction": "phone_to_pc",
+      "capability": "read_code",
+      "fields": [
+        "request_id",
+        "status"
+      ]
+    },
+    "device.health": {
+      "direction": "phone_to_pc",
+      "capability": "device_health",
+      "fields": [
+        "service_state",
+        "listener_bound"
+      ]
+    },
+    "keepalive.ping": {
+      "direction": "pc_to_phone",
+      "capability": "keepalive",
+      "fields": []
+    },
+    "keepalive.pong": {
+      "direction": "phone_to_pc",
+      "capability": "keepalive",
+      "fields": []
+    }
   },
-  "ack_results": ["stored", "updated", "duplicate", "suppressed", "rejected"],
-  "lower_revision": {"store_result": "ignored", "ack_result": "duplicate"},
-  "verification_order": ["malformed", "unsigned", "bad-signature", "unknown-key", "wrong-device", "replay", "stale", "version"],
-  "rejection_reasons": ["malformed", "unsigned", "bad-signature", "unknown-key", "wrong-device", "replay", "stale", "version", "too-large", "late-result"],
-  "disconnect_reasons": ["pong-missed", "peer-closed", "network-lost", "failure", "pc-shutdown", "phone-shutdown", "superseded"],
+  "ack_results": [
+    "stored",
+    "updated",
+    "duplicate",
+    "suppressed",
+    "rejected"
+  ],
+  "lower_revision": {
+    "store_result": "ignored",
+    "ack_result": "duplicate"
+  },
+  "verification_order": [
+    "raw-size",
+    "malformed",
+    "unsigned",
+    "bad-signature",
+    "unknown-key",
+    "wrong-device",
+    "replay",
+    "stale",
+    "version",
+    "field-limits"
+  ],
+  "rejection_reasons": [
+    "malformed",
+    "unsigned",
+    "bad-signature",
+    "unknown-key",
+    "wrong-device",
+    "replay",
+    "stale",
+    "version",
+    "too-large",
+    "late-result"
+  ],
+  "disconnect_reasons": [
+    "pong-missed",
+    "peer-closed",
+    "network-lost",
+    "failure",
+    "pc-shutdown",
+    "phone-shutdown",
+    "superseded"
+  ],
   "timing_ms": {
     "ping_interval": 240000,
     "pong_wait": 15000,
     "pong_misses_before_close": 2,
     "read_timeout": 15000,
-    "connect_backoff": [10000, 30000, 60000],
+    "connect_backoff": [
+      10000,
+      30000,
+      60000
+    ],
     "stale_window": 120000,
     "pairing_code_ttl": 300000,
     "pairing_wrong_attempts": 5,
@@ -70,24 +244,176 @@
     "notification_read_chars": 64000
   },
   "identity": {
-    "text": ["device_id", "kind", "provider_id"],
-    "text_kinds": ["sms", "mms"],
-    "notification": ["device_id", "notif", "package", "notification_key", "newest_message_timestamp"],
+    "text": [
+      "device_id",
+      "kind",
+      "provider_id"
+    ],
+    "text_kinds": [
+      "sms",
+      "mms"
+    ],
+    "notification": [
+      "device_id",
+      "notif",
+      "package",
+      "notification_key",
+      "newest_message_timestamp"
+    ],
     "body_hash_in_identity": false
   },
   "pairing": {
-    "exchange": ["phone_open", "pc_bind", "phone_bind", "pc_ok"],
+    "exchange": [
+      "phone_open",
+      "pc_bind",
+      "phone_bind",
+      "pc_ok"
+    ],
     "code_digits": 8,
     "keeps_device_id": true,
     "old_key_after_repair": "unknown-key",
     "known_device_unauthorized_key": "unknown-key",
-    "stores_nothing_on_refusal": true
+    "stores_nothing_on_refusal": true,
+    "mac": "HMAC-SHA256",
+    "mac_covers": "canonical payload"
   },
-  "mask_kind": ["verification_code", "reset_link", "unsure"],
-  "attachment_kind": ["image", "video", "audio", "other"],
-  "ingest_reject_reasons": ["bad_kind", "bad_revision", "bad_completeness", "bad_time", "bad_identity", "separator", "bad_mask", "bad_attachment", "bad_field", "too_large"],
-  "completeness": ["complete", "incomplete", "exhausted"],
-  "rcs_flag": ["yes", "no", "unknown"],
-  "sender_kind": ["e164", "shortcode", "alnum", "unparsed"],
-  "ranking_source": ["model", "code"]
+  "mask_kind": [
+    "verification_code",
+    "reset_link",
+    "unsure"
+  ],
+  "attachment_kind": [
+    "image",
+    "video",
+    "audio",
+    "other"
+  ],
+  "ingest_reject_reasons": [
+    "bad_kind",
+    "bad_revision",
+    "bad_completeness",
+    "bad_time",
+    "bad_identity",
+    "separator",
+    "bad_mask",
+    "bad_attachment",
+    "bad_field",
+    "too_large"
+  ],
+  "completeness": [
+    "complete",
+    "incomplete",
+    "exhausted"
+  ],
+  "rcs_flag": [
+    "yes",
+    "no",
+    "unknown"
+  ],
+  "sender_kind": [
+    "e164",
+    "shortcode",
+    "alnum",
+    "unparsed"
+  ],
+  "ranking_source": [
+    "model",
+    "code"
+  ],
+  "supported_versions": [
+    2
+  ],
+  "listen_port": 47821,
+  "reconnecting_grace_ms": 480000,
+  "launch_secret_env": "ZOLA_PHONE_LAUNCH_SECRET",
+  "pipe_name": "\\\\.\\pipe\\ZolaPhone",
+  "check_precedence": [
+    {
+      "step": "raw-size",
+      "reason": "too-large"
+    },
+    {
+      "step": "malformed",
+      "reason": "malformed"
+    },
+    {
+      "step": "unsigned",
+      "reason": "unsigned"
+    },
+    {
+      "step": "bad-signature",
+      "reason": "bad-signature"
+    },
+    {
+      "step": "unknown-key",
+      "reason": "unknown-key"
+    },
+    {
+      "step": "wrong-device",
+      "reason": "wrong-device"
+    },
+    {
+      "step": "replay",
+      "reason": "replay"
+    },
+    {
+      "step": "stale",
+      "reason": "stale"
+    },
+    {
+      "step": "version",
+      "reason": "version"
+    },
+    {
+      "step": "field-limits",
+      "reason": "too-large"
+    }
+  ],
+  "resend": {
+    "envelope": "fresh",
+    "seq": "new higher",
+    "sent_at_ms": "current",
+    "item": "same identity and revision",
+    "replay_or_stale_before_store": true,
+    "stored_item_ack": "duplicate"
+  },
+  "local_requests": {
+    "status": {
+      "secret": false
+    },
+    "read_history": {
+      "secret": true
+    },
+    "read_notifications": {
+      "secret": true
+    },
+    "read_code": {
+      "secret": true
+    },
+    "diagnostic_read": {
+      "secret": true
+    },
+    "pairing.start": {
+      "secret": true
+    }
+  },
+  "secret_failure": "unauthorized",
+  "link_states": [
+    "not_paired",
+    "connected",
+    "not_responding",
+    "reconnecting",
+    "offline",
+    "no_tailnet"
+  ],
+  "wire": {
+    "encoding": "utf-8-json",
+    "fields": [
+      "magic",
+      "kind",
+      "signature",
+      "payload"
+    ],
+    "signature_covers": "canonical payload"
+  }
 }

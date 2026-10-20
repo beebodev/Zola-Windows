@@ -10,6 +10,12 @@ public static class SystemsCopy
     public const string Ranking = "RANKING";
     public const string Voice = "VOICE";
     public const string Companion = "COMPANION WATCHER";
+    public const string PairPhone = "PAIR PHONE";
+    public const string RepairPhone = "RE-PAIR PHONE";
+    public const string NotPaired = "NOT PAIRED";
+    public const string NotResponding = "NOT RESPONDING";
+    public const string Reconnecting = "RECONNECTING";
+    public const string NoTailnet = "NO TAILNET";
 
     public const string Restarting = "RESTARTING";
     public const string Failing = "FAILING";
@@ -25,7 +31,7 @@ public static class SystemsCopy
     public const string Stale = "STALE";
     public const string Outage = "OUTAGE";
 
-    public const double PanelWidth = 299;
+    public const double PanelWidth = 340;
     public const int RankerStaleSeconds = 600;
 
     public enum Row
@@ -35,6 +41,7 @@ public static class SystemsCopy
         GoogleAccount,
         Ranking,
         Voice,
+        Companion,
     }
 
     public enum Level
@@ -63,6 +70,14 @@ public static class SystemsCopy
         { (Row.Ranking, Stale), Level.Attention },
         { (Row.Voice, Unavailable), Level.Down },
         { (Row.Voice, Outage), Level.Down },
+        { (Row.Companion, Restarting), Level.Attention },
+        { (Row.Companion, Failing), Level.Down },
+        { (Row.Companion, Stopped), Level.Down },
+        { (Row.Companion, NotPaired), Level.Attention },
+        { (Row.Companion, NotResponding), Level.Attention },
+        { (Row.Companion, Reconnecting), Level.Attention },
+        { (Row.Companion, Offline), Level.Down },
+        { (Row.Companion, NoTailnet), Level.Attention },
     };
 
     public static Level LevelFor(Row row, string state)
@@ -79,6 +94,7 @@ public static class SystemsCopy
             GoogleRow(facts),
             RankerRow(facts),
             VoiceRow(facts),
+            CompanionRow(facts),
         ];
     }
 
@@ -169,6 +185,60 @@ public static class SystemsCopy
         return ViewOf(Row.Voice, Voice, state, visible: true);
     }
 
+    private static View CompanionRow(SystemsFacts facts)
+    {
+        // P10-INTAKE: the process latch wins. The link is a separate fact — P10-D12
+        if (facts.PhoneKeepsFailing)
+        {
+            return ViewOf(Row.Companion, Companion, Failing, visible: true);
+        }
+
+        if (facts.PhoneLatch == WatcherProcessLatch.Restarting)
+        {
+            return ViewOf(Row.Companion, Companion, Restarting, visible: true);
+        }
+
+        if (facts.PhoneLatch == WatcherProcessLatch.Stopped)
+        {
+            return ViewOf(Row.Companion, Companion, Stopped, visible: true);
+        }
+
+        if (string.IsNullOrEmpty(facts.PhoneLink) || facts.PhoneLink == "unknown")
+        {
+            return ViewOf(Row.Companion, Companion, null, visible: false);
+        }
+
+        string? state = facts.PhoneLink switch
+        {
+            "connected" => null,
+            "not_responding" => NotResponding,
+            "reconnecting" => Reconnecting,
+            "offline" => Offline,
+            "no_tailnet" => NoTailnet,
+            "not_paired" => NotPaired,
+            _ => null,
+        };
+        var visible = state is not null || facts.PhoneLink == "connected";
+        return ViewOf(Row.Companion, Companion, state, visible);
+    }
+
+    public static string? PairAction(SystemsFacts facts)
+    {
+        // P10-INTAKE: the dock button follows the row. The latch still wins — P10-D12
+        var state = CompanionRow(facts).State;
+        if (state == NotPaired)
+        {
+            return PairPhone;
+        }
+
+        if (state == Offline)
+        {
+            return RepairPhone;
+        }
+
+        return null;
+    }
+
     private static View ViewOf(Row row, string label, string? state, bool visible)
     {
         var level = state is null ? Level.Quiet : LevelFor(row, state);
@@ -198,4 +268,7 @@ public readonly record struct SystemsFacts(
     string? RankerProgressAt,
     DateTimeOffset UtcNow,
     bool VoiceAvailable,
-    bool TtsRestoreActive);
+    bool TtsRestoreActive,
+    WatcherProcessLatch PhoneLatch = WatcherProcessLatch.Running,
+    string? PhoneLink = null,
+    bool PhoneKeepsFailing = false);

@@ -31,6 +31,9 @@ public sealed partial class HermesProcessManager : IDisposable
 
     public bool IsShutdown => _shutdown;
 
+    // P10-INTAKE: the client mints this once and serve restarts keep it — P10-D12
+    public string PhoneLaunchSecret { get; set; } = "";
+
     public HermesProcessManager()
     {
         // P1-CLIENT: dedicated profile lives under the Hermes profiles root, never the shared home — P1-D01
@@ -242,6 +245,10 @@ public sealed partial class HermesProcessManager : IDisposable
         start.Environment["HERMES_HOME"] = ProfileDirectory;
         start.Environment["HERMES_DASHBOARD_SESSION_TOKEN"] = spawnToken;
         start.Environment["PYTHONUNBUFFERED"] = "1";
+        if (!string.IsNullOrEmpty(PhoneLaunchSecret))
+        {
+            start.Environment[PythonStart.SecretEnv] = PhoneLaunchSecret;
+        }
         PrependPythonPath(start, hermesRoot);
         start.Environment.Remove("HERMES_DESKTOP");
         start.Environment.Remove("HERMES_WEB_DIST");
