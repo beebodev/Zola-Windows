@@ -1,0 +1,481 @@
+{
+  "label": "TEST KEYS \u2014 never used outside tests",
+  "paired_device_id": "zp10-device-test",
+  "now_ms": 1700000000000,
+  "last_accepted_seq": 0,
+  "cases": [
+    {
+      "name": "valid-hello",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEQCIGAnvpS8QfKP1wnk60BFEJwbIePDQ8R1M9oxSusr+dmJAiBXyw1SnS49aqeUWa6DJOFitqbe4ChybsIaD1qTWqHR1Q=="
+    },
+    {
+      "name": "valid-messages.event",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "messages.event",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "provider_id": "p-1",
+        "kind": "sms",
+        "revision": 1,
+        "completeness": "complete",
+        "received_at_ms": 1700000000000,
+        "date_sent_ms": 1700000000000,
+        "sender_raw": "5551234567",
+        "is_group": 0,
+        "participant_count": 1,
+        "rcs_flag": "no",
+        "body": "ZP10-synthetic"
+      },
+      "signature": "MEUCIQDQfBYoQN0PSL62jp5QF6m5t4ZAIfHGKxDaEmNRPAHfBgIgPVWT2BI1liSeMUmzlvgN2Yq0XQsIGMh8j42tLkDKt3A="
+    },
+    {
+      "name": "valid-notifications.event",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "notifications.event",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "package": "zp10.app",
+        "notification_key": "n-1",
+        "newest_message_timestamp": "1700000000000",
+        "revision": 1,
+        "app_label": "ZP10",
+        "sender_display_name": "Synthetic",
+        "conversation_title": "ZP10",
+        "is_group": 0,
+        "posted_at_ms": 1700000000000,
+        "text": "ZP10-synthetic"
+      },
+      "signature": "MEUCICy9nljHw18LB+fgmWEPzD6kOcO3Wq1LfE0ytr1ffP5fAiEAi5JTvwRx5NBb+c567TfUXtcBbI8yrnKZKeknMMMiGwY="
+    },
+    {
+      "name": "valid-messages.ack",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "messages.ack",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "provider_id": "p-1",
+        "kind": "sms",
+        "revision": 1,
+        "result": "stored"
+      },
+      "signature": "MEYCIQCNhT2G+5IDjdfWbjNZa2YFQgbgARD/6USumiLWa4sNsQIhAJ8BPLOAaZi1abSEHijT3aZfA4rUw6jfA/lr3wHy2QlZ"
+    },
+    {
+      "name": "valid-history.read.request",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "history.read.request",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "request_id": "r-1",
+        "selector": "5551234567",
+        "max_messages": 1,
+        "max_characters": 20,
+        "deadline_ms": 1700000000000
+      },
+      "signature": "MEQCICD/Xz6nbbvQKQhYk+Yx8aC+3rlSfB5nR6Qbc6rLst3uAiA9t6CE/rPI5UtqI4xBp4ib59/6HZ0CSivnj2FzGy/Big=="
+    },
+    {
+      "name": "valid-history.read.result",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "history.read.result",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "request_id": "r-1",
+        "status": "ok"
+      },
+      "signature": "MEYCIQDS+IXTegLnnIlSM7iY0kr6WEfdr4Id82w0l229sd/5uwIhAIAo3HLT3XNkiMC4quMfpmlPEJooeqgek1Hw/htZp5gd"
+    },
+    {
+      "name": "valid-notifications.read.request",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "notifications.read.request",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "request_id": "r-2",
+        "max_items": 1,
+        "max_characters": 20,
+        "deadline_ms": 1700000000000
+      },
+      "signature": "MEUCIHkYajsMXSeO1RTXqZD2UVLAgO+fuwffqV3UGVuv1LEBAiEA60WImRgSPwtcIBm/0GUwc3nnyTvB3QNHHPGIfXnqHGo="
+    },
+    {
+      "name": "valid-notifications.read.result",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "notifications.read.result",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "request_id": "r-2",
+        "status": "ok"
+      },
+      "signature": "MEUCIQCSz+N6FChRE7caj8LhKMGtaDumhCGdiwhSUSbl3vLf9wIgXn1Gt33u6PAlaKiJPuJG7mye+jggh24DMnIlweOmHng="
+    },
+    {
+      "name": "valid-code.read.request",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "code.read.request",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "request_id": "r-3",
+        "provider_id": "p-1",
+        "kind": "sms"
+      },
+      "signature": "MEUCIQDyj/eD99U6zdGy7MF/mFf8caikUmr9b9mSggYC2gKVvAIgPYPfXQVS+qtY/Ka4F8fr4SOX5Nkwdyur+9nOifo+7IA="
+    },
+    {
+      "name": "valid-code.read.result",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "code.read.result",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "request_id": "r-3",
+        "status": "absent"
+      },
+      "signature": "MEQCIAsVHA8vwnkv/U/wZ22WQBRjfSpTgrEn9I4lva32kfTCAiAiBQtKZfsPnLpB+lob4+zqbE2m85yh98SMKwTwt5BItQ=="
+    },
+    {
+      "name": "valid-device.health",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "device.health",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "service_state": "up",
+        "listener_bound": true
+      },
+      "signature": "MEUCIQDrqPLsGYRPoi3pCX+TkS/QVPQGaXpELWNh4QI/5PmWgwIgS0pvSvgp+eNrl/130OX49AdTzw3xBzGyK3+CbrjbqUk="
+    },
+    {
+      "name": "valid-keepalive.ping",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "keepalive.ping",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1
+      },
+      "signature": "MEUCICgopQJDWLT7ojsYjJxIePL247RCODp7JhDVnLNSVtHYAiEA3mSj2Liq1nV/uvBJJvRJ+WLoggy/T+FRcjovF3CsFsY="
+    },
+    {
+      "name": "valid-keepalive.pong",
+      "expect": "accept",
+      "signed_by": "paired",
+      "payload": {
+        "type": "keepalive.pong",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1
+      },
+      "signature": "MEUCIFh8JT5coANw5iycnGZsuHHAw0iwtCOEijgqavlIO+bEAiEA9mQ4UoycDRz/BnkWhZN2wy9A8qD0kwxVsEC7AR8H1tE="
+    },
+    {
+      "name": "malformed",
+      "expect": "malformed",
+      "payload_raw": "{"
+    },
+    {
+      "name": "unsigned",
+      "expect": "unsigned",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": ""
+    },
+    {
+      "name": "bad-signature",
+      "expect": "bad-signature",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "AAAAAAAAAAA="
+    },
+    {
+      "name": "unknown-key",
+      "expect": "unknown-key",
+      "signed_by": "unauthorized",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEQCIF1ll5JKocu8ZHxBSze57fv7koZF+94luWWf81bk4TPMAiAFhXvGx3sBVzj1w6ZfuorYHe9x/p211CdruK4eizxLnw=="
+    },
+    {
+      "name": "wrong-device",
+      "expect": "wrong-device",
+      "signed_by": "paired",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-other-device",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEQCID8UJWQ0hDbyzA8e2kerzxnzhILPWUt0vRt1XZk/ChI5AiAcZc90RjP5Tq29pG0dYnY8ExiivPouauG5iGqJK58BvQ=="
+    },
+    {
+      "name": "replay",
+      "expect": "replay",
+      "signed_by": "paired",
+      "last_accepted_seq": 5,
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 4,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEUCIQCLEtB82xSRw1rmnX02Nm3SicxuKL8J9hn+N4iso7wWMAIgDYal8mVo+ss3EvjkgO1yqgVggj3M6B1fJ+nIDroqHb0="
+    },
+    {
+      "name": "stale",
+      "expect": "stale",
+      "signed_by": "paired",
+      "now_ms": 1700000000000,
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1699999800000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEUCIQD2CX+uwtp1VGAadJQ0Q2ov4mC+Zh6ar2Yt31f76sR9nQIgfd5EuzBggTMJcFUU2tO3WhNGz/KWaZmUxSeHyRmEdWE="
+    },
+    {
+      "name": "version",
+      "expect": "version",
+      "signed_by": "paired",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 99,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEYCIQCztBIE5xpv9d44U/DglpYgzs/c9H5KZGcuZggak+ycSQIhAIufCEMvQ5SsekXAK2+xef4+PRT0NVehUcOtA/6GNAcQ"
+    },
+    {
+      "name": "too-large",
+      "expect": "too-large",
+      "signed_by": "paired",
+      "pad_bytes": 262144,
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEUCIQCZ/49HLjpme/TMI4IaMK+kAYkm3mCnQihNgE6KlhoKwgIgPRhkURbv15NJpEo5kGy8UTz9x+gYUz5vtXNCT0TRVxg="
+    },
+    {
+      "name": "identity-separator",
+      "expect": "malformed",
+      "signed_by": "paired",
+      "payload": {
+        "type": "messages.event",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "provider_id": "bad\u001fid",
+        "kind": "sms",
+        "revision": 1,
+        "completeness": "complete",
+        "received_at_ms": 1700000000000,
+        "date_sent_ms": 1700000000000,
+        "sender_raw": "5551234567",
+        "is_group": 0,
+        "participant_count": 1,
+        "rcs_flag": "no",
+        "body": "ZP10-synthetic"
+      },
+      "signature": "MEUCIQDdYWnJro79suJKWjCnKBkIpSUISxAbvaXtOHFJABV9ywIgXEz9Tquokar0YPtc4J+N5p+IAevwpXKhiuYFaYq+JNM="
+    },
+    {
+      "name": "repair-keeps-device",
+      "expect": "accept",
+      "signed_by": "paired",
+      "replaces_key": "old",
+      "device_id": "zp10-device-test",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEUCIFFlvQxufJbHdmZnawlOPq51AhSon1q5/GGcnEwLsgrOAiEAj0lGB95v8ueNczdrirTkz9qYFduuwaS1FrbT+IYZWaI="
+    },
+    {
+      "name": "old-key-refused",
+      "expect": "unknown-key",
+      "signed_by": "old",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEUCIGcz637Ds+BjiiKCSJkNkBN++fTOvg+gShr229WPUfDrAiEAyEgbPEs0/6wT/TcwLTKSzCgABn7Y3fcawkAkVe5JxHM="
+    },
+    {
+      "name": "unauthorized-key-refused",
+      "expect": "unknown-key",
+      "signed_by": "unauthorized",
+      "payload": {
+        "type": "hello",
+        "device_id": "zp10-device-test",
+        "seq": 10,
+        "sent_at_ms": 1700000000000,
+        "contract_version": 1,
+        "app_version": "0",
+        "capabilities": [
+          "receive_messages"
+        ],
+        "cursors": {},
+        "pending_incomplete": 0,
+        "notification_queue_depth": 0
+      },
+      "signature": "MEQCIC7+d23eTDky7Wdlt4twaEe7T2rKDvp/XTqoKtTx4o74AiBWEjW2Y+h0wQ/gVmbMASX63a6Xr/lQig7D6zRQRO3SCQ=="
+    }
+  ]
+}

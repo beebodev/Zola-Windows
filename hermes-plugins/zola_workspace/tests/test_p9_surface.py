@@ -459,7 +459,7 @@ class SurfaceTests(unittest.TestCase):
         raw.close()
         conn = proactive_store.connect(legacy, retry=False)
         version = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "5")
+        self.assertEqual(version, str(proactive_store.SCHEMA_VERSION))
         columns = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
         self.assertIn("closed_reason", columns)
         self.assertIn("inject_count", columns)
