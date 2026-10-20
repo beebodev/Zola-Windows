@@ -89,44 +89,13 @@ def _case_payload(case: dict) -> dict:
 
 
 def _decide(case: dict, protocol: dict, keys: dict, vectors: dict) -> str:
-    if "payload_raw" in case:
-        try:
-            parsed = json.loads(case["payload_raw"])
-        except json.JSONDecodeError:
-            return "malformed"
-        if not isinstance(parsed, dict):
-            return "malformed"
-    payload = _case_payload(case)
-    required = protocol["common_fields"]
-    if not payload or any(field not in payload for field in required):
-        return "malformed"
-    separator = protocol["identity_separator"]
-    for field in ("device_id", "provider_id", "kind", "package", "notification_key", "newest_message_timestamp"):
-        if separator in str(payload.get(field) or ""):
-            return "malformed"
-    signature = str(case.get("signature") or "")
-    if not signature:
-        return "unsigned"
-    pubs = keys["keys"]
-    if _verifies(pubs["paired"]["public_pem"], payload, signature):
-        pass
-    elif any(_verifies(pubs[name]["public_pem"], payload, signature) for name in ("old", "unauthorized")):
-        return "unknown-key"
-    else:
-        return "bad-signature"
-    if payload["device_id"] != keys["paired_device_id"]:
-        return "wrong-device"
-    last = int(case.get("last_accepted_seq", vectors["last_accepted_seq"]))
-    if int(payload["seq"]) <= last:
-        return "replay"
-    now_ms = int(case.get("now_ms", vectors["now_ms"]))
-    if abs(int(payload["sent_at_ms"]) - now_ms) > int(protocol["timing_ms"]["stale_window"]):
-        return "stale"
-    if int(payload["contract_version"]) != int(protocol["contract_version"]):
-        return "version"
-    if len(_canon(payload)) > int(protocol["size_limits"]["frame_bytes"]):
-        return "too-large"
-    return "accept"
+    # P10-INTAKE: golden vectors go through zola-phone's verifier — P10-D12
+    plugins = str(PLUGIN_ROOT.parent)
+    if plugins not in sys.path:
+        sys.path.insert(0, plugins)
+    from zola_phone.wire import decide_case
+
+    return decide_case(case, protocol, keys, vectors)
 
 
 class _StoreCase(unittest.TestCase):
@@ -562,12 +531,12 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(protocol["pairing"]["stores_nothing_on_refusal"])
         self.assertEqual(protocol["mask_kind"], ["verification_code", "reset_link", "unsure"])
         self.assertEqual(protocol["attachment_kind"], ["image", "video", "audio", "other"])
-        order = protocol["verification_order"] + ["too-large"]
+        order = [step["step"] for step in protocol["check_precedence"]]
         names = [case["name"] for case in vectors["cases"]]
-        positions = [names.index(reason) for reason in order]
+        positions = [names.index(step) for step in order]
         self.assertEqual(positions, sorted(positions))
-        expects = [vectors["cases"][index]["expect"] for index in positions]
-        self.assertEqual(expects, order)
+        for step, index in zip(protocol["check_precedence"], positions):
+            self.assertEqual(_decide(vectors["cases"][index], protocol, keys, vectors), step["reason"], step["step"])
         for case in vectors["cases"]:
             self.assertEqual(_decide(case, protocol, keys, vectors), case["expect"], case["name"])
         repair = next(case for case in vectors["cases"] if case["name"] == "repair-keeps-device")
@@ -581,6 +550,7 @@ class ContractTests(unittest.TestCase):
             next(case["expect"] for case in vectors["cases"] if case["name"] == "unauthorized-key-refused"),
             "unknown-key",
         )
+        self.assertTrue(loops.evaluate is __import__("loop_match").evaluate)
 
 
 INGEST_REJECT_REASONS = (

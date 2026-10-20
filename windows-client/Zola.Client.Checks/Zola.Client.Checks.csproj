@@ -32,6 +32,9 @@
     <!-- P9-WATCH: watcher policy and job limit, no WinUI — P9-D02 -->
     <Compile Include="..\Zola.Client\Supervision\WatcherSupervisor.cs" Link="Supervision\WatcherSupervisor.cs" />
     <Compile Include="..\Zola.Client\Supervision\WatcherJob.cs" Link="Supervision\WatcherJob.cs" />
+    <Compile Include="..\Zola.Client\Supervision\PythonStart.cs" Link="Supervision\PythonStart.cs" />
+    <Compile Include="..\Zola.Client\Supervision\PhonePollGate.cs" Link="Supervision\PhonePollGate.cs" />
+    <Compile Include="..\Zola.Client\PhonePipe.cs" Link="PhonePipe.cs" />
     <!-- P9-SPEAK: coordinator, phrases, echo, and HUD are pure — P9-D11 -->
     <Compile Include="..\Zola.Client\Speech\SpeechConstants.cs" Link="Speech\SpeechConstants.cs" />
     <Compile Include="..\Zola.Client\Speech\SpeechDenyLog.cs" Link="Speech\SpeechDenyLog.cs" />

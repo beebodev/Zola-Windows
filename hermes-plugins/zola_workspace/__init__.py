@@ -125,6 +125,12 @@ def workspace_status_handler(args: dict, **kwargs) -> str:
 
 def register(ctx) -> None:
     """Register hooks, workspace_status, and calendar_query (synchronous)."""
+    # P10-INTAKE: take the launch secret out of the environment before any tool runs — P10-D12
+    try:
+        from . import launch_secret
+    except ImportError:
+        import launch_secret
+    launch_secret.take()
     # P8-HARDEN: pre_llm_call stores turn_id-keyed context — P8-D02
     ctx.register_hook(HOOK_PRE_LLM_CALL, turn_context.pre_llm_call_hook)
     # P8-SEND: review the read-back, then drop this turn's authorization — P8-D05

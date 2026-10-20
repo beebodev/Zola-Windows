@@ -22,6 +22,7 @@ public static class SupervisionConstants
 
     public const string ProcServe = "serve";
     public const string ProcWatcher = "watcher";
+    public const string ProcPhone = "phone";
     public const string EventRestart = "restart";
     public const string EventStale = "stale";
     public const string EventKeepsFailing = "keeps_failing";
@@ -32,6 +33,7 @@ public static class SupervisionConstants
     public const string EventJobAssigned = "job_assigned";
     public const string EventJobAssignFailed = "job_assign_failed";
     public const string WatcherOutputFileName = "zola_watcher.out.log";
+    public const string PhoneOutputFileName = "zola_phone.out.log";
     public const int WatcherAlreadyRunningExit = 2;
     public const string GapReason = "backend-unreachable";
 
