@@ -6,8 +6,8 @@ refusal dict. A refusal leaves the row unchanged.
 
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 import sqlite3
 import threading
 import uuid
@@ -15,10 +15,22 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
 
+# P10-STORE: package load uses relative imports; flat tests use the fallback — P10-D11
+try:
+    from . import address_hash as address_hash_mod
+    from . import phone_ids
+except ImportError:
+    import address_hash as address_hash_mod
+    import phone_ids
+
+_LOG = logging.getLogger("zola_workspace.proactive_store")
+
 # P9-STORE: marker so zola_memory can find this module without a hard import cycle — P9-D06
 PROACTIVE_STORE_MARKER = "p9-store"
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+# P10-STORE: the v6 rebuild writes 6 even after SCHEMA_VERSION moves on — P10-D11
+SCHEMA_V6 = 6
 # P9-STORE: why a loop ended; NULL means the live row was already closed before this column — P9-D09
 CLOSED_INTENTS = frozenset(
     {"reply", "cancelled", "status_change", "confirm_close", "expired", "forgotten"}
@@ -54,6 +66,28 @@ META_SURFACE_CONFIRMED = "surface_last_confirmed"
 # P9-WATCH: a transient fetch becomes terminal after this many tries — P9-D04
 POISON_ATTEMPT_CAP = 5
 BUSY_TIMEOUT_MS = 5000
+# P10-STORE: phone kinds share one source list with the conversation hold Track 5 removes — P10-D11
+PHONE_SOURCES = ("sms", "mms", "notif")
+PHONE_CONVERSATION_HOLD = PHONE_SOURCES
+PHONE_TEXT_KINDS = ("sms", "mms")
+PHONE_NOTIF_KIND = "notif"
+IDENTITY_VERSION = "v1"
+IDENTITY_SEPARATOR = "\x1f"
+MASK_KINDS = ("verification_code", "reset_link", "unsure")
+ATTACHMENT_KINDS = ("image", "video", "audio", "other")
+COMPLETENESS_VALUES = ("complete", "incomplete", "exhausted")
+# P10-STORE: incomplete stays in the schema CHECK and is never ingested — P10-D01a
+ACCEPTED_COMPLETENESS = ("complete", "exhausted")
+# P10-STORE: body limits and reject reasons come from the contract file — P10-D01a
+_PHONE_PROTOCOL = json.loads(
+    (Path(__file__).resolve().parent / "contracts" / "phone_protocol.json").read_text(encoding="utf-8")
+)
+TEXT_BODY_CHARS = int(_PHONE_PROTOCOL["size_limits"]["text_body_chars"])
+NOTIFICATION_TEXT_CHARS = int(_PHONE_PROTOCOL["size_limits"]["notification_text_chars"])
+INGEST_REJECT_REASONS = tuple(_PHONE_PROTOCOL["ingest_reject_reasons"])
+RCS_FLAGS = ("yes", "no", "unknown")
+PHONE_TOMBSTONE_KEEP_DAYS = 30
+INGEST_RESULTS = ("stored", "updated", "duplicate", "suppressed", "rejected", "ignored")
 
 MEMORY_DIRNAME = "zola_memory"
 MEMORY_FILENAME = "zola_memory.db"
@@ -76,8 +110,21 @@ def set_db_path_for_tests(path: Optional[Path]) -> None:
 
 
 def address_hash(address: str) -> str:
-    # P9-STORE: forget matches the hash, so the pending record need not keep the address — P9-D06
-    return hashlib.sha256(address.strip().casefold().encode("utf-8")).hexdigest()
+    # P10-STORE: re-export so watcher.py keeps this call and the bytes stay the same — P10-D10
+    return address_hash_mod.address_hash(address)
+
+
+def _sql_list(values: Sequence[str]) -> str:
+    return ", ".join("'" + value + "'" for value in values)
+
+
+def _phone_hold_sql() -> str:
+    # P10-STORE: one constant; Track 5 deletes this predicate — P10-D11
+    return "source NOT IN (" + _sql_list(PHONE_CONVERSATION_HOLD) + ")"
+
+
+def _phone_source_sql() -> str:
+    return "source IN (" + _sql_list(PHONE_SOURCES) + ")"
 
 
 def _ticket_ok(turn_id: Optional[str] = None) -> bool:
@@ -164,14 +211,18 @@ def connect(
         check_same_thread=False,
     )
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute(f"PRAGMA busy_timeout={int(timeout_ms)}")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA secure_delete=ON")
-    _migrate(conn)
-    if retry:
-        _retry_sibling_pending(path, conn)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(f"PRAGMA busy_timeout={int(timeout_ms)}")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA secure_delete=ON")
+        _migrate(conn)
+        if retry:
+            _retry_sibling_pending(path, conn)
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
@@ -208,6 +259,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if current < 5:
             _migrate_v5(conn)
             current = 5
+        # P10-STORE: version 6 rebuilds items, and foreign_keys cannot change inside this transaction — R2
+        needs_v6 = current < SCHEMA_V6
         conn.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -217,6 +270,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         _rollback(conn)
         raise
+    if needs_v6:
+        _migrate_v6_committed(conn)
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -403,6 +458,142 @@ def _migrate_v5(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v6_committed(conn: sqlite3.Connection) -> None:
+    # P10-STORE: drop items only with foreign keys off; item_attempts still points at those ids — R2
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # P10-STORE: a second opener may already have committed schema 6 — P10-D11
+            current = conn.execute(
+                "SELECT value FROM meta WHERE key = ?",
+                (META_SCHEMA_VERSION,),
+            ).fetchone()
+            if current is not None and int(current["value"]) >= SCHEMA_V6:
+                conn.execute("ROLLBACK")
+                return
+            _migrate_v6(conn)
+            if conn.execute("PRAGMA foreign_key_check").fetchall():
+                raise RuntimeError("proactive schema rebuild failed foreign_key_check")
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (META_SCHEMA_VERSION, str(SCHEMA_V6)),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            _rollback(conn)
+            raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_v6(conn: sqlite3.Connection) -> None:
+    # P10-STORE: sms, mms, and notif join Gmail and Calendar; Phase 9 rows stay model — P10-D11
+    index_sql = [
+        row[0]
+        for row in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'items' AND sql IS NOT NULL"
+        )
+    ]
+    conn.execute(
+        """
+        CREATE TABLE items_v6 (
+          id TEXT PRIMARY KEY,
+          source TEXT NOT NULL CHECK (source IN ('gmail', 'calendar', 'sms', 'mms', 'notif')),
+          message_id TEXT,
+          thread_id TEXT,
+          event_id TEXT,
+          event_updated TEXT,
+          idempotency_key TEXT NOT NULL,
+          sender_address TEXT,
+          sender_address_hash TEXT,
+          sender_display_name TEXT,
+          entity_id TEXT,
+          contacts_handle TEXT,
+          entity_resolution TEXT NOT NULL
+            CHECK (entity_resolution IN ('memory_entity', 'contacts_handle', 'unresolved')),
+          label TEXT CHECK (label IS NULL OR label IN ('urgent', 'important', 'normal', 'ignore')),
+          processing TEXT NOT NULL
+            CHECK (processing IN ('unranked', 'ranked', 'rank_failed')),
+          eligibility TEXT NOT NULL
+            CHECK (eligibility IN ('pending', 'eligible', 'suppressed', 'expired')),
+          conversation TEXT NOT NULL
+            CHECK (conversation IN ('none', 'selected', 'possibly_surfaced', 'acknowledged')),
+          delivery TEXT NOT NULL
+            CHECK (delivery IN ('none', 'claimed', 'speech_started', 'delivery_uncertain', 'delivered')),
+          content_state TEXT NOT NULL
+            CHECK (content_state IN ('available', 'content_expired', 'forgotten')),
+          loop_matched INTEGER NOT NULL DEFAULT 0,
+          rank_attempts INTEGER NOT NULL DEFAULT 0,
+          closed_at TEXT,
+          detected_at TEXT NOT NULL,
+          ranked_at TEXT,
+          eligible_at TEXT,
+          updated_at TEXT NOT NULL,
+          subject TEXT,
+          snippet TEXT,
+          body TEXT,
+          gist TEXT,
+          calendar_status TEXT,
+          selected_at TEXT,
+          inject_count INTEGER NOT NULL DEFAULT 0,
+          acknowledged_at TEXT,
+          attempt_id TEXT,
+          attempt_turn_id TEXT,
+          attempt_at TEXT,
+          closed_reason TEXT
+            CHECK (closed_reason IS NULL OR closed_reason IN ('dismissed', 'aged_out')),
+          device_id TEXT,
+          revision INTEGER,
+          completeness TEXT
+            CHECK (completeness IS NULL OR completeness IN ('complete', 'incomplete', 'exhausted')),
+          rcs_flag TEXT
+            CHECK (rcs_flag IS NULL OR rcs_flag IN ('yes', 'no', 'unknown')),
+          sender_kind TEXT
+            CHECK (sender_kind IS NULL OR sender_kind IN ('e164', 'shortcode', 'alnum', 'unparsed')),
+          is_group INTEGER CHECK (is_group IS NULL OR is_group IN (0, 1)),
+          participant_count INTEGER,
+          attachment_has INTEGER CHECK (attachment_has IS NULL OR attachment_has IN (0, 1)),
+          attachment_count INTEGER,
+          attachment_kind TEXT
+            CHECK (attachment_kind IS NULL OR attachment_kind IN ('image', 'video', 'audio', 'other')),
+          mask_kind TEXT
+            CHECK (mask_kind IS NULL OR mask_kind IN ('verification_code', 'reset_link', 'unsure')),
+          truncated INTEGER
+            CHECK (truncated IS NULL OR truncated IN (0, 1)),
+          ranking_source TEXT NOT NULL DEFAULT 'model'
+            CHECK (ranking_source IN ('model', 'code')),
+          judgment TEXT,
+          watch_evaluated INTEGER
+            CHECK (watch_evaluated IS NULL OR watch_evaluated IN (0, 1))
+        )
+        """
+    )
+    old_cols = [row[1] for row in conn.execute("PRAGMA table_info(items)")]
+    col_list = ", ".join(old_cols)
+    conn.execute(
+        f"INSERT INTO items_v6 (rowid, {col_list}, ranking_source) "
+        f"SELECT rowid, {col_list}, 'model' FROM items"
+    )
+    conn.execute("DROP TABLE items")
+    conn.execute("ALTER TABLE items_v6 RENAME TO items")
+    for sql in index_sql:
+        conn.execute(sql)
+    conn.execute(
+        "CREATE INDEX idx_items_phone_sender ON items (sender_address_hash, detected_at) "
+        "WHERE source IN ('sms', 'mms', 'notif')"
+    )
+    conn.execute(
+        """
+        CREATE TABLE phone_tombstones (
+          identity_key_hash TEXT PRIMARY KEY,
+          created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 def _migrate_v2(conn: sqlite3.Connection) -> None:
     # Existing closed rows stay NULL. A later close writes its own reason.
     conn.execute(
@@ -558,6 +749,479 @@ def _insert_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
         return _ok(id=row["id"], created=False)
 
 
+def _identity_dirty(value: str) -> bool:
+    return IDENTITY_SEPARATOR in value
+
+
+def _phone_identity(
+    *,
+    kind: str,
+    device_id: str,
+    provider_id: str,
+    package: str,
+    notification_key: str,
+    newest_message_timestamp: str,
+) -> Optional[str]:
+    fields = [IDENTITY_VERSION, device_id, kind]
+    if kind in PHONE_TEXT_KINDS:
+        fields.append(provider_id)
+    elif kind == PHONE_NOTIF_KIND:
+        fields.extend((package, notification_key, newest_message_timestamp))
+    else:
+        return None
+    if any(_identity_dirty(field) or field == "" for field in fields):
+        return None
+    return IDENTITY_SEPARATOR.join(fields)
+
+
+def _content_gone(row: sqlite3.Row) -> bool:
+    # P10-STORE: a revision never puts removed content back — P10-D03
+    if row["content_state"] != "available":
+        return True
+    if row["acknowledged_at"] or row["conversation"] == "acknowledged":
+        return True
+    if row["closed_at"]:
+        return True
+    return False
+
+
+def _phone_content_absent_sql() -> str:
+    # P10-STORE: ack, close, and purge share one empty-content rule — P10-D03
+    return """
+           body IS NULL
+           AND subject IS NULL
+           AND snippet IS NULL
+           AND gist IS NULL
+           AND sender_display_name IS NULL
+           AND attachment_has IS NULL
+           AND attachment_count IS NULL
+           AND attachment_kind IS NULL
+    """
+
+
+def _expire_cleared_phone_content_locked(
+    conn: sqlite3.Connection,
+    item_id: Optional[str] = None,
+) -> None:
+    phone = _phone_source_sql()
+    absent = _phone_content_absent_sql()
+    if item_id is None:
+        conn.execute(
+            f"""
+            UPDATE items
+               SET content_state = 'content_expired'
+             WHERE {phone}
+               AND content_state = 'available'
+               AND {absent}
+            """
+        )
+        return
+    conn.execute(
+        f"""
+        UPDATE items
+           SET content_state = 'content_expired'
+         WHERE id = ?
+           AND {phone}
+           AND content_state = 'available'
+           AND {absent}
+        """,
+        (item_id,),
+    )
+
+
+def _clear_phone_content_locked(conn: sqlite3.Connection, item_id: str) -> None:
+    # P10-STORE: phone body and display end at ack, dismiss, close, or forget — P10-D03
+    phone = _phone_source_sql()
+    conn.execute(
+        f"""
+        UPDATE items
+           SET body = NULL,
+               subject = NULL,
+               snippet = NULL,
+               gist = NULL,
+               sender_display_name = NULL,
+               attachment_has = NULL,
+               attachment_count = NULL,
+               attachment_kind = NULL
+         WHERE id = ?
+           AND {phone}
+        """,
+        (item_id,),
+    )
+    _expire_cleared_phone_content_locked(conn, item_id)
+
+
+def _write_tombstone_locked(conn: sqlite3.Connection, identity_key: str, stamp: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO phone_tombstones (identity_key_hash, created_at)
+        VALUES (?, ?)
+        ON CONFLICT(identity_key_hash) DO NOTHING
+        """,
+        (address_hash(identity_key), stamp),
+    )
+
+
+def record_phone_tombstone(
+    conn: sqlite3.Connection,
+    identity_key: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P10-STORE: forget writes a content-free hash; Track 6 calls this — P10-D14
+    return _call(_record_phone_tombstone, conn, identity_key, now=now)
+
+
+def _record_phone_tombstone(
+    conn: sqlite3.Connection,
+    identity_key: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    if not identity_key:
+        return _no("bad_args")
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    _write_tombstone_locked(conn, identity_key, stamp)
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def ingest_phone_item(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    device_id: str,
+    revision: int,
+    completeness: str,
+    received_at: datetime,
+    provider_id: str = "",
+    package: str = "",
+    notification_key: str = "",
+    newest_message_timestamp: str = "",
+    sender_raw: str = "",
+    sender_display_name: str = "",
+    body: str = "",
+    subject: str = "",
+    snippet: str = "",
+    is_group: int = 0,
+    participant_count: Optional[int] = None,
+    rcs_flag: Optional[str] = None,
+    attachment_has: Optional[int] = None,
+    attachment_count: Optional[int] = None,
+    attachment_kind: Optional[str] = None,
+    mask_kind: Optional[str] = None,
+    truncated: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P10-STORE: one transaction; the store normalizes the sender — P10-D01a / P10-D10
+    return _call(
+        _ingest_phone_item,
+        conn,
+        kind=kind,
+        device_id=device_id,
+        revision=revision,
+        completeness=completeness,
+        received_at=received_at,
+        provider_id=provider_id,
+        package=package,
+        notification_key=notification_key,
+        newest_message_timestamp=newest_message_timestamp,
+        sender_raw=sender_raw,
+        sender_display_name=sender_display_name,
+        body=body,
+        subject=subject,
+        snippet=snippet,
+        is_group=is_group,
+        participant_count=participant_count,
+        rcs_flag=rcs_flag,
+        attachment_has=attachment_has,
+        attachment_count=attachment_count,
+        attachment_kind=attachment_kind,
+        mask_kind=mask_kind,
+        truncated=truncated,
+        now=now,
+    )
+
+
+def _ingest_rejected(reason: str) -> Dict[str, Any]:
+    return _ok(result="rejected", reason=reason)
+
+
+def _ingest_phone_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any]:
+    kind = str(kwargs.get("kind") or "")
+    device_id = str(kwargs.get("device_id") or "")
+    provider_id = str(kwargs.get("provider_id") or "")
+    package = str(kwargs.get("package") or "")
+    notification_key = str(kwargs.get("notification_key") or "")
+    newest = str(kwargs.get("newest_message_timestamp") or "")
+    revision = kwargs.get("revision")
+    completeness = str(kwargs.get("completeness") or "")
+    received_at = kwargs.get("received_at")
+    if kind not in PHONE_SOURCES:
+        return _ingest_rejected("bad_kind")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        return _ingest_rejected("bad_revision")
+    if completeness not in ACCEPTED_COMPLETENESS:
+        return _ingest_rejected("bad_completeness")
+    if not isinstance(received_at, datetime):
+        return _ingest_rejected("bad_time")
+    identity_fields = [device_id, kind]
+    if kind in PHONE_TEXT_KINDS:
+        identity_fields.append(provider_id)
+    else:
+        identity_fields.extend((package, notification_key, newest))
+    if any(IDENTITY_SEPARATOR in field for field in identity_fields):
+        return _ingest_rejected("separator")
+    identity = _phone_identity(
+        kind=kind,
+        device_id=device_id,
+        provider_id=provider_id,
+        package=package,
+        notification_key=notification_key,
+        newest_message_timestamp=newest,
+    )
+    if identity is None:
+        return _ingest_rejected("bad_identity")
+    mask_kind = kwargs.get("mask_kind")
+    if mask_kind is not None and mask_kind not in MASK_KINDS:
+        return _ingest_rejected("bad_mask")
+    attachment_kind = kwargs.get("attachment_kind")
+    if attachment_kind is not None and attachment_kind not in ATTACHMENT_KINDS:
+        return _ingest_rejected("bad_attachment")
+    attachment_has = kwargs.get("attachment_has")
+    if attachment_has is not None and (isinstance(attachment_has, bool) or attachment_has not in (0, 1)):
+        return _ingest_rejected("bad_field")
+    attachment_count = kwargs.get("attachment_count")
+    if attachment_count is not None and (
+        isinstance(attachment_count, bool) or not isinstance(attachment_count, int) or attachment_count < 0
+    ):
+        return _ingest_rejected("bad_field")
+    is_group = kwargs.get("is_group")
+    if isinstance(is_group, bool) or is_group not in (0, 1):
+        return _ingest_rejected("bad_field")
+    rcs_flag = kwargs.get("rcs_flag")
+    if rcs_flag is not None and rcs_flag not in RCS_FLAGS:
+        return _ingest_rejected("bad_field")
+    participant_count = kwargs.get("participant_count")
+    if participant_count is not None and (
+        isinstance(participant_count, bool) or not isinstance(participant_count, int) or participant_count < 0
+    ):
+        return _ingest_rejected("bad_field")
+    truncated = kwargs.get("truncated")
+    if truncated is not None and (isinstance(truncated, bool) or truncated not in (0, 1)):
+        return _ingest_rejected("bad_field")
+    body = str(kwargs.get("body") or "")
+    body_limit = TEXT_BODY_CHARS if kind in PHONE_TEXT_KINDS else NOTIFICATION_TEXT_CHARS
+    if len(body) > body_limit:
+        return _ingest_rejected("too_large")
+    sender_kind, canonical = phone_ids.normalize(str(kwargs.get("sender_raw") or ""))
+    sender_hash = phone_ids.hash(canonical)
+    clock = _now(kwargs.get("now"))
+    stamp = _iso(clock)
+    detected = _iso(_now(received_at))
+    key_hash = address_hash(identity)
+    conn.execute("BEGIN IMMEDIATE")
+    tomb = conn.execute(
+        "SELECT 1 FROM phone_tombstones WHERE identity_key_hash = ?",
+        (key_hash,),
+    ).fetchone()
+    if tomb is not None:
+        conn.execute("COMMIT")
+        return _ok(result="suppressed")
+    row = conn.execute(
+        "SELECT * FROM items WHERE idempotency_key = ?",
+        (identity,),
+    ).fetchone()
+    if row is None:
+        item_id = _new_id()
+        message_id = provider_id if kind in PHONE_TEXT_KINDS else notification_key
+        conn.execute(
+            """
+            INSERT INTO items (
+              id, source, message_id, thread_id, event_id, event_updated,
+              idempotency_key, sender_address, sender_address_hash, sender_display_name,
+              entity_id, contacts_handle, entity_resolution, label,
+              processing, eligibility, conversation, delivery, content_state,
+              loop_matched, rank_attempts, closed_at, detected_at, ranked_at,
+              eligible_at, updated_at, subject, snippet, body, gist, calendar_status,
+              device_id, revision, completeness, rcs_flag, sender_kind, is_group,
+              participant_count, attachment_has, attachment_count, attachment_kind,
+              mask_kind, truncated, ranking_source, judgment, watch_evaluated
+            ) VALUES (
+              ?, ?, ?, '', NULL, NULL,
+              ?, '', ?, ?,
+              NULL, NULL, 'unresolved', NULL,
+              'ranked', 'eligible', 'none', 'none', 'available',
+              0, 0, NULL, ?, ?,
+              ?, ?, ?, ?, ?, NULL, NULL,
+              ?, ?, ?, ?, ?, ?,
+              ?, ?, ?, ?,
+              ?, ?, 'code', NULL, 0
+            )
+            """,
+            (
+                item_id,
+                kind,
+                message_id,
+                identity,
+                sender_hash,
+                str(kwargs.get("sender_display_name") or ""),
+                detected,
+                stamp,
+                stamp,
+                stamp,
+                str(kwargs.get("subject") or ""),
+                str(kwargs.get("snippet") or ""),
+                body,
+                device_id,
+                revision,
+                completeness,
+                rcs_flag,
+                sender_kind,
+                is_group,
+                participant_count,
+                attachment_has,
+                attachment_count,
+                attachment_kind,
+                mask_kind,
+                truncated,
+            ),
+        )
+        conn.execute("COMMIT")
+        return _ok(result="stored", id=item_id)
+    existing = int(row["revision"] or 0)
+    if revision < existing:
+        conn.execute("COMMIT")
+        _LOG.info(
+            "result=ignored key_hash=%s revision=%s existing=%s",
+            key_hash,
+            revision,
+            existing,
+        )
+        return _ok(result="ignored", id=row["id"])
+    if revision == existing:
+        conn.execute("COMMIT")
+        return _ok(result="duplicate", id=row["id"])
+    if _content_gone(row):
+        conn.execute(
+            """
+            UPDATE items
+               SET revision = ?, completeness = ?, updated_at = ?
+             WHERE id = ?
+            """,
+            (revision, completeness, stamp, row["id"]),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE items
+               SET body = ?,
+                   sender_display_name = ?,
+                   sender_address_hash = ?,
+                   sender_kind = ?,
+                   is_group = ?,
+                   participant_count = ?,
+                   attachment_has = ?,
+                   attachment_count = ?,
+                   attachment_kind = ?,
+                   mask_kind = ?,
+                   truncated = ?,
+                   rcs_flag = ?,
+                   completeness = ?,
+                   revision = ?,
+                   detected_at = ?,
+                   updated_at = ?
+             WHERE id = ?
+            """,
+            (
+                body,
+                str(kwargs.get("sender_display_name") or ""),
+                sender_hash,
+                sender_kind,
+                is_group,
+                participant_count,
+                attachment_has,
+                attachment_count,
+                attachment_kind,
+                mask_kind,
+                truncated,
+                rcs_flag,
+                completeness,
+                revision,
+                detected,
+                stamp,
+                row["id"],
+            ),
+        )
+    conn.execute("COMMIT")
+    return _ok(result="updated", id=row["id"])
+
+
+def list_unevaluated_phone_items(conn: sqlite3.Connection) -> Dict[str, Any]:
+    # P10-STORE: startup recovery lists phone rows whose watch marker is still 0 — R2
+    try:
+        phone = _phone_source_sql()
+        rows = conn.execute(
+            f"""
+            SELECT id, source, message_id, sender_address_hash, detected_at, idempotency_key
+              FROM items
+             WHERE {phone}
+               AND watch_evaluated = 0
+             ORDER BY detected_at, id
+            """
+        ).fetchall()
+        return _ok(items=[dict(row) for row in rows])
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        return _no("locked" if "locked" in text or "busy" in text else "error")
+    except Exception:
+        return _no("error")
+
+
+def mark_watch_evaluated(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P10-STORE: the marker is saved only after match calls return ok or already — R2
+    return _call(_mark_watch_evaluated, conn, item_id, now=now)
+
+
+def _mark_watch_evaluated(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        "SELECT source, watch_evaluated, closed_at FROM items WHERE id = ?",
+        (item_id,),
+    ).fetchone()
+    if row is None or row["source"] not in PHONE_SOURCES:
+        _rollback(conn)
+        return _no("illegal_transition")
+    if int(row["watch_evaluated"] or 0) == 1:
+        conn.execute("COMMIT")
+        return _ok(already=True)
+    cur = conn.execute(
+        """
+        UPDATE items
+           SET watch_evaluated = 1, updated_at = ?
+         WHERE id = ? AND watch_evaluated = 0
+        """,
+        (stamp, item_id),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
 def set_sender_resolution(
     conn: sqlite3.Connection,
     item_id: str,
@@ -649,9 +1313,11 @@ def _claim_rank(
     conn.execute("BEGIN IMMEDIATE")
     row = _item(conn, item_id)
     # P9-RANK: Gmail only, and body IS NOT NULL (an empty string may be claimed) — P9-D08
+    # P10-STORE: ranking_source model keeps phone rows out of this claim — P10-D11
     if (
         row is None
         or row["source"] != "gmail"
+        or row["ranking_source"] != "model"
         or row["processing"] != "unranked"
         or row["closed_at"]
         or row["content_state"] != "available"
@@ -967,6 +1633,7 @@ def _claim_next_rank(
         """
         SELECT id FROM items
          WHERE source = 'gmail'
+           AND ranking_source = 'model'
            AND processing = 'unranked'
            AND closed_at IS NULL
            AND content_state = 'available'
@@ -1337,6 +2004,8 @@ def _set_conversation(
     if cur.rowcount != 1:
         _rollback(conn)
         return _no("illegal_transition")
+    if dest == "acknowledged":
+        _clear_phone_content_locked(conn, item_id)
     conn.execute("COMMIT")
     return _ok()
 
@@ -1354,6 +2023,9 @@ def _speech_block_reason(row: Optional[sqlite3.Row], earliest_surface: str, olde
     # P9-SPEAK: the label is not a speech check. An open surface attempt blocks only inside its TTL — P9-D11
     if row is None:
         return "not_found"
+    # P10-STORE: phone rows stay out of speech until Track 5 removes the hold — P10-D11
+    if row["source"] in PHONE_CONVERSATION_HOLD:
+        return "phone_deferred"
     if int(row["loop_matched"] or 0) != 1:
         return "not_loop_matched"
     if row["eligibility"] != "eligible":
@@ -1397,8 +2069,9 @@ def _claim_speech(
     if reason:
         _rollback(conn)
         return _no(reason)
+    hold = _phone_hold_sql()
     cur = conn.execute(
-        """
+        f"""
         UPDATE items
            SET delivery = 'claimed', updated_at = ?
          WHERE id = ?
@@ -1415,6 +2088,7 @@ def _claim_speech(
              OR attempt_at < ?
            )
            AND detected_at >= ?
+           AND {hold}
         """,
         (stamp, item_id, earliest_surface, oldest),
     )
@@ -1457,8 +2131,9 @@ def _claim_next_speech(
     earliest_surface = _iso(clock - timedelta(seconds=SURFACE_ATTEMPT_TTL_SECONDS))
     oldest = _iso(clock - timedelta(seconds=SPEECH_MAX_AGE_SECONDS))
     conn.execute("BEGIN IMMEDIATE")
+    hold = _phone_hold_sql()
     row = conn.execute(
-        """
+        f"""
         SELECT id, source FROM items
          WHERE loop_matched = 1
            AND eligibility = 'eligible'
@@ -1473,6 +2148,7 @@ def _claim_next_speech(
              OR attempt_at < ?
            )
            AND detected_at >= ?
+           AND {hold}
          ORDER BY detected_at, id
          LIMIT 1
         """,
@@ -1482,7 +2158,7 @@ def _claim_next_speech(
         conn.execute("COMMIT")
         return _no("nothing_speakable")
     cur = conn.execute(
-        """
+        f"""
         UPDATE items
            SET delivery = 'claimed', updated_at = ?
          WHERE id = ?
@@ -1499,6 +2175,7 @@ def _claim_next_speech(
              OR attempt_at < ?
            )
            AND detected_at >= ?
+           AND {hold}
         """,
         (stamp, row["id"], earliest_surface, oldest),
     )
@@ -1866,6 +2543,7 @@ def _close_item(
     if cur.rowcount != 1:
         _rollback(conn)
         return _no("illegal_transition")
+    _clear_phone_content_locked(conn, item_id)
     conn.execute("COMMIT")
     return _ok()
 
@@ -2153,7 +2831,11 @@ def _forget_subject(
             redact_ids.append(row["id"])
         else:
             delete_ids.append(row["id"])
+    forget_stamp = _iso(_now(None))
     for item_id in delete_ids:
+        gone = conn.execute("SELECT source, idempotency_key FROM items WHERE id = ?", (item_id,)).fetchone()
+        if gone is not None and gone["source"] in PHONE_SOURCES:
+            _write_tombstone_locked(conn, str(gone["idempotency_key"]), forget_stamp)
         conn.execute("DELETE FROM item_attempts WHERE item_id = ?", (item_id,))
         conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
         conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
@@ -2164,6 +2846,7 @@ def _forget_subject(
                SET subject = NULL, snippet = NULL, body = NULL, gist = NULL,
                    sender_address = NULL, sender_display_name = NULL,
                    entity_id = NULL, contacts_handle = NULL,
+                   attachment_has = NULL, attachment_count = NULL, attachment_kind = NULL,
                    content_state = 'forgotten'
              WHERE id = ?
             """,
@@ -2244,6 +2927,7 @@ def _purge_retention(
     body_cutoff = _iso(clock - timedelta(days=BODY_MAX_AGE_DAYS))
     text_cutoff = _iso(clock - timedelta(days=TEXT_MAX_AGE_DAYS))
     delivery_cutoff = _iso(clock - timedelta(days=DELIVERY_KEEP_DAYS))
+    tomb_cutoff = _iso(clock - timedelta(days=PHONE_TOMBSTONE_KEEP_DAYS))
     recovery = _recover_speech(conn, now=clock)
     if not recovery.get("ok"):
         return recovery
@@ -2301,6 +2985,26 @@ def _purge_retention(
         """,
         (text_cutoff,),
     )
+    # P10-STORE: phone attachment metadata ages out with the other display fields — P10-D03
+    phone = _phone_source_sql()
+    conn.execute(
+        f"""
+        UPDATE items
+           SET attachment_has = NULL,
+               attachment_count = NULL,
+               attachment_kind = NULL
+         WHERE {phone}
+           AND detected_at <= ?
+           AND (
+             attachment_has IS NOT NULL
+             OR attachment_count IS NOT NULL
+             OR attachment_kind IS NOT NULL
+           )
+        """,
+        (text_cutoff,),
+    )
+    # P10-STORE: a cleared phone row must not accept a later body — P10-D03
+    _expire_cleared_phone_content_locked(conn)
     # P9-SURFACE: calendar rows have no mail text; expiring them hides the change — P9-D10
     expired = conn.execute(
         """
@@ -2317,6 +3021,10 @@ def _purge_retention(
     old_deliveries = conn.execute(
         "DELETE FROM deliveries WHERE at <= ?",
         (delivery_cutoff,),
+    )
+    conn.execute(
+        "DELETE FROM phone_tombstones WHERE created_at <= ?",
+        (tomb_cutoff,),
     )
     loops = conn.execute(
         """
@@ -3091,9 +3799,11 @@ def _mark_surface_confirmed(conn: sqlite3.Connection, attempt_id: str) -> Dict[s
 
 def list_surface_rows(conn: sqlite3.Connection) -> Dict[str, Any]:
     # P9-SURFACE: closed rows stay out of the pending counts — P9-D10
+    # P10-STORE: phone rows stay out of this list until Track 5 — P10-D11
     try:
+        hold = _phone_hold_sql()
         rows = conn.execute(
-            """
+            f"""
             SELECT id, source, label, eligibility, processing, conversation, delivery,
                    content_state, loop_matched, gist, subject, sender_display_name,
                    sender_address, detected_at, inject_count, selected_at, acknowledged_at,
@@ -3105,6 +3815,7 @@ def list_surface_rows(conn: sqlite3.Connection) -> Dict[str, Any]:
                    ) AS start_at
               FROM items
              WHERE closed_at IS NULL
+               AND {hold}
              ORDER BY detected_at
             """
         ).fetchall()
@@ -3161,9 +3872,10 @@ def _provisional_select(conn: sqlite3.Connection, item_id: str, attempt_id: str,
     stamp = _iso(clock)
     quiet_before = _iso(clock - timedelta(seconds=int(kwargs["quiet_seconds"])))
     cap = int(kwargs["reinject_cap"])
+    hold = _phone_hold_sql()
     conn.execute("BEGIN IMMEDIATE")
     cur = conn.execute(
-        """
+        f"""
         UPDATE items
            SET attempt_id = ?, attempt_turn_id = ?, attempt_at = ?, updated_at = ?
          WHERE id = ?
@@ -3183,6 +3895,7 @@ def _provisional_select(conn: sqlite3.Connection, item_id: str, attempt_id: str,
              OR selected_at IS NULL
              OR selected_at <= ?
            )
+           AND {hold}
         """,
         (attempt_id, turn_id, stamp, stamp, item_id, cap, quiet_before),
     )
@@ -3347,6 +4060,7 @@ def _dismiss_item(conn: sqlite3.Connection, item_id: str, **kwargs: Any) -> Dict
     if cur.rowcount != 1:
         _rollback(conn)
         return _no("illegal_transition")
+    _clear_phone_content_locked(conn, item_id)
     conn.execute("COMMIT")
     return _ok()
 
@@ -3395,8 +4109,9 @@ def post_speech_candidate(
         clock = _now(now)
         earliest = _iso(clock - timedelta(seconds=int(window_seconds)))
         noted = _meta_get(conn, META_SPEECH_POST_NOTED) or ""
+        hold = _phone_hold_sql()
         row = conn.execute(
-            """
+            f"""
             SELECT d.attempt_id AS speech_attempt_id, i.*
               FROM deliveries d
               JOIN items i ON i.id = d.item_id
@@ -3406,6 +4121,7 @@ def post_speech_candidate(
                AND i.acknowledged_at IS NULL
                AND i.content_state = 'available'
                AND d.attempt_id != ?
+               AND i.{hold}
              ORDER BY d.at DESC
              LIMIT 1
             """,

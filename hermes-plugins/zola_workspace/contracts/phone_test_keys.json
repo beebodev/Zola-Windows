@@ -1,0 +1,20 @@
+{
+  "label": "TEST KEYS \u2014 never used outside tests",
+  "curve": "P-256",
+  "paired_device_id": "zp10-device-test",
+  "now_ms": 1700000000000,
+  "keys": {
+    "paired": {
+      "private_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFKkhNaNAcihzpneY\ns+pfAbdvoqVRx0wahLv8xBhiawGhRANCAASt0O8r5VRN/zJGSrselqXGWNe/Vwy5\nOu9ZVKq+q4EB2TFp7UMzifFi0A/ypQHsG3+iktGaFIerUZeEX0mFkgys\n-----END PRIVATE KEY-----\n",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErdDvK+VUTf8yRkq7HpalxljXv1cM\nuTrvWVSqvquBAdkxae1DM4nxYtAP8qUB7Bt/opLRmhSHq1GXhF9JhZIMrA==\n-----END PUBLIC KEY-----\n"
+    },
+    "old": {
+      "private_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgwgfGkCuJoW2r1QNx\necjGsvv50BNlGYAr1JsKvSCssHuhRANCAARqOD6wQJdjYAec0yFmPXwVfki7fabD\nLhJaE1mdG3pv/35TckoDysc5NTp3LZKhuGckGPXKgP/xR//IBYfWatXp\n-----END PRIVATE KEY-----\n",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEajg+sECXY2AHnNMhZj18FX5Iu32m\nwy4SWhNZnRt6b/9+U3JKA8rHOTU6dy2SobhnJBj1yoD/8Uf/yAWH1mrV6Q==\n-----END PUBLIC KEY-----\n"
+    },
+    "unauthorized": {
+      "private_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg3L/xORGyF39pFuw3\n0q2q8G+yQSO8LELcv+4EzJJY3VGhRANCAASY8BJ1FDfiyKAJaKQzO4Zb8NCmvhpr\nSWhQnd0apF6Chfuv7MXaItvPHoJ1eiVoN2hvPDcVQVRUnDgMrCW97RzH\n-----END PRIVATE KEY-----\n",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmPASdRQ34sigCWikMzuGW/DQpr4a\na0loUJ3dGqRegoX7r+zF2iLbzx6CdXolaDdobzw3FUFUVJw4DKwlve0cxw==\n-----END PUBLIC KEY-----\n"
+    }
+  }
+}

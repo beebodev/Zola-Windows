@@ -30,7 +30,7 @@ TOKEN = "P9STORE_SYNTHETIC"
 ADDRESS = "p9store-synthetic@example.com"
 SQL_OWNER = re.compile(
     r"(?i)\b(?:insert\s+into|update|delete\s+from)\s+"
-    r"(?:items|loops|item_attempts|deliveries|cursors|watcher_health|calendar_events|watcher_rejects)\b"
+    r"(?:items|loops|item_attempts|deliveries|cursors|watcher_health|calendar_events|watcher_rejects|phone_tombstones)\b"
 )
 
 
