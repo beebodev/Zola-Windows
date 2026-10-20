@@ -5,7 +5,7 @@
 - Primary folder: `C:\Users\test\Dev\zola-windows`, branch `main`
 - Worktree: `C:\Users\test\Dev\zola-windows-p10-intake`, branch `p10-intake`
 - Base SHA: `7023e42d0059a3413358e02d4c24697118978236` (`main` = `origin/main` at Phase 1)
-- Worktree HEAD: `7023e42d0059a3413358e02d4c24697118978236`
+- Implementation SHA: `eda4714a88c07ea5ca99e41c93fd1327e6e9d6f6`
 - Hermes HEAD: `345cd2b057a452236de401d3534b8502a7465e8d` (detached `HEAD`, clean, no porcelain)
 - Prompt: `P10-INTAKE_Prompt_v1.1.md` (canonical: `C:\Users\test\Dev\zola-spikes\prompts\P10-INTAKE_Prompt_v1.1.md`)
 - Prompt SHA-256 (on-disk, 35,227 bytes): `756699e0401d486154b76aa265622d05bcfe005fa889c8cd4de52a5f14e6e895`
@@ -724,7 +724,7 @@ Live mirror: 15 shipped plugin files match the worktree, SHA-256 equal. Live `ph
 
 Firewall read-back, not modified: DisplayName "Zola phone intake", Inbound, Allow, Enabled, Profile Any, TCP 47821, InterfaceAlias Tailscale. Before the client stop, the only listener was `100.102.206.71:47821`.
 
-Implementation SHA: IMPLEMENTATION_SHA
+Implementation SHA: `eda4714a88c07ea5ca99e41c93fd1327e6e9d6f6`
 
 ### Exit criteria
 
