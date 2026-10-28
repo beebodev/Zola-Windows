@@ -201,9 +201,11 @@ async def handle_connection(engine: Engine, ws) -> None:
     sockets = getattr(engine, "_sockets", None)
     if sockets is not None:
         sockets[conn_id] = ws
+    _note("zola_phone.link", result="open")
     try:
         async for message in ws:
             raw = message.encode("utf-8") if isinstance(message, str) else message
+            _note("zola_phone.link", result="frame", bytes=len(raw))
             reply = engine.receive(conn_id, raw)
             keep = adopt_after_frame(engine, conn_id, writer.submit, reply)
             if not keep:
@@ -235,7 +237,7 @@ async def listen_forever(engine: Engine, resolve: Callable[[], str], port: int, 
     current = ""
     server = None
     while not stop.is_set():
-        host = resolve() or ""
+        host = (await asyncio.to_thread(resolve)) or ""
         action = bind_action(current, host, port, port)
         if action == "refuse":
             engine.tailnet = False

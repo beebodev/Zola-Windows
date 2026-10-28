@@ -88,7 +88,7 @@ class FakeSession:
             "device_id": self.device,
             "seq": self.seq,
             "sent_at_ms": int(time.time() * 1000),
-            "contract_version": 2,
+            "contract_version": int(self.protocol["contract_version"]),
         }
         payload.update(fields)
         return payload
@@ -181,8 +181,10 @@ async def _run(args: argparse.Namespace) -> None:
         bound = session.envelope("phone_bind", public_pem=session.public)
         await ws.send(wire.encode_frame("pairing", bound, wire.pairing_mac(args.code, bound), session.protocol))
         await ws.recv()
-        if bind["payload"]["type"] != "pc_bind":
+        if bind["payload"]["type"] != "pc_bind" or not bind["payload"].get("pc_id"):
             raise SystemExit("expected pc_bind")
+        if not wire.mac_matches(args.code, bind["payload"], bind["signature"]):
+            raise SystemExit("bad pc_bind mac")
 
         async def listen() -> None:
             async for message in ws:
