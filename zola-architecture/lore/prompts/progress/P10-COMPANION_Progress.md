@@ -1306,7 +1306,7 @@ Live mirror matches the worktree for `keys.py`, `runtime.py`, `serve.py`, `wire.
 
 Track 5 carry-forwards stay open: `phone_client.call` cannot pass a message kind, and RCS senders may not be phone numbers.
 
-The implementation SHA is recorded in the following commit. The merge waits until the worktree client is closed. Scratch, the pulled logs, and the backups stay until the worktree is removed. The scratch firewall rule is still present.
+Implementation SHA: `839cb7ab63f601790bb1df012d92172e6f0e10de`. The merge waits until the worktree client is closed. Scratch, the pulled logs, and the backups stay until the worktree is removed. The scratch firewall rule is still present.
 
 
 
