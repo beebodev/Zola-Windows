@@ -21,10 +21,21 @@ def load_protocol() -> Dict[str, Any]:
     return json.loads(_CONTRACT.read_text(encoding="utf-8"))
 
 
+def _plain(value: Any) -> Any:
+    # P10-COMPANION: a lone surrogate becomes U+FFFD before the bytes are signed — P10-D12
+    if isinstance(value, str):
+        return "".join("\ufffd" if 0xD800 <= ord(ch) <= 0xDFFF else ch for ch in value)
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {_plain(key): _plain(item) for key, item in value.items()}
+    return value
+
+
 def canonical(payload: Dict[str, Any]) -> bytes:
     rules = load_protocol()["canonical_json"]
     return json.dumps(
-        payload,
+        _plain(payload),
         sort_keys=bool(rules["sort_keys"]),
         separators=tuple(rules["separators"]),
         ensure_ascii=bool(rules["ensure_ascii"]),
@@ -198,6 +209,7 @@ def decide_case(case: Dict[str, Any], protocol: Dict[str, Any], keys: Dict[str, 
     signature = str(case.get("signature") or "")
     raw = encode_frame(kind, payload, signature, protocol)
     pubs = keys["keys"]
+    pinned = pubs["pc"]["public_pem"] if case.get("signed_by") == "pc" and "pc" in pubs else pubs["paired"]["public_pem"]
     paired_id = str(case.get("device_id") or keys.get("paired_device_id") or vectors.get("paired_device_id") or "")
     if case.get("name") in ("wrong-device",):
         paired_id = str(keys.get("paired_device_id") or vectors.get("paired_device_id") or "")
@@ -208,7 +220,7 @@ def decide_case(case: Dict[str, Any], protocol: Dict[str, Any], keys: Dict[str, 
     return classify_raw(
         raw,
         protocol=protocol,
-        paired_public=pubs["paired"]["public_pem"],
+        paired_public=pinned,
         rejected_publics=rejected,
         paired_device_id=paired_id,
         last_seq=last,

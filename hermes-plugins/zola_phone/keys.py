@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Any, Dict
 
@@ -16,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 CRYPTPROTECT_UI_FORBIDDEN = 0x1
 KEY_NAME = "pc_key.bin"
 PEER_NAME = "peer_state.json"
+PC_ID_NAME = "pc_id.txt"
 DESCRIPTION = "zola_phone_key"
 
 
@@ -62,6 +64,7 @@ def load_or_create(directory: Path) -> Dict[str, Any]:
     protect_dir(directory)
     key_path = directory / KEY_NAME
     peer_path = directory / PEER_NAME
+    id_path = directory / PC_ID_NAME
     if key_path.exists():
         private = _unprotect(key_path.read_bytes()).decode("ascii")
         key = serialization.load_pem_private_key(private.encode("ascii"), password=None)
@@ -81,7 +84,22 @@ def load_or_create(directory: Path) -> Dict[str, Any]:
     peer: Dict[str, Any] = {}
     if peer_path.exists():
         peer = json.loads(peer_path.read_text(encoding="utf-8"))
-    return {"private_pem": private, "public_pem": public, "peer": peer}
+    if id_path.exists():
+        pc_id = id_path.read_text(encoding="ascii").strip()
+    else:
+        # P10-COMPANION: the PC identity is created once beside the key and survives rotation — P10-D12
+        pc_id = secrets.token_hex(16)
+        id_path.write_text(pc_id + "\n", encoding="ascii")
+        protect_dir(id_path)
+    return {"private_pem": private, "public_pem": public, "peer": peer, "pc_id": pc_id}
+
+
+def rotate_key(directory: Path) -> Dict[str, Any]:
+    # P10-COMPANION: a new key keeps the PC identity already beside it — P10-D12
+    key_path = directory / KEY_NAME
+    if key_path.exists():
+        key_path.unlink()
+    return load_or_create(directory)
 
 
 def save_peer(directory: Path, peer: Dict[str, Any]) -> None:

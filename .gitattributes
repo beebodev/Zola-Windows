@@ -1,3 +1,6 @@
 # P3-SHELL — P3-D12
 *.ttf binary
 *.glb binary
+*.jar binary
+gradlew text eol=lf
+*.bat text eol=crlf

@@ -15,6 +15,10 @@
     "unauthorized": {
       "private_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg3L/xORGyF39pFuw3\n0q2q8G+yQSO8LELcv+4EzJJY3VGhRANCAASY8BJ1FDfiyKAJaKQzO4Zb8NCmvhpr\nSWhQnd0apF6Chfuv7MXaItvPHoJ1eiVoN2hvPDcVQVRUnDgMrCW97RzH\n-----END PRIVATE KEY-----\n",
       "public_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmPASdRQ34sigCWikMzuGW/DQpr4a\na0loUJ3dGqRegoX7r+zF2iLbzx6CdXolaDdobzw3FUFUVJw4DKwlve0cxw==\n-----END PUBLIC KEY-----\n"
+    },
+    "pc": {
+      "private_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgNr2kxWHCwA/FPstx\nGSqwSg77QKD8wdS5krofEMLAIz2hRANCAATIlD+FsE7+JZ4fJqQirZrmXSiTQkU7\n0xw+VP2r4G717n0pn1vMMW/cQ+Kc4+H3KH6UQWu4/Jca4DW1o6pGad9l\n-----END PRIVATE KEY-----\n",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEyJQ/hbBO/iWeHyakIq2a5l0ok0JF\nO9McPlT9q+Bu9e59KZ9bzDFv3EPinOPh9yh+lEFruPyXGuA1taOqRmnfZQ==\n-----END PUBLIC KEY-----\n"
     }
   }
 }

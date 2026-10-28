@@ -1,5 +1,5 @@
 {
-  "contract_version": 2,
+  "contract_version": 3,
   "magic": "ZPC1",
   "frame_kinds": [
     "signed",
@@ -62,7 +62,10 @@
         "sender_raw",
         "is_group",
         "participant_count",
-        "rcs_flag"
+        "rcs_flag",
+        "attachment_has",
+        "attachment_count",
+        "truncated"
       ]
     },
     "notifications.event": {
@@ -108,14 +111,39 @@
         "max_messages",
         "max_characters",
         "deadline_ms"
-      ]
+      ],
+      "selector": {
+        "forms": [
+          "address",
+          "thread_id"
+        ]
+      }
     },
     "history.read.result": {
       "direction": "phone_to_pc",
       "capability": "read_history",
       "fields": [
         "request_id",
-        "status"
+        "status",
+        "items",
+        "capped"
+      ],
+      "item_fields": [
+        "provider_id",
+        "kind",
+        "revision",
+        "completeness",
+        "received_at_ms",
+        "date_sent_ms",
+        "sender_raw",
+        "is_group",
+        "participant_count",
+        "rcs_flag",
+        "direction",
+        "truncated",
+        "mask_kind",
+        "thread_id",
+        "body"
       ]
     },
     "notifications.read.request": {
@@ -150,7 +178,43 @@
       "capability": "read_code",
       "fields": [
         "request_id",
-        "status"
+        "status",
+        "value",
+        "value_kind",
+        "reason"
+      ]
+    },
+    "diagnostic_read": {
+      "direction": "pc_to_phone",
+      "fields": [
+        "request_id",
+        "deadline_ms"
+      ]
+    },
+    "diagnostic_read.result": {
+      "direction": "phone_to_pc",
+      "fields": [
+        "request_id",
+        "status",
+        "rows_since_baseline",
+        "pending_incomplete",
+        "exhausted",
+        "unacked",
+        "rejected",
+        "restored",
+        "suspected_restored",
+        "deleted",
+        "provider_reset",
+        "cursor_lag"
+      ]
+    },
+    "messages.deleted": {
+      "direction": "phone_to_pc",
+      "fields": [
+        "provider_id",
+        "kind",
+        "revision",
+        "outcome"
       ]
     },
     "device.health": {
@@ -158,7 +222,16 @@
       "capability": "device_health",
       "fields": [
         "service_state",
-        "listener_bound"
+        "permissions_held",
+        "battery_exempt",
+        "pending_incomplete",
+        "exhausted",
+        "unacked",
+        "rejected",
+        "restored",
+        "suspected_restored",
+        "deleted",
+        "provider_reset"
       ]
     },
     "keepalive.ping": {
@@ -275,7 +348,26 @@
     "known_device_unauthorized_key": "unknown-key",
     "stores_nothing_on_refusal": true,
     "mac": "HMAC-SHA256",
-    "mac_covers": "canonical payload"
+    "mac_covers": "canonical payload",
+    "pc_id": "random 128-bit id created once beside the PC key, sent in pc_bind, kept across key rotation"
+  },
+  "delivery": {
+    "state_per": "pc_id",
+    "new_pc_window_ms": 604800000,
+    "window_floor": "install baseline",
+    "key_rotation": "keeps delivery state"
+  },
+  "restore": {
+    "creators": [
+      "com.sec.android.easyMover"
+    ],
+    "suspected_restored_ms": 172800000,
+    "watermark": "newest delivered date, never moves backward"
+  },
+  "reconnect_targets_ms": {
+    "not_deep_doze": 60000,
+    "deep_doze": 900000,
+    "guarantee": false
   },
   "mask_kind": [
     "verification_code",
@@ -321,7 +413,7 @@
     "code"
   ],
   "supported_versions": [
-    2
+    3
   ],
   "listen_port": 47821,
   "reconnecting_grace_ms": 480000,
@@ -415,5 +507,27 @@
       "payload"
     ],
     "signature_covers": "canonical payload"
-  }
+  },
+  "deleted_seen_limit": 2000,
+  "event_required": [
+    "provider_id",
+    "kind",
+    "revision",
+    "completeness",
+    "received_at_ms",
+    "date_sent_ms",
+    "sender_raw",
+    "is_group",
+    "participant_count",
+    "rcs_flag",
+    "attachment_has",
+    "attachment_count",
+    "truncated"
+  ],
+  "digit_key_vectors": [
+    {"raw": "5551234567", "e164": "+15551234567"},
+    {"raw": "+1 (555) 123-4567", "e164": "+15551234567"},
+    {"raw": "15551234567", "e164": "+15551234567"},
+    {"raw": "12345", "e164": null}
+  ]
 }

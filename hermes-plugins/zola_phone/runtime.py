@@ -146,6 +146,7 @@ class Engine:
         self._private = loaded["private_pem"]
         self._public = loaded["public_pem"]
         self.peer = loaded["peer"]
+        self.pc_id = str(loaded["pc_id"])
 
     def _save_peer(self) -> None:
         from . import keys
@@ -383,6 +384,7 @@ class Engine:
         if reason != "accept":
             _note("zola_phone.reject", reason=reason)
             if reason == "bad-signature" and len(raw) <= wire.frame_limit(self.protocol) and parsed_kind(raw) == "pairing":
+                self._note_pairing_material(raw)
                 self.note_pairing_failure()
             return None
         parsed = json.loads(raw.decode("utf-8"))
@@ -418,20 +420,34 @@ class Engine:
         now = self.clock()
         if self.code_dead or not self.code or now > self.code_expires:
             _note("zola_phone.reject", reason="pairing-expired")
+            _note(
+                "zola_phone.pairing",
+                step=str(payload.get("type") or "unknown"),
+                result="dropped",
+                reason="pairing-expired",
+            )
             return None
         kind = str(payload.get("type") or "")
         device = str(payload.get("device_id") or "")
         if kind == "phone_open":
             public = str(payload.get("public_pem") or "")
             if not public or not device:
+                _note("zola_phone.pairing", step="phone_open", result="dropped", reason="missing")
                 return None
             self._pair_pending = {"device": device, "public": public, "seq": int(payload["seq"])}
             self.current = conn_id
-            return self._pairing_frame("pc_bind", device_id=device, public_pem=self._public)
-        if kind != "phone_bind" or not self._pair_pending:
+            frame = self._pairing_frame("pc_bind", device_id=device, public_pem=self._public, pc_id=self.pc_id)
+            _note("zola_phone.pairing", step="pc_bind", result="sent")
+            return frame
+        if kind != "phone_bind":
+            _note("zola_phone.pairing", step=kind or "unknown", result="dropped", reason="unexpected")
+            return None
+        if not self._pair_pending:
+            _note("zola_phone.pairing", step="phone_bind", result="dropped", reason="no-pending")
             return None
         if device != self._pair_pending["device"] or str(payload.get("public_pem") or "") != self._pair_pending["public"]:
             self.note_pairing_failure()
+            _note("zola_phone.pairing", step="phone_bind", result="dropped", reason="mismatch")
             return None
         public = self._pair_pending["public"]
         previous = str(self.peer.get("public_pem") or "")
@@ -455,6 +471,7 @@ class Engine:
         self.socket_open = True
         self.last_ping_answered = True
         self._save_peer()
+        _note("zola_phone.pairing", step="pc_ok", result="sent")
         _note("zola_phone.pairing", result="paired", device=_hash(device))
         return reply
 
@@ -462,6 +479,26 @@ class Engine:
         payload = self._pc_payload(type_name, **extra)
         mac = wire.pairing_mac(self.code, payload)
         return wire.encode_frame("pairing", payload, mac, self.protocol)
+
+    def _note_pairing_material(self, raw: bytes) -> None:
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+            payload = parsed.get("payload") if isinstance(parsed, dict) else None
+            if not isinstance(payload, dict):
+                return
+            material = wire.canonical(payload)
+            pem = str(payload.get("public_pem") or "")
+            _note(
+                "zola_phone.pairing",
+                result="material",
+                bytes=len(material),
+                sha=hashlib.sha256(material).hexdigest()[:16],
+                code_len=len(self.code),
+                newlines=pem.count("\n"),
+                cr=pem.count("\r"),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+            _note("zola_phone.pairing", result="material-unread")
 
     def note_pairing_failure(self) -> None:
         self.code_attempts += 1
@@ -481,6 +518,30 @@ class Engine:
         if type_name in ("keepalive.pong",):
             self.note_pong()
             return None
+        if type_name == "hello":
+            caps = payload.get("capabilities")
+            _note(
+                "zola_phone.hello",
+                capabilities=len(caps) if isinstance(caps, list) else 0,
+                pending_incomplete=payload.get("pending_incomplete"),
+                notification_queue_depth=payload.get("notification_queue_depth"),
+            )
+            return None
+        if type_name == "device.health":
+            _note(
+                "zola_phone.health",
+                pending_incomplete=payload.get("pending_incomplete"),
+                exhausted=payload.get("exhausted"),
+                unacked=payload.get("unacked"),
+                rejected=payload.get("rejected"),
+                restored=payload.get("restored"),
+                suspected_restored=payload.get("suspected_restored"),
+                deleted=payload.get("deleted"),
+                provider_reset=payload.get("provider_reset"),
+            )
+            return None
+        if type_name == "messages.deleted":
+            return self._deleted(payload)
         if type_name.endswith(".result") or type_name == "diagnostic_read.result":
             request_id = str(payload.get("request_id") or "")
             with self._lock:
@@ -489,10 +550,36 @@ class Engine:
                     _note("zola_phone.read", req=type_name, status="late-result")
                     return None
                 body = {"ok": True, "request_id": request_id, "status": payload.get("status") or "ok"}
-                if type_name != "code.read.result":
-                    body["items"] = payload.get("items")
+                # P10-COMPANION: diagnostic counts stay on the local result — C2
+                if type_name == "diagnostic_read.result":
+                    for key in (
+                        "pending_incomplete",
+                        "exhausted",
+                        "unacked",
+                        "restored",
+                        "suspected_restored",
+                        "deleted",
+                        "provider_reset",
+                        "rows_since_baseline",
+                        "rejected",
+                        "cursor_lag",
+                    ):
+                        if key in payload:
+                            body[key] = payload[key]
+                elif type_name != "code.read.result":
+                    items = payload.get("items")
+                    if type_name == "history.read.result":
+                        items, capped = cap_history(items, self.protocol)
+                        body["capped"] = capped
+                        if capped:
+                            _note("zola_phone.history", kept=len(items) if isinstance(items, list) else 0, capped=1)
+                    body["items"] = items
                 else:
                     body["value"] = payload.get("value")
+                    # P10-COMPANION: value_kind and reason reach the caller; the value is not logged — C4
+                    for key in ("value_kind", "reason"):
+                        if key in payload:
+                            body[key] = payload.get(key)
                 self.pending_results[request_id] = body
             event.set()
             return None
@@ -562,6 +649,7 @@ class Engine:
             item=_hash(str(result.get("id") or payload.get("provider_id") or "")),
             kind=kind,
             result=ack,
+            delay_ms=self.clock() - int(when_raw),
         )
         return self._ack_for(payload, kind, ack, reason if ack == "rejected" else None)
 
@@ -581,6 +669,36 @@ class Engine:
         extra["provider_id"] = str(payload.get("provider_id") or "")
         extra["kind"] = kind
         return self._ack_frame("messages.ack", str(payload.get("device_id") or ""), **extra)
+
+    def _deleted(self, payload: Dict[str, Any]) -> Optional[bytes]:
+        # P10-COMPANION: a deleted notice is logged and acknowledged; the store keeps nothing — P10-D03
+        kind = str(payload.get("kind") or "")
+        revision = payload.get("revision")
+        if kind not in ("sms", "mms") or "provider_id" not in payload:
+            return self._ack_for(payload, kind or "sms", "rejected", "bad_field")
+        if payload.get("outcome") != "deleted":
+            return self._ack_for(payload, kind, "rejected", "bad_field")
+        if "revision" not in payload or isinstance(revision, bool) or not isinstance(revision, int):
+            return self._ack_for(payload, kind, "rejected", "bad_revision")
+        identity = _hash("|".join((
+            str(payload.get("device_id") or ""),
+            kind,
+            str(payload.get("provider_id") or ""),
+            str(revision),
+        )))
+        with self._lock:
+            seen = list(self.peer.get("deleted_seen") or [])
+            repeat = identity in seen
+            if not repeat:
+                seen.append(identity)
+                limit = int(self.protocol.get("deleted_seen_limit") or 2000)
+                if len(seen) > limit:
+                    seen = seen[-limit:]
+                self.peer["deleted_seen"] = seen
+                self._save_peer()
+        word = "duplicate" if repeat else "suppressed"
+        _note("zola_phone.deleted", item=identity, revision=revision, result=word)
+        return self._ack_for(payload, kind, word, None)
 
     def _maybe_evaluate(self, item_id: str) -> None:
         if not item_id:
@@ -613,6 +731,37 @@ class Engine:
         saved = self.store.mark_watch_evaluated(self.conn, item["id"])
         if not saved.get("ok"):
             _note("zola_phone.reject", reason="watch")
+
+
+def cap_history(items: Any, protocol: Dict[str, Any]) -> Any:
+    # P10-COMPANION: a trimmed history says so; a silent cut would look complete — Phase 5
+    if not isinstance(items, list):
+        return items, False
+    limits = protocol["size_limits"]
+    max_items = int(limits["history_messages"])
+    max_chars = int(limits["history_chars"])
+    kept = []
+    used = 0
+    capped = False
+    for item in items:
+        if len(kept) >= max_items:
+            capped = True
+            break
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("body") or item.get("text") or "")
+        if used and used + len(text) > max_chars:
+            capped = True
+            break
+        if len(text) > max_chars:
+            trimmed = dict(item)
+            trimmed["body"] = text[:max_chars]
+            trimmed["truncated"] = True
+            text = trimmed["body"]
+            item = trimmed
+        kept.append(item)
+        used += len(text)
+    return kept, capped
 
 
 def parsed_kind(raw: bytes) -> str:

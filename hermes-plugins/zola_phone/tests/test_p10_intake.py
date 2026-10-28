@@ -85,7 +85,7 @@ class IntakeTests(unittest.TestCase):
             "device_id": DEVICE,
             "seq": self.seq,
             "sent_at_ms": NOW,
-            "contract_version": 2,
+            "contract_version": int(self.engine.protocol["contract_version"]),
         }
         body.update(extra)
         return body
@@ -104,6 +104,8 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(self.engine.last_reason, "accept")
         bind_payload = json.loads(bind.decode("utf-8"))["payload"]
         self.assertEqual(bind_payload["type"], "pc_bind")
+        self.assertEqual(bind_payload.get("pc_id"), self.engine.pc_id)
+        self.assertEqual(len(self.engine.pc_id), 32)
         self.assertTrue(wire.mac_matches(code, bind_payload, json.loads(bind.decode("utf-8"))["signature"]))
         bound = self._payload("phone_bind", public_pem=public or self.public, device_id=device)
         reply = self.engine.receive(
@@ -554,7 +556,7 @@ class IntakeTests(unittest.TestCase):
                     "device_id": DEVICE,
                     "seq": phone["n"],
                     "sent_at_ms": NOW,
-                    "contract_version": 2,
+                    "contract_version": int(self.engine.protocol["contract_version"]),
                     "request_id": request_id,
                     "status": "ok",
                     "items": [],
@@ -812,6 +814,36 @@ class IntakeTests(unittest.TestCase):
         self.assertIn("pairing-expired", log)
         self.assertFalse(self.engine.peer.get("device_id"))
 
+    def test_pairing_steps_are_logged_and_drops_say_why(self) -> None:
+        started = self.engine.local_request({"type": "pairing.start", "secret": SECRET})
+        code = started["code"]
+        missing = self._payload("phone_open", device_id=DEVICE)
+        dropped = wire.encode_frame(
+            "pairing", missing, wire.pairing_mac(code, missing), self.engine.protocol
+        )
+        self.assertIsNone(self.engine.receive("c1", dropped))
+        opened = self._payload("phone_open", public_pem=self.public, device_id=DEVICE)
+        bind = self.engine.receive(
+            "c1",
+            wire.encode_frame("pairing", opened, wire.pairing_mac(code, opened), self.engine.protocol),
+        )
+        self.assertEqual(json.loads(bind.decode("utf-8"))["payload"]["type"], "pc_bind")
+        surprise = self._payload("phone_surprise", device_id=DEVICE)
+        self.assertIsNone(
+            self.engine.receive(
+                "c1",
+                wire.encode_frame(
+                    "pairing", surprise, wire.pairing_mac(code, surprise), self.engine.protocol
+                ),
+            )
+        )
+        log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
+        self.assertIn("reason=missing result=dropped step=phone_open", log)
+        self.assertIn("result=sent step=pc_bind", log)
+        self.assertIn("reason=unexpected result=dropped step=phone_surprise", log)
+        self.assertNotIn("BEGIN PUBLIC KEY", log)
+        self.assertNotIn(code, log)
+
     def test_f4_second_process_refuses_the_pipe_and_mutex(self) -> None:
         env = os.environ.copy()
         env["HERMES_HOME"] = str(self.home)
@@ -848,6 +880,194 @@ class IntakeTests(unittest.TestCase):
             first.kill()
             first.wait(timeout=10)
             time.sleep(0.4)
+
+    def test_v3_pc_identity_survives_key_rotation(self) -> None:
+        from zola_phone import keys
+
+        first = self.engine.pc_id
+        rotated = keys.rotate_key(self.engine.key_dir)
+        self.assertEqual(rotated["pc_id"], first)
+        self.assertNotEqual(rotated["public_pem"], self.engine._public)
+        other = keys.load_or_create(self.home / "other-phone")
+        self.assertEqual(len(other["pc_id"]), 32)
+        self.assertNotEqual(other["pc_id"], first)
+
+    def test_v3_deleted_notice_is_logged_and_not_stored(self) -> None:
+        self._pair()
+        first_payload = self._payload(
+            "messages.deleted", provider_id="sms-del", kind="sms", revision=1, outcome="deleted",
+        )
+        first = json.loads(self.engine.receive("c1", self._signed(first_payload)).decode("utf-8"))["payload"]
+        self.assertEqual(first["result"], "suppressed")
+        second_payload = self._payload(
+            "messages.deleted", provider_id="sms-del", kind="sms", revision=1, outcome="deleted",
+        )
+        second = json.loads(self.engine.receive("c1", self._signed(second_payload)).decode("utf-8"))["payload"]
+        self.assertEqual(second["result"], "duplicate")
+        log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
+        self.assertIn("zola_phone.deleted", log)
+        self.assertNotIn("sms-del", log)
+
+    def test_v3_hello_health_and_accept_delay_are_counts(self) -> None:
+        self._pair()
+        hello = self._payload(
+            "hello",
+            app_version="1.0.0",
+            capabilities=["receive_messages", "read_history"],
+            cursors={"sms": 1},
+            pending_incomplete=2,
+            notification_queue_depth=0,
+        )
+        self.assertIsNone(self.engine.receive("c1", self._signed(hello)))
+        health = self._payload(
+            "device.health",
+            service_state="connected",
+            pending_incomplete=1,
+            exhausted=0,
+            unacked=0,
+            rejected=0,
+            restored=0,
+            suspected_restored=3,
+            deleted=0,
+            provider_reset=0,
+        )
+        self.assertIsNone(self.engine.receive("c1", self._signed(health)))
+        event = self._event(provider="sms-delay", revision=1)
+        self.assertEqual(json.loads(event.decode("utf-8"))["payload"]["result"], "stored")
+        log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
+        self.assertIn("zola_phone.hello", log)
+        self.assertIn("pending_incomplete=2", log)
+        self.assertIn("capabilities=2", log)
+        self.assertIn("zola_phone.health", log)
+        self.assertIn("suspected_restored=3", log)
+        self.assertIn("delay_ms=", log)
+
+    def test_v3_history_result_is_capped(self) -> None:
+        self._pair()
+        self.engine.socket_open = True
+        self.engine.current = "c1"
+        self.engine.sender = lambda _frame: None
+        items = [{"body": "x" * 10, "provider_id": str(index)} for index in range(60)]
+        payload = self._payload("history.read.result", request_id="cap-1", status="ok", items=items)
+        self.engine.pending_events["cap-1"] = threading.Event()
+        self.engine.receive("c1", self._signed(payload))
+        capped = self.engine.pending_results["cap-1"]["items"]
+        self.assertEqual(len(capped), 50)
+        self.assertTrue(self.engine.pending_results["cap-1"]["capped"])
+        log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
+        self.assertIn("zola_phone.history", log)
+        self.assertIn("kept=50", log)
+
+    def test_diagnostic_result_keeps_counts_only(self) -> None:
+        self._pair()
+        self.engine.socket_open = True
+        self.engine.current = "c1"
+        self.engine.sender = lambda _frame: None
+        payload = self._payload(
+            "diagnostic_read.result",
+            request_id="diag-1",
+            status="ok",
+            pending_incomplete=4,
+            exhausted=1,
+            unacked=2,
+            restored=0,
+            suspected_restored=0,
+            deleted=0,
+            provider_reset=0,
+            rows_since_baseline=9,
+            rejected=3,
+            cursor_lag=5,
+            items=[{"body": "nope"}],
+        )
+        self.engine.pending_events["diag-1"] = threading.Event()
+        self.engine.receive("c1", self._signed(payload))
+        result = self.engine.pending_results["diag-1"]
+        self.assertEqual(result["pending_incomplete"], 4)
+        self.assertEqual(result["rejected"], 3)
+        self.assertEqual(result["cursor_lag"], 5)
+        self.assertEqual(result["rows_since_baseline"], 9)
+        self.assertNotIn("items", result)
+        self.assertNotIn("nope", json.dumps(result))
+
+    def test_deleted_seen_is_bounded(self) -> None:
+        self._pair()
+        limit = int(self.engine.protocol["deleted_seen_limit"])
+        first = None
+        for index in range(limit + 1):
+            payload = self._payload(
+                "messages.deleted",
+                provider_id=str(index),
+                kind="sms",
+                revision=1,
+                outcome="deleted",
+            )
+            ack = json.loads(self.engine.receive("c1", self._signed(payload)).decode("utf-8"))
+            self.assertEqual(ack["payload"]["result"], "suppressed")
+            if index == 0:
+                first = ack["payload"]["provider_id"]
+        seen = self.engine.peer["deleted_seen"]
+        self.assertEqual(len(seen), limit)
+        again = self._payload("messages.deleted", provider_id=str(first), kind="sms", revision=1, outcome="deleted")
+        repeat = json.loads(self.engine.receive("c1", self._signed(again)).decode("utf-8"))
+        self.assertEqual(repeat["payload"]["result"], "suppressed")
+
+    def test_digit_key_vectors_match_the_contract(self) -> None:
+        import importlib.util
+        import sys
+
+        sys.path.insert(0, str(PLUGINS / "zola_workspace"))
+        path = PLUGINS / "zola_workspace" / "phone_ids.py"
+        spec = importlib.util.spec_from_file_location("phone_ids_phase5", path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        for case in self.engine.protocol["digit_key_vectors"]:
+            kind, canonical = module.normalize(case["raw"])
+            if case["e164"] is None:
+                self.assertNotEqual(kind, "e164")
+            else:
+                self.assertEqual(kind, "e164")
+                self.assertEqual(canonical, case["e164"])
+
+    def test_code_read_result_passes_value_kind_and_reason(self) -> None:
+        self._pair()
+        self.engine.socket_open = True
+        self.engine.protocol["timing_ms"]["read_timeout"] = 2000
+        value = "ZP10-CODE-SENTINEL"
+
+        def answer(frame: bytes) -> None:
+            request_id = json.loads(frame.decode("utf-8"))["payload"]["request_id"]
+            payload = self._payload(
+                "code.read.result",
+                request_id=request_id,
+                status="ok",
+                value=value,
+                value_kind="otp",
+                reason="masked",
+            )
+            self.engine.receive("c1", self._signed(payload))
+
+        self.engine.sender = answer
+        result = self.engine.local_request(
+            {"type": "read_code", "secret": SECRET, "provider_id": "sms-1", "kind": "sms"}
+        )
+        self.assertEqual(result.get("value_kind"), "otp")
+        self.assertEqual(result.get("reason"), "masked")
+        self.assertEqual(result.get("value"), value)
+        log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
+        self.assertNotIn(value, log)
+
+    def test_event_required_fields_are_in_the_contract(self) -> None:
+        required = self.engine.protocol["event_required"]
+        fields = self.engine.protocol["message_types"]["messages.event"]["fields"]
+        for name in required:
+            self.assertIn(name, fields)
+        self.assertIn("selector", self.engine.protocol["message_types"]["history.read.request"]["fields"])
+        self.assertIn("capped", self.engine.protocol["message_types"]["history.read.result"]["fields"])
+        self.assertEqual(
+            ["request_id", "status", "value", "value_kind", "reason"],
+            self.engine.protocol["message_types"]["code.read.result"]["fields"],
+        )
 
 
 if __name__ == "__main__":
