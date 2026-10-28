@@ -23,7 +23,7 @@
 | 4 | Implement | COMPLETE (STOP) — not installed |
 | 5 | Review checkpoint | COMPLETE (STOP) — R1–R11 in. Scratch bench corrected 2026-10-25. |
 | 6 | Smoke | COMPLETE — passed. C1–C9, C10 under amendments, C11 on the fresh home, Part B, and the C9 repeat. |
-| 7 | Closeout | IN PROGRESS — 7a checked. The worktree client is up and paired. The merge waits until that client is closed. |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -1306,7 +1306,9 @@ Live mirror matches the worktree for `keys.py`, `runtime.py`, `serve.py`, `wire.
 
 Track 5 carry-forwards stay open: `phone_client.call` cannot pass a message kind, and RCS senders may not be phone numbers.
 
-Implementation SHA: `839cb7ab63f601790bb1df012d92172e6f0e10de`. The merge waits until the worktree client is closed. Scratch, the pulled logs, and the backups stay until the worktree is removed. The scratch firewall rule is still present.
+Implementation SHA: `839cb7ab63f601790bb1df012d92172e6f0e10de`.
+
+Merge SHA: `7c59c1891405bf45728d3bc5d4c7b6e8519ef241`
 
 
 
