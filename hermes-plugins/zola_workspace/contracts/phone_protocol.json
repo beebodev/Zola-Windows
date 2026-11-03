@@ -1,5 +1,5 @@
 {
-  "contract_version": 3,
+  "contract_version": 4,
   "magic": "ZPC1",
   "frame_kinds": [
     "signed",
@@ -80,7 +80,11 @@
         "sender_display_name",
         "conversation_title",
         "is_group",
-        "posted_at_ms"
+        "posted_at_ms",
+        "text",
+        "mask_kind",
+        "truncated",
+        "completeness"
       ]
     },
     "messages.ack": {
@@ -153,7 +157,8 @@
         "request_id",
         "max_items",
         "max_characters",
-        "deadline_ms"
+        "deadline_ms",
+        "package"
       ]
     },
     "notifications.read.result": {
@@ -161,7 +166,9 @@
       "capability": "read_notifications",
       "fields": [
         "request_id",
-        "status"
+        "status",
+        "items",
+        "capped"
       ]
     },
     "code.read.request": {
@@ -231,7 +238,22 @@
         "restored",
         "suspected_restored",
         "deleted",
-        "provider_reset"
+        "provider_reset",
+        "listener_permission",
+        "listener_bound",
+        "allowlist_packages",
+        "notification_queue_depth",
+        "notification_queue_oldest_age_ms",
+        "notification_queue_drops",
+        "notification_age_drops",
+        "notification_filtered",
+        "allowlist_removed",
+        "notification_rejected",
+        "listener_gap_count",
+        "listener_gap_ms_total",
+        "last_gap_start_ms",
+        "last_gap_end_ms",
+        "last_gap_inferred"
       ]
     },
     "keepalive.ping": {
@@ -413,7 +435,7 @@
     "code"
   ],
   "supported_versions": [
-    3
+    4
   ],
   "listen_port": 47821,
   "reconnecting_grace_ms": 480000,
@@ -522,6 +544,16 @@
     "rcs_flag",
     "attachment_has",
     "attachment_count",
+    "truncated"
+  ],
+  "event_required_notification": [
+    "package",
+    "notification_key",
+    "newest_message_timestamp",
+    "revision",
+    "completeness",
+    "is_group",
+    "posted_at_ms",
     "truncated"
   ],
   "digit_key_vectors": [

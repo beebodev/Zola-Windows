@@ -131,6 +131,17 @@ class Engine:
         self.read_timeout_ping = False
         self.last_closed_conn = ""
         self.verified_calls = 0
+        self.listener_permission = 1
+        self.listener_bound = 1
+        self.allowlist_count = 0
+        self.allowlist_packages: list[str] = []
+        self.notice_depth = 0
+        self.notice_drops = 0
+        self.notice_age_drops = 0
+        self.notice_filtered = 0
+        self.notice_removed = 0
+        self.notice_rejected = 0
+        self.notice_gaps = 0
         self._recover()
 
     def close(self) -> None:
@@ -189,6 +200,17 @@ class Engine:
             "paired": bool(device),
             "device_hash": _hash(device) if device else "",
             "last_disconnect": str(self.peer.get("last_disconnect") or ""),
+            "listener_permission": self.listener_permission,
+            "listener_bound": self.listener_bound,
+            "allowlist_count": self.allowlist_count,
+            "allowlist_packages": list(self.allowlist_packages),
+            "notification_queue_depth": self.notice_depth,
+            "notification_queue_drops": self.notice_drops,
+            "notification_age_drops": self.notice_age_drops,
+            "notification_filtered": self.notice_filtered,
+            "allowlist_removed": self.notice_removed,
+            "notification_rejected": self.notice_rejected,
+            "listener_gap_count": self.notice_gaps,
         }
 
     def _secret_ok(self, presented: str) -> bool:
@@ -237,7 +259,8 @@ class Engine:
         }[kind]
         with self._lock:
             payload = self._pc_payload(type_name, request_id=request_id)
-            for key in ("selector", "max_messages", "max_characters", "max_items", "provider_id", "kind"):
+            # P10-NOTIFY: package filters notifications.read.request — N12
+            for key in ("selector", "max_messages", "max_characters", "max_items", "provider_id", "kind", "package"):
                 if key in body:
                     payload[key] = body[key]
             deadline = int(self.protocol["timing_ms"]["read_timeout"])
@@ -525,9 +548,15 @@ class Engine:
                 capabilities=len(caps) if isinstance(caps, list) else 0,
                 pending_incomplete=payload.get("pending_incomplete"),
                 notification_queue_depth=payload.get("notification_queue_depth"),
+                listener_permission=payload.get("listener_permission"),
+                listener_bound=payload.get("listener_bound"),
+                allowlist_count=payload.get("allowlist_count"),
+                notification_queue_drops=payload.get("notification_queue_drops"),
+                listener_gap_count=payload.get("listener_gap_count"),
             )
             return None
         if type_name == "device.health":
+            self._remember_notice(payload)
             _note(
                 "zola_phone.health",
                 pending_incomplete=payload.get("pending_incomplete"),
@@ -538,6 +567,16 @@ class Engine:
                 suspected_restored=payload.get("suspected_restored"),
                 deleted=payload.get("deleted"),
                 provider_reset=payload.get("provider_reset"),
+                listener_permission=self.listener_permission,
+                listener_bound=self.listener_bound,
+                allowlist_count=self.allowlist_count,
+                notification_queue_depth=self.notice_depth,
+                notification_queue_drops=self.notice_drops,
+                notification_age_drops=self.notice_age_drops,
+                notification_filtered=self.notice_filtered,
+                allowlist_removed=self.notice_removed,
+                notification_rejected=self.notice_rejected,
+                listener_gap_count=self.notice_gaps,
             )
             return None
         if type_name == "messages.deleted":
@@ -566,6 +605,10 @@ class Engine:
                     ):
                         if key in payload:
                             body[key] = payload[key]
+                elif type_name == "notifications.read.result":
+                    items, capped = cap_notifications(payload.get("items"), self.protocol)
+                    body["capped"] = capped
+                    body["items"] = items
                 elif type_name != "code.read.result":
                     items = payload.get("items")
                     if type_name == "history.read.result":
@@ -653,6 +696,30 @@ class Engine:
         )
         return self._ack_for(payload, kind, ack, reason if ack == "rejected" else None)
 
+    def _remember_notice(self, payload: Dict[str, Any]) -> None:
+        def num(name: str, default: int = 0) -> int:
+            value = payload.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, int):
+                return default
+            return int(value)
+
+        packages = payload.get("allowlist_packages")
+        self.listener_permission = num("listener_permission", 1)
+        self.listener_bound = num("listener_bound", 1)
+        if isinstance(packages, list):
+            self.allowlist_packages = [str(item) for item in packages if isinstance(item, str)]
+            self.allowlist_count = len(self.allowlist_packages)
+        else:
+            self.allowlist_packages = []
+            self.allowlist_count = num("allowlist_count")
+        self.notice_depth = num("notification_queue_depth")
+        self.notice_drops = num("notification_queue_drops")
+        self.notice_age_drops = num("notification_age_drops")
+        self.notice_filtered = num("notification_filtered")
+        self.notice_removed = num("allowlist_removed")
+        self.notice_rejected = num("notification_rejected")
+        self.notice_gaps = num("listener_gap_count")
+
     def _ack_for(self, payload: Dict[str, Any], kind: str, word: str, reason: Optional[str]) -> bytes:
         revision = payload.get("revision")
         extra: Dict[str, Any] = {
@@ -731,6 +798,37 @@ class Engine:
         saved = self.store.mark_watch_evaluated(self.conn, item["id"])
         if not saved.get("ok"):
             _note("zola_phone.reject", reason="watch")
+
+
+def cap_notifications(items: Any, protocol: Dict[str, Any]) -> Any:
+    # P10-NOTIFY: a read result is capped before it is returned and its text is not logged
+    if not isinstance(items, list):
+        return items, False
+    limits = protocol["size_limits"]
+    max_items = int(limits["notification_read_items"])
+    max_chars = int(limits["notification_read_chars"])
+    per_item = int(limits["notification_text_chars"])
+    kept = []
+    used = 0
+    capped = False
+    for item in items:
+        if len(kept) >= max_items:
+            capped = True
+            break
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "")
+        if len(text) > per_item:
+            item = dict(item)
+            item["text"] = text[:per_item]
+            item["truncated"] = 1
+            text = item["text"]
+        if used and used + len(text) > max_chars:
+            capped = True
+            break
+        kept.append(item)
+        used += len(text)
+    return kept, capped
 
 
 def cap_history(items: Any, protocol: Dict[str, Any]) -> Any:

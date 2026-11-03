@@ -207,6 +207,36 @@ internal sealed partial class CheckRunner
             var third = PhonePollGate.TryEnter(ref busy);
             return first && !second && third;
         });
+        Phone("Connected with an empty allowlist", () =>
+        {
+            var now = DateTimeOffset.Parse("2026-10-16T12:00:00Z");
+            var empty = Row(now, "connected", 0, 0, 0);
+            return empty.State is null && empty.Level == SystemsCopy.Level.Quiet;
+        });
+        Phone("Connected with a bound listener", () =>
+        {
+            var now = DateTimeOffset.Parse("2026-10-16T12:00:00Z");
+            var bound = Row(now, "connected", 2, 1, 1);
+            return bound.State is null;
+        });
+        Phone("DEGRADED with access missing", () =>
+        {
+            var now = DateTimeOffset.Parse("2026-10-16T12:00:00Z");
+            var noAccess = Row(now, "connected", 2, 0, 1);
+            return noAccess.State == SystemsCopy.Degraded && noAccess.Level == SystemsCopy.Level.Attention;
+        });
+        Phone("DEGRADED with the listener unbound", () =>
+        {
+            var now = DateTimeOffset.Parse("2026-10-16T12:00:00Z");
+            var unbound = Row(now, "connected", 2, 1, 0);
+            return unbound.State == SystemsCopy.Degraded && unbound.Level == SystemsCopy.Level.Attention;
+        });
+        Phone("not DEGRADED with an empty allowlist and the listener unbound", () =>
+        {
+            var now = DateTimeOffset.Parse("2026-10-16T12:00:00Z");
+            var emptyUnbound = Row(now, "connected", 0, 1, 0);
+            return emptyUnbound.State is null;
+        });
         Phone("the pipe reader keeps a 64000 character line", () =>
         {
             var body = new string('Z', 64000);
@@ -222,12 +252,24 @@ internal sealed partial class CheckRunner
         return SystemsCopy.Rows(Facts(now, latch, link, failing))[5];
     }
 
-    private static SystemsFacts Facts(DateTimeOffset now, WatcherProcessLatch latch, string? link, bool failing)
+    private static SystemsCopy.View Row(DateTimeOffset now, string link, int allowlist, int permission, int bound)
+    {
+        return SystemsCopy.Rows(Facts(now, WatcherProcessLatch.Running, link, false, allowlist, permission, bound))[5];
+    }
+
+    private static SystemsFacts Facts(
+        DateTimeOffset now,
+        WatcherProcessLatch latch,
+        string? link,
+        bool failing,
+        int allowlist = 0,
+        int permission = 1,
+        int bound = 1)
     {
         return new SystemsFacts(
             true, false, false, WatcherProcessLatch.Running, null, true,
             true, "idle", "2026-10-16T12:00:00Z", now, true, false,
-            latch, link, failing);
+            latch, link, failing, allowlist, permission, bound);
     }
 
     private void Phone(string name, Func<bool> body)

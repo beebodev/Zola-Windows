@@ -42,6 +42,9 @@ class CompanionEngine(
     private var bootstrapped = false
     private var stateLoaded = false
     private val desk = ReadDesk(clock, WakeGate(), PhoneLog())
+    private val notices = NoticeBook(clock, log, { store.readQueue() }, { store.writeQueue(it) })
+    var activeNotices: (() -> List<PostedNotice>?)? = null
+    var accessGranted: (() -> Boolean)? = null
 
     init {
         link.listener = this
@@ -51,14 +54,22 @@ class CompanionEngine(
         // P10-COMPANION: a later service start must not reload over live slots — C11
         if (!stateLoaded) {
             load()
+            notices.onProcessStart()
             if (!bootstrapped) openInstall()
             stateLoaded = true
         }
+        // P10-NOTIFY: bench/n9 auto-allowlist shell; normal builds prune it — N5–N9 / teardown
+        if (notices.ensureAutoAllowlist(currentNotices().orEmpty()) && paired) sendHealth()
         publish()
         // P10-COMPANION: a service start reads above the cursor, so a text that arrived while the process was dead is not waiting on a provider change — C9
         if (paired) scanAboveCursors()
+        val wasOpen = link.isOpen()
         if (paired) connectIfNeeded()
         if (paired && link.isOpen()) pcs[pcId]?.let { drain(it) }
+        if (paired && wasOpen) {
+            resendNotices()
+            drainNotices()
+        }
     }
 
     private fun openInstall() {
@@ -161,6 +172,7 @@ class CompanionEngine(
                 dispatch(slot, payload)
             }
         }
+        if (notices.expire() && paired) sendHealth()
     }
 
     fun noteDevice(permissions: Int, battery: Boolean) {
@@ -199,6 +211,8 @@ class CompanionEngine(
         // P10-COMPANION: a verified reconnect reads above the cursor, so a text that arrived while the link was down is sent — C9
         scanAboveCursors()
         pcs[pcId]?.let { drain(it) }
+        resendNotices()
+        drainNotices()
     }
 
     override fun onMessage(text: String) {
@@ -274,12 +288,15 @@ class CompanionEngine(
                 sendPong()
             }
             "messages.ack" -> onAck(payload)
+            "notifications.ack" -> onNoticeAck(payload)
             "history.read.request" -> onHistory(payload)
+            "notifications.read.request" -> onNoticeRead(payload)
             "code.read.request" -> onCode(payload)
             "diagnostic_read" -> onDiagnostic(payload)
         }
         // P10-COMPANION: a verified frame drains any room in the in-flight window — C11
         pcs[pcId]?.let { drain(it) }
+        drainNotices()
     }
 
     override fun onClosing() {
@@ -329,6 +346,8 @@ class CompanionEngine(
         sendHealth()
         resendInFlight()
         sendSeed()
+        resendNotices()
+        drainNotices()
     }
 
     private fun openPc(id: String) {
@@ -501,7 +520,7 @@ class CompanionEngine(
             val payload = linkedMapOf<String, Any?>(
                 "type" to "messages.deleted",
                 "device_id" to deviceId,
-                "contract_version" to 3,
+                "contract_version" to CONTRACT,
                 "provider_id" to slot.providerId.toString(),
                 "kind" to slot.kind,
                 "revision" to slot.revision,
@@ -639,6 +658,14 @@ class CompanionEngine(
         // P10-COMPANION: a read logs the wake lock it holds — C2
         log.note("wake", mapOf("tag" to "zola:read", "result" to "held"))
         try {
+            if (kind !in setOf("sms", "mms")) {
+                val message = baseResult("code.read.result", request)
+                message["status"] = "not_text"
+                message["reason"] = "texts_only"
+                sendLoose(message)
+                log.note("read", mapOf("type" to "exact", "request" to request, "status" to "not_text"))
+                return
+            }
             val row = id.toLongOrNull()?.let { provider.one(kind, it) }
             val history = if (row == null) emptyList() else listOf(row.toHistory())
             val answer = desk.readExact(history, id, kind)
@@ -682,16 +709,30 @@ class CompanionEngine(
         sendLoose(
             linkedMapOf(
                 "type" to "hello",
-                "app_version" to "1.0.0",
-                "capabilities" to listOf("receive_messages", "read_history", "read_code", "device_health", "keepalive"),
+                "app_version" to "1.1.0",
+                "capabilities" to listOf(
+                    "receive_messages",
+                    "receive_notifications",
+                    "read_history",
+                    "read_notifications",
+                    "read_code",
+                    "device_health",
+                    "keepalive",
+                ),
                 "cursors" to (memory?.cursors?.toMap() ?: emptyMap()),
                 "pending_incomplete" to counts()["pending_incomplete"],
-                "notification_queue_depth" to 0,
+                "notification_queue_depth" to notices.depth(),
+                "listener_permission" to notices.health()["listener_permission"],
+                "listener_bound" to notices.health()["listener_bound"],
+                "allowlist_count" to ((notices.health()["allowlist_packages"] as? List<*>)?.size ?: 0),
+                "notification_queue_drops" to notices.health()["notification_queue_drops"],
+                "listener_gap_count" to notices.health()["listener_gap_count"],
             ),
         )
     }
 
     private fun sendHealth() {
+        refreshAccess()
         val fields = linkedMapOf<String, Any?>(
             "type" to "device.health",
             "service_state" to CompanionStatus.state,
@@ -699,7 +740,13 @@ class CompanionEngine(
             "battery_exempt" to batteryExempt,
         )
         counts().forEach { fields[it.key] = it.value }
+        notices.health().forEach { fields[it.key] = it.value }
         sendLoose(fields)
+    }
+
+    fun refreshAccess() {
+        val check = accessGranted ?: return
+        notices.onAccess(check())
     }
 
     private fun sendPong() {
@@ -712,7 +759,7 @@ class CompanionEngine(
             "device_id" to deviceId,
             "seq" to reserveSeq(),
             "sent_at_ms" to clock(),
-            "contract_version" to 3,
+            "contract_version" to CONTRACT,
         )
         extra.forEach { payload[it.key] = it.value }
         val material = Canonical.json(payload)
@@ -728,7 +775,7 @@ class CompanionEngine(
         writer.send(frame)
     }
 
-    private fun sendLoose(fields: Map<String, Any?>) {
+    private fun sendLoose(fields: Map<String, Any?>): Boolean {
         var current = fields
         while (true) {
             val payload = linkedMapOf<String, Any?>(
@@ -736,20 +783,20 @@ class CompanionEngine(
                 "device_id" to deviceId,
                 "seq" to reserveSeq(),
                 "sent_at_ms" to clock(),
-                "contract_version" to 3,
+                "contract_version" to CONTRACT,
             )
             current.forEach { if (it.key != "type") payload[it.key] = it.value }
             val signature = signer.sign(payload) ?: run {
                 log.note("sign", mapOf("result" to "failed"))
-                return
+                return false
             }
             val frame = Frames.build(payload, "signed", signature)
             if (frame != null) {
                 writer.send(frame)
-                return
+                return true
             }
-            val items = current["items"] as? List<*> ?: return
-            if (items.size <= 1) return
+            val items = current["items"] as? List<*> ?: return false
+            if (items.size <= 1) return false
             val next = LinkedHashMap(current)
             next["items"] = items.dropLast(1)
             next["capped"] = 1
@@ -774,7 +821,7 @@ class CompanionEngine(
         val payload = linkedMapOf<String, Any?>(
             "type" to type,
             "device_id" to deviceId,
-            "contract_version" to 3,
+            "contract_version" to CONTRACT,
             "provider_id" to row.providerId.toString(),
             "kind" to row.kind,
             "revision" to revision,
@@ -964,7 +1011,118 @@ class CompanionEngine(
         publish()
     }
 
+    fun onPosted(notice: PostedNotice) {
+        if (!bootstrapped) boot()
+        val send = notices.onPosted(notice)
+        if (send) drainNotices()
+        if (paired) sendHealth()
+    }
+
+    fun onRemoved(rawKey: String) {
+        log.note("notice", mapOf("result" to "cancel", "key_hash" to NoticeHash.prefix(rawKey)))
+    }
+
+    fun onListenerConnected(active: List<PostedNotice>, granted: Boolean) {
+        if (!bootstrapped) boot()
+        notices.ensureAutoAllowlist(active)
+        notices.onConnected(active, granted)
+        if (granted) drainNotices()
+        if (paired) sendHealth()
+    }
+
+    fun onListenerDisconnected() {
+        notices.onDisconnected()
+        refreshAccess()
+        if (paired) sendHealth()
+    }
+
+    fun onAccessChanged(granted: Boolean) {
+        notices.onAccess(granted)
+        if (paired) sendHealth()
+    }
+
+    fun setAllowlist(packages: Set<String>) {
+        // P10-NOTIFY: baseline from currentNotices(), not the caller — NT-G1
+        if (!bootstrapped) boot()
+        val showing = currentNotices().orEmpty()
+        notices.setAllowlist(packages, showing)
+        notices.ensureAutoAllowlist(showing)
+        if (paired) sendHealth()
+    }
+
+    internal var noticeItemCap: Int
+        get() = notices.itemCap
+        set(value) { notices.itemCap = value }
+
+    internal var noticeSeenCap: Int
+        get() = notices.seenCap
+        set(value) { notices.seenCap = value }
+
+    internal var noticeFault: String?
+        get() = notices.fault
+        set(value) { notices.fault = value }
+
+    private fun onNoticeAck(payload: Map<String, Any?>) {
+        val word = payload["result"]?.toString().orEmpty()
+        val packageName = payload["package"]?.toString().orEmpty()
+        val key = payload["notification_key"]?.toString().orEmpty()
+        val stamp = payload["newest_message_timestamp"]?.toString().orEmpty()
+        val revision = (payload["revision"] as? Number)?.toInt() ?: return
+        val deleted = notices.onAck(packageName, key, stamp, revision, word)
+        if (!deleted) return
+        log.note("ack", mapOf("result" to word, "kind" to "notif", "id" to NoticeHash.prefix(key)))
+        if (notices.inFlightCount() == 0) wakes.release("zola:event")
+        drainNotices()
+        if (paired) sendHealth()
+    }
+
+    private fun onNoticeRead(payload: Map<String, Any?>) {
+        val request = payload["request_id"]?.toString().orEmpty()
+        wakes.acquire("zola:read", 20_000)
+        log.note("wake", mapOf("tag" to "zola:read", "result" to "held"))
+        try {
+            val maxItems = ((payload["max_items"] as? Number)?.toInt() ?: 50).coerceIn(1, 50)
+            val maxChars = ((payload["max_characters"] as? Number)?.toInt() ?: 64_000).coerceIn(1, 64_000)
+            val packageFilter = payload["package"]?.toString()?.takeIf { it.isNotEmpty() }
+            val active = currentNotices()
+            val answer = notices.read(active, packageFilter, maxItems, maxChars)
+            val message = baseResult("notifications.read.result", request)
+            answer.forEach { message[it.key] = it.value }
+            sendLoose(message)
+            log.note("read", mapOf("type" to "notifications", "request" to request, "status" to answer["status"].toString()))
+        } finally {
+            wakes.release("zola:read")
+            log.note("wake", mapOf("tag" to "zola:read", "result" to "released"))
+        }
+    }
+
+    private fun currentNotices(): List<PostedNotice>? {
+        activeNotices?.let { return it() }
+        return NoticeFeed.current?.invoke()
+    }
+
+    private fun resendNotices() {
+        if (!paired || !link.isOpen()) return
+        notices.flying().forEach { item ->
+            if (!sendLoose(item.eventFields())) notices.clearInFlight(item.identity)
+        }
+    }
+
+    private fun drainNotices() {
+        if (!paired || !link.isOpen()) return
+        while (notices.inFlightCount() < 4) {
+            val next = notices.waiting().firstOrNull() ?: return
+            notices.markInFlight(next.identity)
+            if (!sendLoose(next.eventFields())) {
+                notices.clearInFlight(next.identity)
+                return
+            }
+            wakes.acquire("zola:event", 20_000)
+        }
+    }
+
     companion object {
+        const val CONTRACT = 4
         const val RETRY_MS = 600_000L
         const val MAX_ATTEMPTS = 20
         const val PAIRING_WAIT_MS = 30_000L

@@ -36,10 +36,23 @@ public sealed class PhoneProcess
 
     public void StopDeliberate() => _inner.StopDeliberate();
 
-    public string? ReadLink()
+    public readonly record struct PhoneStatus(string? Link, int ListenerPermission, int ListenerBound, int AllowlistCount);
+
+    public string? ReadLink() => ReadStatus().Link;
+
+    public PhoneStatus ReadStatus()
     {
         var body = Ask(new Dictionary<string, string> { ["type"] = "status" });
-        return body is null ? null : Field(body, "link_state");
+        if (body is null)
+        {
+            return new PhoneStatus(null, 1, 1, 0);
+        }
+
+        return new PhoneStatus(
+            Field(body, "link_state"),
+            IntField(body, "listener_permission", 1),
+            IntField(body, "listener_bound", 1),
+            IntField(body, "allowlist_count", 0));
     }
 
     public string? StartPairing()
@@ -95,5 +108,15 @@ public sealed class PhoneProcess
             JsonValueKind.False => "false",
             _ => value.ToString(),
         };
+    }
+
+    private static int IntField(JsonElement? body, string name, int fallback)
+    {
+        if (body is null || !body.Value.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Number)
+        {
+            return fallback;
+        }
+
+        return value.TryGetInt32(out var parsed) ? parsed : fallback;
     }
 }

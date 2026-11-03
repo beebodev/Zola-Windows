@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -87,6 +88,15 @@ class CompanionService : Service() {
         val sample = idleSample()
         val reconnect = intent?.action == ACTION_RECONNECT
         worker.execute {
+            CompanionBridge.attach(engine, worker)
+            engine.activeNotices = { NoticeFeed.current?.invoke() }
+            engine.accessGranted = {
+                getSystemService(NotificationManager::class.java)
+                    .isNotificationListenerAccessGranted(
+                        ComponentName(this@CompanionService, NotificationListener::class.java),
+                    )
+            }
+            engine.refreshAccess()
             noteDevice()
             val code = Handoff.takeCode()
             val address = Handoff.takeAddress()
@@ -187,6 +197,41 @@ class CompanionService : Service() {
             if (host.startsWith("ws://") || host.startsWith("wss://")) return host
             if (host.substringAfterLast(':').all { it.isDigit() } && host.contains(':')) return "ws://$host"
             return "ws://$host:$port"
+        }
+    }
+}
+
+object CompanionBridge {
+    private val parked = java.util.concurrent.ConcurrentLinkedQueue<(CompanionEngine) -> Unit>()
+    private val gate = java.util.concurrent.locks.ReentrantLock()
+    @Volatile private var engine: CompanionEngine? = null
+    @Volatile private var executor: java.util.concurrent.Executor? = null
+
+    fun ready(): Boolean = engine != null && executor != null
+
+    fun attach(engine: CompanionEngine, executor: java.util.concurrent.Executor) {
+        gate.lock()
+        try {
+            this.engine = engine
+            this.executor = executor
+            while (true) {
+                val job = parked.poll() ?: break
+                executor.execute { job(engine) }
+            }
+        } finally {
+            gate.unlock()
+        }
+    }
+
+    fun submit(job: (CompanionEngine) -> Unit) {
+        gate.lock()
+        try {
+            val current = engine
+            val exec = executor
+            if (current != null && exec != null) exec.execute { job(current) }
+            else parked.add(job)
+        } finally {
+            gate.unlock()
         }
     }
 }
@@ -478,6 +523,7 @@ private class KeystorePort(private val signer: KeystoreSigner) : SignerPort {
 
 open class FileStore(private val file: File) : EngineStore {
     private val install = File(file.parentFile, "install.json")
+    private val queue = File(file.parentFile, "notification-queue.json")
 
     override fun load(): String? = if (file.isFile) file.readText(Charsets.UTF_8) else null
 
@@ -486,6 +532,12 @@ open class FileStore(private val file: File) : EngineStore {
     override fun writeInstall(body: String) {
         if (install.exists()) return
         replace(install, body)
+    }
+
+    override fun readQueue(): String? = if (queue.isFile) queue.readText(Charsets.UTF_8) else null
+
+    override fun writeQueue(body: String) {
+        replace(queue, body)
     }
 
     override fun save(body: String) {

@@ -80,7 +80,7 @@ class CompanionRulesTest {
     @Test
     fun contractConstantsMatchTheFile() {
         val protocol = JSONObject(contractFile("phone_protocol.json").readText())
-        assertEquals(3, protocol.getInt("contract_version"))
+        assertEquals(4, protocol.getInt("contract_version"))
         assertEquals(604800000L, protocol.getJSONObject("delivery").getLong("new_pc_window_ms"))
         assertEquals(172800000L, protocol.getJSONObject("restore").getLong("suspected_restored_ms"))
         assertEquals(DeliveryBook.WINDOW_MS, protocol.getJSONObject("delivery").getLong("new_pc_window_ms"))
@@ -205,6 +205,108 @@ class CompanionRulesTest {
 
     private fun row(id: String, dateMs: Long, creator: String = "com.google.android.apps.messaging", present: Boolean = true) =
         TextRow(id, "sms", dateMs, creator, 1, sendable = true, present = present)
+
+    @Test
+    fun listMembershipFollowsTheStoredAllowlistAfterACheckAnUncheckAndAReopen() {
+        val messages = NoticePackages.MESSAGES.toList()
+        val apps = listOf(
+            NoticePackages.MESSENGER to "Messenger",
+            NoticePackages.INSTAGRAM to "Instagram",
+            NoticePackages.LIFE360 to "Life360",
+            NoticePackages.VOICEMAIL to "Visual Voicemail",
+            messages[0] to "Messages",
+            messages[1] to "Samsung Messages",
+            "com.example.other" to "Other",
+        )
+        val stored = setOf(
+            NoticePackages.MESSENGER,
+            NoticePackages.INSTAGRAM,
+            NoticePackages.LIFE360,
+            NoticePackages.VOICEMAIL,
+        )
+        val opened = AllowlistRows.lists(apps, stored)
+        assertEquals(
+            listOf("Instagram", "Life360", "Messenger", "Visual Voicemail"),
+            opened.visible.map { it.label },
+        )
+        assertTrue(opened.visible.all { it.checked && it.enabled && it.reason.isEmpty() })
+        assertTrue(opened.visible.none { it.label == it.pkg })
+        assertEquals(listOf("Other"), opened.hidden.map { it.label })
+        assertTrue(opened.hidden.all { !it.checked && it.enabled })
+        assertEquals(listOf("Messages", "Samsung Messages"), opened.never.map { it.label })
+        assertTrue(opened.never.all { !it.enabled && !it.checked && it.reason == AllowlistRows.TEXTS_REASON })
+        assertTrue(opened.visible.none { it.pkg in NoticePackages.MESSAGES })
+        assertTrue(opened.hidden.none { it.pkg in NoticePackages.MESSAGES })
+
+        val unchecked = AllowlistRows.toggle(stored, NoticePackages.MESSENGER)
+        val afterUncheck = AllowlistRows.lists(apps, unchecked)
+        assertTrue(afterUncheck.visible.none { it.pkg == NoticePackages.MESSENGER })
+        assertTrue(afterUncheck.hidden.any { it.pkg == NoticePackages.MESSENGER && !it.checked && it.label == "Messenger" })
+
+        val checked = AllowlistRows.toggle(unchecked, "com.example.other")
+        val afterCheck = AllowlistRows.lists(apps, checked)
+        assertTrue(afterCheck.visible.any { it.pkg == "com.example.other" && it.checked && it.label == "Other" })
+        assertTrue(afterCheck.hidden.none { it.pkg == "com.example.other" })
+        assertEquals(afterCheck, AllowlistRows.lists(apps, checked))
+
+        val poisoned = checked + NoticePackages.MESSAGES
+        val reopened = AllowlistRows.lists(apps, poisoned)
+        assertTrue(reopened.visible.none { it.pkg in NoticePackages.MESSAGES })
+        assertTrue(reopened.hidden.none { it.pkg in NoticePackages.MESSAGES })
+        assertEquals(NoticePackages.MESSAGES, reopened.never.map { it.pkg }.toSet())
+    }
+
+    @Test
+    fun rowStateFollowsTheStoredListAfterATapAndAfterReopen() {
+        val stored = setOf(NoticePackages.MESSENGER)
+        assertEquals(
+            "${NoticePackages.MESSENGER} selected",
+            AllowlistRows.label(NoticePackages.MESSENGER, "Messenger", stored),
+        )
+        assertEquals(
+            "${NoticePackages.INSTAGRAM} not selected",
+            AllowlistRows.label(NoticePackages.INSTAGRAM, "Instagram", stored),
+        )
+        val afterTap = AllowlistRows.toggle(stored, NoticePackages.INSTAGRAM)
+        assertEquals(setOf(NoticePackages.MESSENGER, NoticePackages.INSTAGRAM), afterTap)
+        val tapped = AllowlistRows.label(NoticePackages.INSTAGRAM, "Instagram", afterTap)
+        assertEquals("${NoticePackages.INSTAGRAM} selected", tapped)
+        assertEquals(tapped, AllowlistRows.label(NoticePackages.INSTAGRAM, "Instagram", afterTap))
+        val removed = AllowlistRows.toggle(afterTap, NoticePackages.MESSENGER)
+        assertEquals(
+            "${NoticePackages.MESSENGER} not selected",
+            AllowlistRows.label(NoticePackages.MESSENGER, "Messenger", removed),
+        )
+        for (pkg in NoticePackages.MESSAGES) {
+            val text = AllowlistRows.label(pkg, "Messages", removed)
+            assertFalse(text.contains(pkg))
+            assertTrue(text.contains("Messages"))
+            assertTrue(text.contains("Texts already come from the message store"))
+        }
+    }
+
+    @Test
+    fun launcherVisibilityQueryIsDeclared() {
+        val text = manifestFile().readText()
+        assertFalse(text.contains("QUERY_ALL_PACKAGES"))
+        val queries = Regex("(?s)<queries>.*?</queries>").find(text)?.value
+        assertTrue("manifest declares no launcher <queries> intent", queries != null)
+        assertTrue(queries!!.contains("android.intent.action.MAIN"))
+        assertTrue(queries.contains("android.intent.category.LAUNCHER"))
+    }
+
+    private fun manifestFile(): File {
+        var dir: File? = File("").absoluteFile
+        repeat(8) {
+            val here = dir ?: return@repeat
+            val direct = File(here, "src/main/AndroidManifest.xml")
+            if (direct.isFile) return direct
+            val nested = File(here, "app/src/main/AndroidManifest.xml")
+            if (nested.isFile) return nested
+            dir = here.parentFile
+        }
+        error("missing AndroidManifest.xml from ${File("").absolutePath}")
+    }
 
     private fun vectors(): JSONObject = JSONObject(contractFile("phone_vectors.json").readText())
 

@@ -61,6 +61,9 @@ public sealed partial class MainWindow : Window
     private readonly WatcherProcess? _watcher;
     private readonly PhoneProcess? _phone;
     private string? _phoneLink;
+    private int _allowlistCount;
+    private int _listenerPermission = 1;
+    private int _listenerBound = 1;
     private ProactiveSpeechSession? _speech;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _speechTimer;
     private const int SessionIdDisplayLength = 8;
@@ -875,10 +878,13 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                var link = phone.ReadLink();
+                var status = phone.ReadStatus();
                 Dispatch(() =>
                 {
-                    _phoneLink = link;
+                    _phoneLink = status.Link;
+                    _allowlistCount = status.AllowlistCount;
+                    _listenerPermission = status.ListenerPermission;
+                    _listenerBound = status.ListenerBound;
                     PaintSystems();
                 });
             }
@@ -923,7 +929,10 @@ public sealed partial class MainWindow : Window
             _voice.TtsRestoreActive,
             _phone?.Latch ?? WatcherProcessLatch.Running,
             _phoneLink,
-            _phone?.KeepsFailing == true);
+            _phone?.KeepsFailing == true,
+            _allowlistCount,
+            _listenerPermission,
+            _listenerBound);
         var rows = SystemsCopy.Rows(facts);
         ApplySystemRow(SystemsBackend, SystemsBackendLabel, SystemsBackendState, SystemsBackendDot, rows[0]);
         ApplySystemRow(SystemsWatcher, SystemsWatcherLabel, SystemsWatcherState, SystemsWatcherDot, rows[1]);

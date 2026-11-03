@@ -12,13 +12,22 @@ android {
         applicationId = "com.beebo.zola.companion"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 9
+        versionName = "1.1.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+        create("n9") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+        }
+        // P10-NOTIFY: test-only; shell is plain+auto-allowlisted — N5–N9 / N11–N12
+        create("bench") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
         }
     }
 

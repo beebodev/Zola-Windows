@@ -78,6 +78,7 @@ public static class SystemsCopy
         { (Row.Companion, Reconnecting), Level.Attention },
         { (Row.Companion, Offline), Level.Down },
         { (Row.Companion, NoTailnet), Level.Attention },
+        { (Row.Companion, Degraded), Level.Attention },
     };
 
     public static Level LevelFor(Row row, string state)
@@ -210,7 +211,7 @@ public static class SystemsCopy
 
         string? state = facts.PhoneLink switch
         {
-            "connected" => null,
+            "connected" => NoticeDegraded(facts) ? Degraded : null,
             "not_responding" => NotResponding,
             "reconnecting" => Reconnecting,
             "offline" => Offline,
@@ -237,6 +238,12 @@ public static class SystemsCopy
         }
 
         return null;
+    }
+
+    private static bool NoticeDegraded(SystemsFacts facts)
+    {
+        // P10-NOTIFY: the word shows only on a live link with an allowlist and a missing listener
+        return facts.AllowlistCount > 0 && (facts.ListenerPermission == 0 || facts.ListenerBound == 0);
     }
 
     private static View ViewOf(Row row, string label, string? state, bool visible)
@@ -271,4 +278,7 @@ public readonly record struct SystemsFacts(
     bool TtsRestoreActive,
     WatcherProcessLatch PhoneLatch = WatcherProcessLatch.Running,
     string? PhoneLink = null,
-    bool PhoneKeepsFailing = false);
+    bool PhoneKeepsFailing = false,
+    int AllowlistCount = 0,
+    int ListenerPermission = 1,
+    int ListenerBound = 1);
