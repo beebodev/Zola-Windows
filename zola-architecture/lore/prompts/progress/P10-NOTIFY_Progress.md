@@ -829,4 +829,8 @@ Progress doc completed in this section.
 
 **Merge SHA (7f):** `89f72c17b0b3bb662fe7563bb9b0273ed500ecec`
 
+**Final `main` / `origin/main` (7g):** `fee8ac178488fc7f414e8e26d007c81834e8155d`
+
+7h: worktree removed; `p10-notify` deleted locally and on origin. 7i: scratch folder `zola-spikes\p10-notify` deleted. Companion remains installed (debug versionCode 9); Brian relaunches the client from `main` for the live link. Scratch firewall rule left for Brian to remove.
+
 
