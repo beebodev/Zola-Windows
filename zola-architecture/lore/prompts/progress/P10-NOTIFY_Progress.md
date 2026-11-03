@@ -23,7 +23,7 @@
 | 4 | Implement and bench | COMPLETE — B1–B8 on scratch |
 | 5 | Review checkpoint | COMPLETE — F1–F9; Brian B1/B9/B10/B10b/B7/B8; bench build approved and landed |
 | 6 | Smoke | COMPLETE — N1–N12, C3, C6, Part B; Brian: smoke test passed |
-| 7 | Closeout | IN PROGRESS — implementation SHA recorded below |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -826,5 +826,7 @@ C3 and C6 re-ran on v4 during Phase 6 and passed (see cells).
 Progress doc completed in this section.
 
 **Implementation SHA (7c):** `a85134fad27013db24db1680af588dbbb2374036`
+
+**Merge SHA (7f):** `89f72c17b0b3bb662fe7563bb9b0273ed500ecec`
 
 
