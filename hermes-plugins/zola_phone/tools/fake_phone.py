@@ -124,6 +124,7 @@ class FakeSession:
             posted_at_ms=int(time.time() * 1000),
             text="ZP10 notice",
             is_group=0,
+            truncated=0,
         )
         return self.signed(payload)
 
@@ -201,12 +202,28 @@ async def _run(args: argparse.Namespace) -> None:
                         continue
                     if session.read_mode == "late":
                         await asyncio.sleep(int(session.protocol["timing_ms"]["read_timeout"]) / 1000 + 1)
-                    result = session.envelope(
-                        "history.read.result" if payload.get("type") == "history.read.request" else "code.read.result",
-                        request_id=payload.get("request_id"),
-                        status="ok",
-                        value="ZP10-CODE",
-                    )
+                    kind = payload.get("type")
+                    if kind == "notifications.read.request":
+                        result = session.envelope(
+                            "notifications.read.result",
+                            request_id=payload.get("request_id"),
+                            status="ok",
+                            capped=0,
+                            items=[],
+                        )
+                    elif kind == "history.read.request":
+                        result = session.envelope(
+                            "history.read.result",
+                            request_id=payload.get("request_id"),
+                            status="ok",
+                        )
+                    else:
+                        result = session.envelope(
+                            "code.read.result",
+                            request_id=payload.get("request_id"),
+                            status="ok",
+                            value="ZP10-CODE",
+                        )
                     await ws.send(session.signed(result))
 
         task = asyncio.create_task(listen())

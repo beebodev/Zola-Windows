@@ -285,16 +285,25 @@ class EngineFlowTest {
         assertEquals(3, group.getInt("participant_count"))
     }
 
-    @Test
+    @Test(timeout = 60_000)
     fun stateFileOmitsBodiesAndStaysBounded() {
+        // P10-NOTIFY: F4 refreshes access on every device.health (one per ack). A steady grant must not
+        // rewrite the notification queue, and ack scanning must stay O(n) or this times out.
         val rig = Rig()
         rig.pair()
+        var accessReads = 0
+        rig.engine.accessGranted = {
+            accessReads += 1
+            true
+        }
+        rig.engine.refreshAccess()
+        val writesAfterPrime = rig.store.queueWrites
         rig.provider.add(sms(11, "SENTINEL-BODY", sender = "+15550009999"))
         rig.engine.onProviderChanged()
         val stored = rig.store.text.orEmpty()
         assertFalse(stored.contains("SENTINEL-BODY"))
         assertFalse(stored.contains("15550009999"))
-        repeat(500) { index ->
+        repeat(120) { index ->
             rig.provider.add(sms(1000L + index, "BODY-$index", sender = "+15550001111"))
             rig.engine.onProviderChanged()
             ackNewEvents(rig)
@@ -303,6 +312,8 @@ class EngineFlowTest {
         assertFalse(after.contains("BODY-"))
         assertFalse(after.contains("15550001111"))
         assertTrue(after.length < 40_000)
+        assertTrue(accessReads > 1)
+        assertEquals("F4 steady grant must not rewrite the notice queue on each health", writesAfterPrime, rig.store.queueWrites)
     }
 
     @Test
@@ -760,11 +771,23 @@ class EngineFlowTest {
     }
 
     private fun ackNewEvents(rig: Rig, rounds: Int = 8): Set<String> {
+        // Scan each sent frame once. Re-parsing the whole transcript each round is O(n²) and
+        // with F4's access refresh on every device.health (one per ack) the 500-sms bound test never finishes.
         val seen = linkedSetOf<String>()
+        var from = 0
         repeat(rounds) {
-            val fresh = rig.signedFrames()
-                .map { it.getJSONObject("payload") }
-                .filter { it.optString("type") == "messages.event" && it.optString("provider_id") !in seen }
+            val fresh = mutableListOf<JSONObject>()
+            val sent = rig.link.sent
+            while (from < sent.size) {
+                val frame = JSONObject(sent[from].toString(Charsets.UTF_8).trim())
+                from += 1
+                if (frame.optString("kind") != "signed") continue
+                val payload = frame.optJSONObject("payload") ?: continue
+                if (payload.optString("type") != "messages.event") continue
+                val id = payload.optString("provider_id")
+                if (id.isEmpty() || id in seen) continue
+                fresh.add(payload)
+            }
             if (fresh.isEmpty()) return seen
             fresh.forEach { payload ->
                 val id = payload.getString("provider_id")
@@ -849,7 +872,7 @@ class EngineFlowTest {
     )
 }
 
-private class Rig(start: Long = 1_700_000_000_000L) {
+internal class Rig(start: Long = 1_700_000_000_000L) {
     val clock = MovingClock(start)
     val provider = FakeProvider()
     val link = FakeLink()
@@ -892,6 +915,7 @@ private class Rig(start: Long = 1_700_000_000_000L) {
     fun restart(): Rig {
         val next = Rig(clock.now)
         next.store.text = store.text
+        next.store.queue = store.queue
         next.provider.rows.addAll(provider.rows)
         next.provider.maxSms = provider.maxSms
         next.provider.maxMms = provider.maxMms
@@ -918,7 +942,7 @@ private class Rig(start: Long = 1_700_000_000_000L) {
             "device_id" to engine.deviceId(),
             "seq" to pcSeq,
             "sent_at_ms" to clock.now,
-            "contract_version" to 3,
+            "contract_version" to 4,
         )
         extra.forEach { payload[it.key] = it.value }
         val mac = Intake.mac(code, payload)
@@ -932,7 +956,7 @@ private class Rig(start: Long = 1_700_000_000_000L) {
             "device_id" to engine.deviceId(),
             "seq" to (seq ?: pcSeq),
             "sent_at_ms" to clock.now,
-            "contract_version" to 3,
+            "contract_version" to 4,
         )
         extra.forEach { payload[it.key] = it.value }
         val signature = sign(pc.private, payload)
@@ -958,14 +982,14 @@ private class Rig(start: Long = 1_700_000_000_000L) {
     }
 }
 
-private class MovingClock(var now: Long) {
+internal class MovingClock(var now: Long) {
     fun now(): Long {
         now += 1
         return now
     }
 }
 
-private class FakeProvider : TextProvider {
+internal class FakeProvider : TextProvider {
     val rows = mutableListOf<TextRecord>()
     var maxSms = 10L
     var maxMms = 10L
@@ -1027,7 +1051,7 @@ private class FakeProvider : TextProvider {
     }
 }
 
-private class FakeLink : LinkPort {
+internal class FakeLink : LinkPort {
     override var listener: LinkListener = object : LinkListener {
         override fun onOpen() {}
         override fun onMessage(text: String) {}
@@ -1060,7 +1084,7 @@ private class FakeLink : LinkPort {
     override fun isOpen(): Boolean = open
 }
 
-private class FakeAlarms : AlarmPort {
+internal class FakeAlarms : AlarmPort {
     val armed = mutableListOf<Long>()
     var asked = false
     override fun schedule(atMs: Long) {
@@ -1072,7 +1096,7 @@ private class FakeAlarms : AlarmPort {
     }
 }
 
-private class FakeWakes : WakePort {
+internal class FakeWakes : WakePort {
     val held = mutableListOf<String>()
     override fun acquire(tag: String, timeoutMs: Long) {
         held.add(tag)
@@ -1083,7 +1107,7 @@ private class FakeWakes : WakePort {
     }
 }
 
-private class TestSigner : SignerPort {
+internal class TestSigner : SignerPort {
     var pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
     var fail = false
     override fun sign(payload: Map<String, Any?>): String? {
@@ -1100,10 +1124,17 @@ private class TestSigner : SignerPort {
     }
 }
 
-private class MemoryStore : EngineStore {
+internal class MemoryStore : EngineStore {
     var text: String? = null
+    var queue: String? = null
+    var queueWrites = 0
     override fun load(): String? = text
     override fun save(body: String) {
         text = body
+    }
+    override fun readQueue(): String? = queue
+    override fun writeQueue(body: String) {
+        queueWrites += 1
+        queue = body
     }
 }

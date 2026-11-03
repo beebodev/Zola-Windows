@@ -62,6 +62,6 @@ class PairingSession {
         "device_id" to deviceId,
         "seq" to seq,
         "sent_at_ms" to sentAtMs,
-        "contract_version" to 3,
+        "contract_version" to 4,
     )
 }

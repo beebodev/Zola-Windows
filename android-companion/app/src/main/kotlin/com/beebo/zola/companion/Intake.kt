@@ -23,7 +23,7 @@ data class VerifyContext(
     val textLimit: Int = 16000,
     val notificationLimit: Int = 4000,
     val staleWindow: Long = 120000,
-    val supportedVersions: Set<Int> = setOf(3),
+    val supportedVersions: Set<Int> = setOf(4),
     val magic: String = "ZPC1",
     val frameKinds: Set<String> = setOf("signed", "pairing"),
     val separator: String = "\u001f",

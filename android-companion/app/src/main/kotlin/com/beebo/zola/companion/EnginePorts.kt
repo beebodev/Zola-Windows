@@ -67,6 +67,8 @@ interface EngineStore {
     fun save(body: String)
     fun readInstall(): String? = null
     fun writeInstall(body: String) {}
+    fun readQueue(): String? = null
+    fun writeQueue(body: String) {}
 }
 
 object QueryPlan {

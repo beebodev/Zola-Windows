@@ -1057,6 +1057,44 @@ class IntakeTests(unittest.TestCase):
         log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
         self.assertNotIn(value, log)
 
+    def test_production_entry_does_not_read_scratch_pipe_or_mutex_env(self) -> None:
+        # P10-NOTIFY: production stays on contract pipe_name and Local\ZolaPhone — G-SCOPE (e)
+        main = (PLUGINS / "zola_phone" / "__main__.py").read_text(encoding="utf-8")
+        self.assertNotIn("ZOLA_PHONE_PIPE", main)
+        self.assertNotIn("ZOLA_PHONE_MUTEX", main)
+        root = PLUGINS.parent
+        phone_process = (root / "windows-client" / "Zola.Client" / "PhoneProcess.cs").read_text(
+            encoding="utf-8"
+        )
+        app = (root / "windows-client" / "Zola.Client" / "App.xaml.cs").read_text(encoding="utf-8")
+        self.assertNotIn("ZOLA_PHONE_PIPE", phone_process)
+        self.assertNotIn("ZOLA_PHONE_MUTEX", phone_process)
+        self.assertNotIn("ZOLA_PHONE_PIPE", app)
+        self.assertNotIn("ZOLA_PHONE_MUTEX", app)
+
+    def test_debug_and_release_never_treat_shell_as_plain(self) -> None:
+        # P10-NOTIFY: com.android.shell is plain only in bench/n9 source sets
+        root = PLUGINS.parent / "android-companion" / "app" / "src"
+        for variant in ("debug", "release"):
+            plain = (root / variant / "kotlin" / "com" / "beebo" / "zola" / "companion" / "NoticePlain.kt").read_text(
+                encoding="utf-8"
+            )
+            auto = (
+                root / variant / "kotlin" / "com" / "beebo" / "zola" / "companion" / "NoticeAutoAllowlist.kt"
+            ).read_text(encoding="utf-8")
+            self.assertNotIn("com.android.shell", plain)
+            self.assertIn("emptySet()", auto)
+            self.assertNotIn("setOf(SHELL)", auto)
+        for variant in ("bench", "n9"):
+            plain = (root / variant / "kotlin" / "com" / "beebo" / "zola" / "companion" / "NoticePlain.kt").read_text(
+                encoding="utf-8"
+            )
+            auto = (
+                root / variant / "kotlin" / "com" / "beebo" / "zola" / "companion" / "NoticeAutoAllowlist.kt"
+            ).read_text(encoding="utf-8")
+            self.assertIn("NoticeAutoAllowlist.SHELL", plain)
+            self.assertIn("setOf(SHELL)", auto)
+
     def test_event_required_fields_are_in_the_contract(self) -> None:
         required = self.engine.protocol["event_required"]
         fields = self.engine.protocol["message_types"]["messages.event"]["fields"]
@@ -1068,6 +1106,149 @@ class IntakeTests(unittest.TestCase):
             ["request_id", "status", "value", "value_kind", "reason"],
             self.engine.protocol["message_types"]["code.read.result"]["fields"],
         )
+
+    def test_v4_health_counts_and_notification_read_is_capped_not_stored(self) -> None:
+        self._pair()
+        before = self.engine.status()
+        self.assertEqual(before["listener_permission"], 1)
+        self.assertEqual(before["listener_bound"], 1)
+        self.assertEqual(before["allowlist_count"], 0)
+        health = self._payload(
+            "device.health",
+            service_state="connected",
+            pending_incomplete=0,
+            exhausted=0,
+            unacked=0,
+            rejected=0,
+            restored=0,
+            suspected_restored=0,
+            deleted=0,
+            provider_reset=0,
+            listener_permission=0,
+            listener_bound=0,
+            allowlist_packages=["com.secret.pkg"],
+            notification_queue_depth=3,
+            notification_queue_drops=1,
+            notification_age_drops=2,
+            notification_filtered=4,
+            allowlist_removed=5,
+            notification_rejected=6,
+            listener_gap_count=7,
+        )
+        self.assertIsNone(self.engine.receive("c1", self._signed(health)))
+        status = self.engine.status()
+        self.assertEqual(status["listener_permission"], 0)
+        self.assertEqual(status["listener_bound"], 0)
+        self.assertEqual(status["allowlist_count"], 1)
+        self.assertEqual(status["allowlist_packages"], ["com.secret.pkg"])
+        self.assertEqual(status["notification_queue_depth"], 3)
+        self.assertEqual(status["notification_queue_drops"], 1)
+        self.assertEqual(status["listener_gap_count"], 7)
+        log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
+        self.assertIn("allowlist_count=1", log)
+        self.assertIn("listener_permission=0", log)
+        self.assertNotIn("com.secret.pkg", log)
+        self.engine.socket_open = True
+        self.engine.current = "c1"
+        self.engine.sender = lambda _frame: None
+        sentinel = "ZP10-READ-SENTINEL"
+        items = [{"text": sentinel + str(index), "package": "com.facebook.orca"} for index in range(60)]
+        rows = self.engine.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        payload = self._payload("notifications.read.result", request_id="ncap-1", status="ok", items=items, capped=0)
+        self.engine.pending_events["ncap-1"] = threading.Event()
+        self.engine.receive("c1", self._signed(payload))
+        result = self.engine.pending_results["ncap-1"]
+        self.assertEqual(len(result["items"]), 50)
+        self.assertTrue(result["capped"])
+        self.assertEqual(self.engine.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], rows)
+        log = (self.home / "logs" / "zola_phone.log").read_text(encoding="utf-8")
+        self.assertNotIn(sentinel, log)
+
+    def test_v4_read_notifications_forwards_package_filter(self) -> None:
+        # P10-NOTIFY N12: package must reach notifications.read.request
+        self._pair()
+        self.engine.socket_open = True
+        self.engine.current = "c1"
+        self.engine.protocol["timing_ms"]["read_timeout"] = 2000
+        sent = []
+
+        def sender(frame: bytes) -> None:
+            payload = json.loads(frame.decode("utf-8"))["payload"]
+            sent.append(payload)
+            phone_n = int(self.engine.peer["phone_seq"]) + 1
+            result = {
+                "type": "notifications.read.result",
+                "device_id": DEVICE,
+                "seq": phone_n,
+                "sent_at_ms": NOW,
+                "contract_version": int(self.engine.protocol["contract_version"]),
+                "request_id": payload["request_id"],
+                "status": "ok",
+                "items": [],
+                "capped": 0,
+            }
+            self.engine.receive("c1", self._signed(result))
+
+        self.engine.sender = sender
+        out = self.engine.local_request(
+            {
+                "type": "read_notifications",
+                "secret": SECRET,
+                "request_id": "pkg-1",
+                "package": "com.instagram.android",
+                "max_items": 10,
+            }
+        )
+        self.assertTrue(out.get("ok"))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["type"], "notifications.read.request")
+        self.assertEqual(sent[0]["package"], "com.instagram.android")
+        self.assertEqual(sent[0]["max_items"], 10)
+
+    def test_v4_notification_does_not_match_a_compiled_watch(self) -> None:
+        from zola_workspace import loops
+        from zola_workspace import proactive_store
+
+        compiled = loops.compile_predicate(
+            "reply",
+            {
+                "labels": ["INBOX"],
+                "address_hashes": ["abc"],
+                "thread_id": "thread-1",
+                "message_id": "mail-1",
+            },
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+        self.assertTrue(compiled["ok"])
+        self._pair()
+        note = self._payload(
+            "notifications.event",
+            package="com.facebook.orca",
+            notification_key="n-watch",
+            newest_message_timestamp="1000",
+            revision=1,
+            completeness="complete",
+            posted_at_ms=NOW,
+            text="hello",
+            is_group=0,
+            sender_display_name="Ada",
+        )
+        ack = json.loads(self.engine.receive("c1", self._signed(note)).decode("utf-8"))["payload"]
+        self.assertEqual(ack["result"], "stored")
+        row = self.engine.conn.execute(
+            "SELECT id, source, message_id, sender_address_hash, detected_at, loop_matched FROM items WHERE source = 'notif'"
+        ).fetchone()
+        view = {
+            "source": row["source"],
+            "message_id": row["message_id"],
+            "sender_address_hash": row["sender_address_hash"],
+            "detected_at": row["detected_at"],
+        }
+        self.assertFalse(loops.evaluate(compiled["predicate"], view))
+        self.assertEqual(row["loop_matched"], 0)
+        claimed = proactive_store.claim_speech(self.engine.conn, row["id"])
+        self.assertFalse(claimed.get("ok"))
+        self.assertEqual(claimed.get("refused_reason"), "phone_deferred")
 
 
 if __name__ == "__main__":

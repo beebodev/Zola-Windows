@@ -12,6 +12,12 @@ class BootReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         if (!context.isUserUnlockedCompat()) return
         context.startForegroundService(Intent(context, CompanionService::class.java))
+        try {
+            android.service.notification.NotificationListenerService.requestRebind(
+                android.content.ComponentName(context, NotificationListener::class.java),
+            )
+        } catch (_: RuntimeException) {
+        }
     }
 }
 
