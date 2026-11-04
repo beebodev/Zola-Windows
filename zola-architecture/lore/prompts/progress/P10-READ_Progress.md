@@ -1608,3 +1608,8 @@ Repo: no `proactive.db` / `pc_key.bin` / `peer_state.json` tracked; smoke sentin
 6. Text unprompted speech constant — Track 6 removes when adding text phrasings.  
 7. Mid-smoke R3 description fix (deviation above).  
 8. Scratch `_suite_out/` and spike backups deleted at 7i.
+
+### 7c — Implementation commit
+
+**Implementation SHA:** `d9f14b884f2632f0251a08c0d5990d94b5acace8`  
+Message: `feat(P10-READ): contact index, phone items in conversation, phone reads and the R1 code path — P10-D03/D04/D10/D11`
