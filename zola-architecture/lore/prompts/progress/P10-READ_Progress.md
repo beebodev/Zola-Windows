@@ -23,7 +23,7 @@
 | 4 | Implement and bench | COMPLETE (Part 4B + Phase 5 F7–F9 rebench) |
 | 5 | Review checkpoint | COMPLETE (H1/H2 done) |
 | 6 | Smoke | COMPLETE (`smoke test passed` 2026-11-04) |
-| 7 | Closeout | IN PROGRESS |
+| 7 | Closeout | COMPLETE |
 
 ## Guardrails summary
 
@@ -1613,3 +1613,15 @@ Repo: no `proactive.db` / `pc_key.bin` / `peer_state.json` tracked; smoke sentin
 
 **Implementation SHA:** `d9f14b884f2632f0251a08c0d5990d94b5acace8`  
 Message: `feat(P10-READ): contact index, phone items in conversation, phone reads and the R1 code path — P10-D03/D04/D10/D11`
+
+### 7d–7e
+
+Docs commit recording 7c SHA: `b68e0f000622e71983155aa2a1f42fada523091f`. Branch `p10-read` pushed to origin.
+
+### 7f — Merge
+
+**Merge SHA (`main`):** `d5fe1463495aa155277b17357cbf6ed50d8a52da` (`git merge --no-ff p10-read`). Pushed to `origin/main`.
+
+### 7g–7i
+
+Recorded below after docs commit / worktree removal / scratch delete.
