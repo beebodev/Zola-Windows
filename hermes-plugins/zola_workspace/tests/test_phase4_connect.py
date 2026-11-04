@@ -2109,6 +2109,7 @@ class SourceScanTests(SocketGuardMixin, unittest.TestCase):
             "ROUTE_DRIVE_GET",
             "ROUTE_DRIVE_EXPORT",
             "ROUTE_CONTACTS_SEARCH",
+            "ROUTE_CONTACTS_CONNECTIONS",
             "ROUTE_GMAIL_DRAFTS_CREATE",
             "ROUTE_GMAIL_DRAFTS_UPDATE",
             "ROUTE_GMAIL_DRAFTS_GET",

@@ -182,7 +182,8 @@ class MigrationTests(unittest.TestCase):
         conn = proactive_store.connect(path, retry=False)
         self.addCleanup(conn.close)
         version = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "6")
+        # P10-READ: SCHEMA_VERSION is 7 now; the v6 rebuild still ran on the way
+        self.assertEqual(version, "7")
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], before_items)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM loops").fetchone()[0], before_loops)
         self.assertEqual(conn.execute("SELECT value FROM meta WHERE key = 'ranker_state'").fetchone()[0], "idle")
@@ -202,7 +203,7 @@ class MigrationTests(unittest.TestCase):
         conn.close()
         again = proactive_store.connect(path, retry=False)
         self.addCleanup(again.close)
-        self.assertEqual(again.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "6")
+        self.assertEqual(again.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "7")
         second = [tuple(item) for item in again.execute("SELECT * FROM items ORDER BY id")]
         self.assertEqual(second, first)
         self.assertEqual(again.execute("PRAGMA foreign_key_check").fetchall(), [])
@@ -390,7 +391,13 @@ class RankAndHoldTests(_StoreCase):
         self.assertIn("ranking_source = 'model'", source)
         self.assertIn('row["ranking_source"] != "model"', source)
 
-    def test_phone_row_stays_out_of_surface_and_speech(self) -> None:
+    def test_phone_row_reaches_surface_readers_but_not_unprompted_speech(self) -> None:
+        # P10-READ: RD-G7 (b). Conversation readers no longer hold phone rows; speech claims still do.
+        self.conn.execute(
+            "UPDATE meta SET value = ? WHERE key = ?",
+            (proactive_store._iso(T0 - timedelta(days=1)), proactive_store.META_PHONE_SURFACE_CUTOFF),
+        )
+        self.conn.commit()
         phone = self._ingest(body=BODY)
         matched = proactive_store.set_loop_matched(self.conn, phone["id"], now=T0)
         self.assertTrue(matched["ok"], matched)
@@ -401,7 +408,7 @@ class RankAndHoldTests(_StoreCase):
         listed = proactive_store.list_surface_rows(self.conn)
         ids = {row["id"] for row in listed["items"]}
         self.assertIn(gmail["id"], ids)
-        self.assertNotIn(phone["id"], ids)
+        self.assertIn(phone["id"], ids)
         speech = proactive_store.claim_speech(self.conn, phone["id"], now=T0)
         self.assertEqual(speech.get("refused_reason"), "phone_deferred")
         nxt = proactive_store.claim_next_speech(self.conn, now=T0)
@@ -409,7 +416,7 @@ class RankAndHoldTests(_StoreCase):
         selected = proactive_store.provisional_select(
             self.conn, phone["id"], "attempt", "turn", now=T0, reinject_cap=2, quiet_seconds=0
         )
-        self.assertFalse(selected["ok"])
+        self.assertTrue(selected["ok"], selected)
         stamp = proactive_store._iso(T0)
         self.conn.execute(
             "INSERT INTO deliveries (id, item_id, attempt_id, outcome, at) VALUES ('d-phone', ?, 'a-phone', 'delivered', ?)",
@@ -420,8 +427,9 @@ class RankAndHoldTests(_StoreCase):
             (gmail["id"], proactive_store._iso(_at(seconds=-1))),
         )
         self.conn.commit()
+        # P10-READ: post_speech_candidate has no phone hold; a delivered row is a delivered row
         post = proactive_store.post_speech_candidate(self.conn, now=T0)
-        self.assertEqual(post["item"]["id"], gmail["id"])
+        self.assertEqual(post["item"]["id"], phone["id"])
 
 
 class WatchRecoveryTests(_StoreCase):

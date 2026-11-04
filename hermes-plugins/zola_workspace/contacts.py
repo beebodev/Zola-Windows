@@ -67,8 +67,13 @@ def shape_person(person: Dict[str, Any]) -> Dict[str, Any]:
             emails.append(str(item["value"]))
     phones = []
     for item in person.get("phoneNumbers") or []:
-        if isinstance(item, dict) and item.get("value"):
-            phones.append(str(item["value"]))
+        if isinstance(item, dict):
+            # P10-READ: Google's canonicalForm (E.164) wins over the typed value
+            canonical = item.get("canonicalForm")
+            if isinstance(canonical, str) and canonical.strip():
+                phones.append(canonical.strip())
+            elif item.get("value"):
+                phones.append(str(item["value"]))
     return {"display_name": display, "emails": emails, "phones": phones}
 
 

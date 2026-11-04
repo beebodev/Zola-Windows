@@ -27,6 +27,9 @@ LOG_EVENT_RANKER = "zola_workspace.ranker"
 LOG_EVENT_SURFACE = "zola_workspace.surface"
 # P9-SPEAK: attempt hash, outcome, reason, phrase index, name source. Never the name — P9-D11
 LOG_EVENT_SPEAK = "proactive.deliver"
+# P10-READ: state, counts, reasons, milliseconds. Never a name, number, message text, or code — G-PRIVACY
+LOG_EVENT_PHONE_READ = "zola_workspace.phone_read"
+LOG_EVENT_PHONE_CODE = "zola_workspace.phone_code"
 
 _logger = logging.getLogger("zola_workspace")
 _file_handler_ready = False

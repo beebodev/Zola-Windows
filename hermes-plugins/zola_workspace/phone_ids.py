@@ -81,6 +81,44 @@ def normalize(raw: str) -> tuple:
     return KIND_UNPARSED, spaced.casefold()
 
 
+# P10-READ: RCS sender forms. Only a plain tel:+E.164 or sip:+E.164@host is read.
+# Anything else, including a business-agent sip URI, is unparsed with no canonical.
+_TEL_BODY = re.compile(r"^\+[0-9][0-9().\-]*$")
+_SIP_USER = re.compile(r"^\+[0-9]+$")
+_SIP_HOST = re.compile(r"^[0-9A-Za-z]([0-9A-Za-z.\-]*[0-9A-Za-z])?(:[0-9]{1,5})?$")
+
+
+def _rcs_e164(number: str) -> str:
+    """Canonical E.164 for a leading-plus number, else empty."""
+    kind, canonical = normalize(number)
+    return canonical if kind == KIND_E164 and number.startswith("+") else ""
+
+
+def extract_rcs_sender(raw: str) -> tuple:
+    """Return (kind, canonical) for an RCS sender. normalize() is not touched."""
+    text = str(raw or "").strip()
+    scheme, sep, rest = text.partition(":")
+    scheme = scheme.casefold()
+    if not sep or not rest:
+        return KIND_UNPARSED, ""
+    if scheme == "tel":
+        # P10-READ: no tel parameters, no local numbers; a plus is required
+        if _TEL_BODY.fullmatch(rest):
+            canonical = _rcs_e164(rest)
+            if canonical:
+                return KIND_E164, canonical
+        return KIND_UNPARSED, ""
+    if scheme in ("sip", "sips"):
+        user, at, host = rest.partition("@")
+        # user part must be only +digits; ;user=phone style params live on the host side
+        host = host.partition(";")[0]
+        if at and _SIP_USER.fullmatch(user) and _SIP_HOST.fullmatch(host):
+            canonical = _rcs_e164(user)
+            if canonical:
+                return KIND_E164, canonical
+    return KIND_UNPARSED, ""
+
+
 def matchable(kind: str) -> bool:
     return kind in MATCHABLE_KINDS
 

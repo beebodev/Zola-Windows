@@ -12,6 +12,7 @@ import secrets
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -39,6 +40,23 @@ FORBIDDEN_MODULES = (
 )
 
 _log = logging.getLogger("zola_phone")
+
+# P10-READ: handle life is 60 s; the tool waits 45 s and the client gives up sooner than that
+CODE_HANDLE_TTL_MS = 60_000
+CODE_ARM_LIMIT = 8
+
+
+@dataclass
+class _Arm:
+    """One armed code read. Memory only. It holds ids, never a value."""
+
+    session_id: str
+    turn_id: str
+    item_id: str
+    provider_id: str
+    kind: str
+    expires_ms: int
+    state: str = "armed"  # armed | redeeming | used | disarmed
 
 
 def workspace_dir() -> Path:
@@ -142,6 +160,8 @@ class Engine:
         self.notice_removed = 0
         self.notice_rejected = 0
         self.notice_gaps = 0
+        # P10-READ: armed code reads live in memory only and die with this process — mechanism B
+        self._arms: Dict[str, "_Arm"] = {}
         self._recover()
 
     def close(self) -> None:
@@ -229,6 +249,13 @@ class Engine:
                 return self.status()
         if kind == "pairing.start":
             return self._start_pairing()
+        # P10-READ: the code handle lifecycle never touches the store and never logs a value
+        if kind == "code.arm":
+            return self._code_arm(body)
+        if kind == "code.redeem":
+            return self._code_redeem(body)
+        if kind == "code.disarm":
+            return self._code_disarm(body)
         with self._lock:
             if not self.socket_open or self.sender is None:
                 return {"ok": False, "status": "phone_unavailable", "reason": "no_connection"}
@@ -248,6 +275,130 @@ class Engine:
             code = self.code
         _note("zola_phone.pairing", result="started")
         return {"ok": True, "code": code}
+
+    # ── P10-READ: code arm / redeem / disarm (mechanism B) ───────────────────────────────────────
+    #
+    # The serve-side tool arms one read and gets an opaque handle. Only the Windows client, which
+    # holds the launch secret, redeems it, and only the client ever sees the value. Nothing here is
+    # stored, and no log line carries the handle's text or the value.
+
+    def _prune_arms(self, now_ms: int) -> None:
+        for handle in [h for h, arm in self._arms.items() if now_ms >= arm.expires_ms and arm.state != "redeeming"]:
+            self._arms.pop(handle, None)
+
+    def _code_arm(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        fields: Dict[str, str] = {}
+        for name in ("session_id", "turn_id", "item_id", "provider_id", "kind"):
+            value = body.get(name)
+            if not isinstance(value, str) or not value:
+                _note("zola_phone.code", step="arm", result="refused", reason="bad_request")
+                return {"ok": False, "reason": "bad_request"}
+            fields[name] = value
+        if fields["kind"] not in ("sms", "mms"):
+            _note("zola_phone.code", step="arm", result="refused", reason="bad_request")
+            return {"ok": False, "reason": "bad_request"}
+        with self._lock:
+            if not self.peer.get("device_id"):
+                return {"ok": False, "status": "phone_unavailable", "reason": "not_paired"}
+            if not self.socket_open or self.sender is None:
+                return {"ok": False, "status": "phone_unavailable", "reason": "no_connection"}
+            now = self.clock()
+            self._prune_arms(now)
+            # one live arm per session: a new ask replaces the old one
+            for handle in [h for h, arm in self._arms.items() if arm.session_id == fields["session_id"]]:
+                self._drop_arm_locked(handle)
+            while len(self._arms) >= CODE_ARM_LIMIT:
+                oldest = min(self._arms, key=lambda h: self._arms[h].expires_ms)
+                self._drop_arm_locked(oldest)
+            handle = secrets.token_urlsafe(24)
+            self._arms[handle] = _Arm(
+                session_id=fields["session_id"],
+                turn_id=fields["turn_id"],
+                item_id=fields["item_id"],
+                provider_id=fields["provider_id"],
+                kind=fields["kind"],
+                expires_ms=now + CODE_HANDLE_TTL_MS,
+            )
+        _note("zola_phone.code", step="arm", result="ok")
+        return {"ok": True, "handle": handle, "ttl_ms": CODE_HANDLE_TTL_MS}
+
+    def _drop_arm_locked(self, handle: str) -> None:
+        arm = self._arms.get(handle)
+        if arm is None:
+            return
+        if arm.state == "redeeming":
+            # a relay is in flight; its value is discarded when it lands
+            arm.state = "disarmed"
+        else:
+            self._arms.pop(handle, None)
+
+    def _code_redeem(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        handle = body.get("handle")
+        session_id = body.get("session_id")
+        if not isinstance(handle, str) or not handle or not isinstance(session_id, str) or not session_id:
+            _note("zola_phone.code", step="redeem", result="refused", reason="bad_request")
+            return {"ok": False, "reason": "bad_request"}
+        with self._lock:
+            now = self.clock()
+            arm = self._arms.get(handle)
+            if arm is None:
+                refusal = "unknown_handle"
+            elif arm.state == "disarmed":
+                refusal = "cancelled"
+            elif arm.state != "armed":
+                refusal = "replay"
+            elif now >= arm.expires_ms:
+                self._arms.pop(handle, None)
+                refusal = "expired"
+            elif session_id != arm.session_id:
+                refusal = "wrong_session"
+            elif "turn_id" in body and body.get("turn_id") != arm.turn_id:
+                refusal = "wrong_turn"
+            elif "item_id" in body and body.get("item_id") != arm.item_id:
+                refusal = "wrong_item"
+            else:
+                refusal = ""
+            if refusal:
+                _note("zola_phone.code", step="redeem", result="refused", reason=refusal)
+                return {"ok": False, "reason": refusal}
+            assert arm is not None
+            # single use: the handle is spent now, whatever the phone answers
+            arm.state = "redeeming"
+            sender = self.sender
+            if not self.socket_open or sender is None:
+                arm.state = "used"
+                return {"ok": False, "status": "phone_unavailable", "reason": "no_connection"}
+            provider_id, kind = arm.provider_id, arm.kind
+        result = self._relay("read_code", {"provider_id": provider_id, "kind": kind}, sender)
+        with self._lock:
+            if arm.state == "disarmed":
+                self._arms.pop(handle, None)
+                _note("zola_phone.code", step="redeem", result="discarded", reason="disarmed")
+                return {"ok": False, "reason": "cancelled"}
+            arm.state = "used"
+        value = result.get("value")
+        if not result.get("ok") or result.get("status") != "ok" or not isinstance(value, str) or not value:
+            reason = str(result.get("reason") or "not_identifiable")
+            _note("zola_phone.code", step="redeem", result="refused", reason=reason)
+            return {"ok": False, "status": str(result.get("status") or "refused"), "reason": reason}
+        _note("zola_phone.code", step="redeem", result="ok")
+        return {"ok": True, "value": value, "value_kind": str(result.get("value_kind") or "")}
+
+    def _code_disarm(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            if body.get("all") is True:
+                targets = list(self._arms)
+            elif isinstance(body.get("handle"), str) and body.get("handle"):
+                targets = [str(body["handle"])] if str(body["handle"]) in self._arms else []
+            elif isinstance(body.get("session_id"), str) and body.get("session_id"):
+                targets = [h for h, arm in self._arms.items() if arm.session_id == body["session_id"]]
+            else:
+                _note("zola_phone.code", step="disarm", result="refused", reason="bad_request")
+                return {"ok": False, "reason": "bad_request"}
+            for handle in targets:
+                self._drop_arm_locked(handle)
+        _note("zola_phone.code", step="disarm", result="ok", count=len(targets))
+        return {"ok": True, "disarmed": len(targets)}
 
     def _relay(self, kind: str, body: Dict[str, Any], sender: Callable[[bytes], None]) -> Dict[str, Any]:
         request_id = str(body.get("request_id") or secrets.token_hex(8))

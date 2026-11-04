@@ -26,6 +26,8 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
     <!-- P1-CLIENT: command-line query so an already-running zola serve is attached, not killed — P1-D01 -->
     <PackageReference Include="System.Management" Version="9.0.4" />
+    <!-- P10-READ: local voice for the code reader: SpeechSynthesizer renders to memory, no file and no network -->
+    <PackageReference Include="System.Speech" Version="9.0.4" />
   </ItemGroup>
 
   <ItemGroup>

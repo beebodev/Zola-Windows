@@ -373,6 +373,9 @@ sealed class VoiceController
 
     public SpeechEchoGuard? ProactiveEcho { get; set; }
 
+    // P10-READ: up while a verification code is being read aloud, so the mic does not hear it — same rule as ProactiveEcho
+    public SpeechEchoGuard? CodeEcho { get; set; }
+
     public event Action<string>? SpeechStamp;
 
     public void RememberProactivePhrase(string phrase)
@@ -2004,6 +2007,13 @@ sealed class VoiceController
         if (ProactiveEcho is not null && !ProactiveEcho.AllowsCapture(kind == CaptureKind.Manual, DateTimeOffset.UtcNow))
         {
             WriteTimeline("proactive.deliver attempt=- outcome=deny reason=echo phrase=- name_source=-");
+            return StartDisposition.Rejected;
+        }
+
+        // P10-READ: no capture while a code is being spoken or inside the echo tail
+        if (CodeEcho is not null && !CodeEcho.AllowsCapture(kind == CaptureKind.Manual, DateTimeOffset.UtcNow))
+        {
+            WriteTimeline("code.read capture=deny reason=echo");
             return StartDisposition.Rejected;
         }
 

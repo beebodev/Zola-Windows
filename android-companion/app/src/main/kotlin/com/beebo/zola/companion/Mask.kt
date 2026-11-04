@@ -3,6 +3,10 @@ package com.beebo.zola.companion
 // P10-COMPANION: mask the whole text before any truncation — P10-D04
 
 object Mask {
+    // Short keyword-less bodies (≤40) whose meaningful content is one 4–8 digit run
+    // (optionally with a single ≤8 alnum tag) mask as verification_code. Fail closed P10-D04.
+    private const val SHORT_BODY_CHARS = 40
+
     private val keywords = Regex(
         """\b(?:code|otp|pin|passcode|verification|verify|one-time|login|sign-in|signin)\b|\blog\s+in\b|\bsign\s+in\b""",
         RegexOption.IGNORE_CASE,
@@ -25,6 +29,7 @@ object Mask {
     private val onlyDigits = Regex("""\d{4,8}""")
     private val onlyAlnum = Regex("""(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6}""")
     private val onlySplit = Regex("""(?:\d{1,6}[ -])+\d{1,6}""")
+    private val shortTag = Regex("""[A-Za-z0-9]{1,8}""")
 
     fun kind(text: String, containsOtp: Boolean = false): String {
         if (containsOtp) return "verification_code"
@@ -47,7 +52,27 @@ object Mask {
             val count = stripped.count { it.isDigit() }
             if (count in 4..8) return "unsure"
         }
+        shortBody(stripped)?.let { return it }
         return "none"
+    }
+
+    /** Returns verification_code when the trimmed body is a short tag + one 4–8 digit run; else null. */
+    private fun shortBody(stripped: String): String? {
+        if (stripped.length > SHORT_BODY_CHARS) return null
+        val matches = plainDigits.findAll(stripped).toList()
+        if (matches.size != 1) return null
+        val match = matches[0]
+        val digitLen = match.groupValues[1].length
+        val remainder = (stripped.removeRange(match.range)).trim()
+        if (remainder.isEmpty()) return null // digits-only already returned unsure above
+        if (!shortTag.matches(remainder)) return null
+        val lettersOnly = remainder.all { it.isLetter() }
+        val allCaps = remainder.all { it.isUpperCase() }
+        return when {
+            remainder.any { it.isDigit() } -> "verification_code" // e.g. ZP10 / AB12 + 4–8 digits
+            lettersOnly && allCaps && digitLen in 6..8 -> "verification_code" // e.g. APP / AMZN
+            else -> null // Title-case Zip/Order/Room + digits, or ALL-CAPS + 4–5 digits → none
+        }
     }
 
     fun extract(text: String, maskKind: String): String? {

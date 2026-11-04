@@ -19,6 +19,8 @@ try:
     from . import turn_context
     from . import loops as zola_loops
     from . import surface as zola_surface
+    from . import code_read
+    from . import phone_tools
 except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import auth
     import contacts
@@ -32,6 +34,8 @@ except ImportError:  # P8-HARDEN: flat unittest discover — P8-D02
     import turn_context
     import loops as zola_loops
     import surface as zola_surface
+    import code_read
+    import phone_tools
 
 # P8-HARDEN / P8-CONNECT: named tool / toolset constants — P8-D01 / P8-D08
 TOOL_NAME = "workspace_status"
@@ -195,6 +199,28 @@ def register(ctx) -> None:
         description=zola_loops._DESCRIPTION,
         is_async=False,
     )
+    # P10-READ: live phone tools, all Brian-ticket only, same toolset, synchronous; the code tool
+    # never returns a value, and a serve start clears any arm zola-phone still holds
+    for name, schema, handler, description in (
+        (phone_tools.TOOL_TEXTS, phone_tools.texts_schema(), phone_tools.phone_read_texts_handler, phone_tools._TEXTS_DESCRIPTION),
+        (
+            phone_tools.TOOL_NOTIFICATIONS,
+            phone_tools.notifications_schema(),
+            phone_tools.phone_read_notifications_handler,
+            phone_tools._NOTIFICATIONS_DESCRIPTION,
+        ),
+        (phone_tools.TOOL_STATUS, phone_tools.status_schema(), phone_tools.phone_status_handler, phone_tools._STATUS_DESCRIPTION),
+        (code_read.TOOL_NAME, code_read.code_schema(), code_read.phone_read_code_handler, code_read._DESCRIPTION),
+    ):
+        ctx.register_tool(
+            name=name,
+            toolset=TOOLSET_NAME,
+            schema=schema,
+            handler=handler,
+            description=description,
+            is_async=False,
+        )
+    code_read.start_disarm_on_boot()
     # P9-FIX-ARM: wrap prompt.submit only in the serve process, before any turn — P8-D02
     try:
         from . import origin

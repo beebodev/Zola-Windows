@@ -283,6 +283,8 @@ public sealed partial class MainWindow : Window
         _requests.ClarifyOpened += (id, view) => Dispatch(() => OnClarifyOpened(id, view));
         _requests.ApprovalOpened += (id, view) => Dispatch(() => OnApprovalOpened(id, view));
         _requests.RequestClosed += (id, outcome) => Dispatch(() => OnRequestClosed(id, outcome));
+        // P10-READ: code reader owns code_read requests; the value never enters the transcript
+        InitializeCodeRead();
         _backend.StateChanged += (_, _) => DispatcherQueue.TryEnqueue(Render);
         Composer.TextChanged += (_, _) =>
         {

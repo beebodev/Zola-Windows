@@ -7,6 +7,14 @@ sealed class ServerRequestBroker
 {
     private const string MethodClarify = "clarify";
     private const string MethodApproval = "approval";
+    // P10-READ: the tool's one question to this client; it carries a handle, never a code value
+    private const string MethodCodeRead = "code_read";
+    private const string FieldHandle = "handle";
+    // P10-READ F7: "show me the code" asks the client to display, even in Voice mode
+    private const string FieldPreferShow = "prefer_show";
+    private const string FieldOutcome = "outcome";
+    private const string FieldReason = "reason";
+    private const string OutcomeCancelled = "cancelled";
     private const string ChoiceOnce = "once";
     private const string ChoiceDeny = "deny";
     private const int ErrorMethodNotFound = -32601;
@@ -74,6 +82,12 @@ sealed class ServerRequestBroker
 
     public event Action<string>? Notice;
 
+    // P10-READ: id, session id, handle, preferShow. Raised only for a live, current-session, non-replayed request
+    public event Action<string, string, string, bool>? CodeReadRequested;
+
+    // P10-READ: id, reason. The request was withdrawn (server cancel, socket replace, session change, away)
+    public event Action<string, string>? CodeReadWithdrawn;
+
     public enum Lifecycle
     {
         Open,
@@ -138,11 +152,16 @@ sealed class ServerRequestBroker
     public void MarkSocketReplacing()
     {
         // P4-REQUEST: clear current session before old socket dies; mark seq for reconcile — P4-D11
+        List<Action> raises;
         lock (_gate)
         {
             _currentSessionId = null;
             _replaceMark = _nextSequence;
+            // P10-READ: a code read never survives its socket; the playback stops and the value is dropped
+            raises = WithdrawCodeReadsLocked(_ => true, "socket_replaced");
         }
+
+        RaiseAll(raises);
     }
 
     public void OnSessionChanged(string? currentSessionId)
@@ -152,6 +171,10 @@ sealed class ServerRequestBroker
         {
             _currentSessionId = currentSessionId;
             raises = new List<Action>();
+            // P10-READ: only the session that asked may hear its code
+            raises.AddRange(WithdrawCodeReadsLocked(
+                e => string.IsNullOrEmpty(currentSessionId) || e.SessionId != currentSessionId,
+                "session_changed"));
             foreach (var entry in _entries.Values)
             {
                 if (entry.State != Lifecycle.Open)
@@ -379,6 +402,35 @@ sealed class ServerRequestBroker
             WriteLogLocked(EventReplayed, id, method, sessionId, null, null);
         }
 
+        if (method == MethodCodeRead)
+        {
+            // P10-READ: no card and no transcript line. A replay, a foreign session, or a missing handle never
+            // starts playback; the answer is `cancelled` and nothing is redeemed.
+            var handle = ReadString(parameters, FieldHandle) ?? "";
+            var preferShow = ReadBool(parameters, FieldPreferShow);
+            var codeEntry = NewEntry(id, sessionId, method, parameters, replayed, null, null);
+            _entries[id] = codeEntry;
+            string? refusal = replayed ? "replayed"
+                : string.IsNullOrEmpty(handle) ? "no_handle"
+                : string.IsNullOrEmpty(_currentSessionId) ? DropReasonNoCurrentSession
+                : sessionId != _currentSessionId ? DropReasonForeignSession
+                : null;
+            if (refusal is not null)
+            {
+                codeEntry.State = Lifecycle.Sending;
+                WriteLogLocked(EventDropped, id, method, sessionId, null, refusal);
+                raises.Add(() => _ = SendResultThenCloseAsync(
+                    codeEntry,
+                    new Dictionary<string, object?> { [FieldOutcome] = OutcomeCancelled },
+                    OutcomeCancelled));
+                return raises;
+            }
+
+            WriteLogLocked(EventShown, id, method, sessionId, null, "code_read");
+            raises.Add(() => CodeReadRequested?.Invoke(id, sessionId, handle, preferShow));
+            return raises;
+        }
+
         if (method != MethodClarify && method != MethodApproval)
         {
             var entry = NewEntry(id, sessionId, method, parameters, replayed, null, null);
@@ -451,8 +503,43 @@ sealed class ServerRequestBroker
         entry.State = Lifecycle.Cancelled;
         _tombstones.Add(id);
         WriteLogLocked(EventCancelled, id, entry.Method, entry.SessionId, null, reason);
+        if (entry.Method == MethodCodeRead)
+        {
+            // P10-READ: the tool timed out or was interrupted; stop playback and drop the value
+            raises.Add(() => CodeReadWithdrawn?.Invoke(id, "server_cancel"));
+        }
+
         raises.Add(() => RequestClosed?.Invoke(id, CloseOutcome.Cancelled));
         return raises;
+    }
+
+    // P10-READ: mark matching open code reads Cancelled and tell the reader to stop. Caller holds _gate.
+    private List<Action> WithdrawCodeReadsLocked(Func<Entry, bool> match, string reason)
+    {
+        var raises = new List<Action>();
+        foreach (var entry in _entries.Values.Where(e => e.Method == MethodCodeRead && e.State == Lifecycle.Open && match(e)).ToList())
+        {
+            entry.State = Lifecycle.Cancelled;
+            _tombstones.Add(entry.Id);
+            WriteLogLocked(EventCancelled, entry.Id, entry.Method, entry.SessionId, null, reason);
+            var id = entry.Id;
+            raises.Add(() => CodeReadWithdrawn?.Invoke(id, reason));
+            raises.Add(() => RequestClosed?.Invoke(id, CloseOutcome.Cancelled));
+        }
+
+        return raises;
+    }
+
+    // P10-READ: the reader's one answer: read | shown | failed(+reason) | cancelled. Never a value.
+    public void AnswerCodeRead(string id, string outcome, string? reason)
+    {
+        var result = new Dictionary<string, object?> { [FieldOutcome] = outcome };
+        if (!string.IsNullOrEmpty(reason))
+        {
+            result[FieldReason] = reason;
+        }
+
+        _ = ClaimAndSendAsync(id, result, answerLen: null, choice: outcome);
     }
 
     private List<Action> ReconcileOpenRequestsLocked(string sessionId, IReadOnlyList<ChatSocket.OpenRequestSnapshot> snapshots)
@@ -480,6 +567,12 @@ sealed class ServerRequestBroker
             entry.State = Lifecycle.Cancelled;
             _tombstones.Add(entry.Id);
             WriteLogLocked(EventWithdrawnWhileAway, entry.Id, entry.Method, entry.SessionId, null, "absent_from_open_requests");
+            if (entry.Method == MethodCodeRead)
+            {
+                var codeId = entry.Id;
+                raises.Add(() => CodeReadWithdrawn?.Invoke(codeId, "withdrawn_while_away"));
+            }
+
             raises.Add(() => RequestClosed?.Invoke(entry.Id, CloseOutcome.WithdrawnWhileAway));
             raises.Add(() => Notice?.Invoke(NoticeWithdrawnWhileAway));
         }
