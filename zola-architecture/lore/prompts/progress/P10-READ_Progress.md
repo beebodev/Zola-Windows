@@ -1624,4 +1624,8 @@ Docs commit recording 7c SHA: `b68e0f000622e71983155aa2a1f42fada523091f`. Branch
 
 ### 7g–7i
 
-Recorded below after docs commit / worktree removal / scratch delete.
+**7g docs commit (merge SHA):** `7a1bb12900bfad25f9968459f3382d31ada6720c` — `docs: record P10-READ merge SHA`. Pushed; `main` = `origin/main` = that tip.
+
+**7h:** `git worktree remove` first failed on untracked `_suite_out` (cleaned, no `--force`). Second remove deregistered the worktree and deleted local `p10-read` (`b68e0f0`); `origin/p10-read` deleted. Leftover folder `C:\Users\test\Dev\zola-windows-p10-read` retained only a locked empty `hermes-plugins` directory (Permission denied — Cursor/process lock); not a git worktree. Brian: close any handle on that path and delete the folder if it remains.
+
+**7i:** Scratch `C:\Users\test\Dev\zola-spikes\p10-read\` deleted (includes phase backups). Brian relaunches the client from `main`.
