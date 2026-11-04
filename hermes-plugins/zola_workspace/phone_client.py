@@ -17,13 +17,17 @@ except ImportError:
 SECRET_ENV = "ZOLA_PHONE_LAUNCH_SECRET"
 
 
-def call(kind: str, **fields: Any) -> Dict[str, Any]:
+def call(request: str, **fields: Any) -> Dict[str, Any]:
+    # P10-READ: the first argument is the pipe request type. It is not named `kind`, because
+    # read_code and code.arm carry a message `kind` (sms or mms) as a field of their own — RD-G8
     protocol = load_protocol()
-    body = {"type": kind}
+    body = {"type": request}
     body.update(fields)
-    if protocol["local_requests"].get(kind, {}).get("secret"):
+    if protocol["local_requests"].get(request, {}).get("secret"):
         body["secret"] = launch_secret.current() or os.environ.get(SECRET_ENV, "")
     try:
         return pipe_request(protocol["pipe_name"], body)
-    except OSError:
+    except Exception:
+        # P10-READ: a missing pipe raises pywintypes.error, which is not an OSError; every failure
+        # to reach zola-phone reads as "no connection" and carries no detail
         return {"ok": False, "status": "phone_unavailable", "reason": "no_connection"}

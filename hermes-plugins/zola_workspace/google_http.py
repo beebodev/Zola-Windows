@@ -35,6 +35,8 @@ ROUTE_DRIVE_LIST = "drive.files.list"
 ROUTE_DRIVE_GET = "drive.files.get"
 ROUTE_DRIVE_EXPORT = "drive.files.export"
 ROUTE_CONTACTS_SEARCH = "people.people.searchContacts"
+# P10-READ: the contact index pages connections.list; never searchContacts
+ROUTE_CONTACTS_CONNECTIONS = "people.people.connections.list"
 
 _logger = logging.getLogger("zola_workspace.google_http")
 

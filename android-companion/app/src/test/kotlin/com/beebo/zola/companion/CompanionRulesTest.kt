@@ -47,6 +47,20 @@ class CompanionRulesTest {
         assertEquals("verification_code", Mask.kind("Reference 482913 is the invoice", containsOtp = true))
         assertEquals("reset_link", Mask.kind("verify your device at https://files.example/a"))
         assertEquals("none", Mask.kind("See you at 48 29 13"))
+        // F5 short-body (P10-D04): keyword-less tag + 4–8 digit run masks.
+        assertEquals("verification_code", Mask.kind("ZP10 482193"))
+        assertEquals("verification_code", Mask.kind("APP 123456"))
+        assertEquals("verification_code", Mask.kind("AB12 482193"))
+        assertEquals("verification_code", Mask.kind("AMZN 482913"))
+        // Ordinary negatives stay plain (time / price / year / street / phone-in-sentence).
+        assertEquals("none", Mask.kind("See you at 6:30"))
+        assertEquals("none", Mask.kind("It was $19.99"))
+        assertEquals("none", Mask.kind("Meet on 2026-10-21"))
+        assertEquals("none", Mask.kind("1600 Amphitheatre Parkway"))
+        assertEquals("none", Mask.kind("Please call 555-0100 tonight"))
+        assertEquals("none", Mask.kind("Zip 94043"))
+        assertEquals("none", Mask.kind("Order 100045"))
+        assertEquals("none", Mask.kind("Room 1204"))
     }
 
     @Test
@@ -363,6 +377,11 @@ class CompanionRulesTest {
         "one-time code 482913",
         "security code 482913",
         "confirmation code 482913",
+        // F5 short-body keyword-less shapes (P10-D04)
+        "ZP10 482193",
+        "APP 123456",
+        "AB12 482193",
+        "AMZN 482913",
     )
 
     private val ordinary = listOf(
@@ -386,5 +405,6 @@ class CompanionRulesTest {
         "https://carrier.example/track/1Z999",
         "Birthday 04/19",
         "Extension 2048",
+        "Please call 555-0100 tonight",
     )
 }

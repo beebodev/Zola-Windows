@@ -113,6 +113,27 @@
                 TextWrapping="WrapWholeWords" />
         </StackPanel>
 
+        <!-- P10-READ: a code that could not be spoken is shown here only, outside the conversation, until dismissed or the deadline -->
+        <Border
+            x:Name="CodeShownHost"
+            Canvas.ZIndex="{StaticResource ZolaLayerNotice}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Visibility="Collapsed"
+            Padding="28,18"
+            CornerRadius="10"
+            Background="#E6101418">
+            <StackPanel Spacing="12" HorizontalAlignment="Center">
+                <TextBlock
+                    x:Name="CodeShownText"
+                    FontSize="40"
+                    HorizontalAlignment="Center"
+                    IsTextSelectionEnabled="False"
+                    TextAlignment="Center" />
+                <Button Content="Dismiss" HorizontalAlignment="Center" Click="OnCodeShownDismiss" />
+            </StackPanel>
+        </Border>
+
         <!-- P3-LOOK: dock stays in the tree at opacity 0 until the pointer is over its footprint, focus, a panel, or a turn needs it — P3-D17 -->
         <Border
             x:Name="DockHost"

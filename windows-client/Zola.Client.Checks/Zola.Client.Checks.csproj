@@ -46,5 +46,12 @@
     <Compile Include="..\Zola.Client\Speech\ProactiveDeliveryCoordinator.cs" Link="Speech\ProactiveDeliveryCoordinator.cs" />
     <Compile Include="..\Zola.Client\Speech\ISpeechGateway.cs" Link="Speech\ISpeechGateway.cs" />
     <Compile Include="..\Zola.Client\Speech\ProactiveSpeechSession.cs" Link="Speech\ProactiveSpeechSession.cs" />
+    <!-- P10-READ: code reader lifecycle, pipe redeem, and local voice render; the voice needs System.Speech -->
+    <Compile Include="..\Zola.Client\Voice\CodeReader.cs" Link="Voice\CodeReader.cs" />
+    <Compile Include="..\Zola.Client\Voice\PhoneCodeRedeemer.cs" Link="Voice\PhoneCodeRedeemer.cs" />
+    <Compile Include="..\Zola.Client\Voice\LocalCodeVoice.cs" Link="Voice\LocalCodeVoice.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Speech" Version="9.0.4" />
   </ItemGroup>
 </Project>

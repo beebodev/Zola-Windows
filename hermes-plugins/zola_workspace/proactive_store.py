@@ -28,9 +28,11 @@ _LOG = logging.getLogger("zola_workspace.proactive_store")
 # P9-STORE: marker so zola_memory can find this module without a hard import cycle — P9-D06
 PROACTIVE_STORE_MARKER = "p9-store"
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 # P10-STORE: the v6 rebuild writes 6 even after SCHEMA_VERSION moves on — P10-D11
 SCHEMA_V6 = 6
+# P10-READ: schema 7 adds items.sender_hint (RD-G2c / decision 7); the v7 step writes 7 on its own
+SCHEMA_V7 = 7
 # P9-STORE: why a loop ended; NULL means the live row was already closed before this column — P9-D09
 CLOSED_INTENTS = frozenset(
     {"reply", "cancelled", "status_change", "confirm_close", "expired", "forgotten"}
@@ -66,11 +68,20 @@ META_SURFACE_CONFIRMED = "surface_last_confirmed"
 # P9-WATCH: a transient fetch becomes terminal after this many tries — P9-D04
 POISON_ATTEMPT_CAP = 5
 BUSY_TIMEOUT_MS = 5000
-# P10-STORE: phone kinds share one source list with the conversation hold Track 5 removes — P10-D11
 PHONE_SOURCES = ("sms", "mms", "notif")
-PHONE_CONVERSATION_HOLD = PHONE_SOURCES
 PHONE_TEXT_KINDS = ("sms", "mms")
 PHONE_NOTIF_KIND = "notif"
+# P10-READ: the conversation hold is gone (RD-G7 / decision 9). Phone rows now reach the
+# inject block and whats_pending. These two constants block only UNPROMPTED speech: a loop
+# match on a text or a notification is never claimed for speech while they are True.
+# Spoken answers to Brian are not affected. Track 6 may lift the text one; P10-D15 the notif one.
+P10_TEXT_NO_UNPROMPTED_SPEECH = True
+P10_NOTIF_NO_UNPROMPTED_SPEECH = True
+# P10-READ: deployment baseline for phone rows in the inject block and whats_pending
+# (RD-G2d / decision 8). Set once, only when missing; a restart never advances it.
+META_PHONE_SURFACE_CUTOFF = "phone_surface_cutoff_at"
+# P10-READ: sender_hint keeps this many trailing digits of an e164 sender (RD-G2c)
+SENDER_HINT_DIGITS = 4
 IDENTITY_VERSION = "v1"
 IDENTITY_SEPARATOR = "\x1f"
 MASK_KINDS = ("verification_code", "reset_link", "unsure")
@@ -118,9 +129,40 @@ def _sql_list(values: Sequence[str]) -> str:
     return ", ".join("'" + value + "'" for value in values)
 
 
-def _phone_hold_sql() -> str:
-    # P10-STORE: one constant; Track 5 deletes this predicate — P10-D11
-    return "source NOT IN (" + _sql_list(PHONE_CONVERSATION_HOLD) + ")"
+def _phone_speech_hold_sources() -> tuple:
+    # P10-READ: read at call time so a test (and Track 6) can flip one constant — RD-G7 (b)
+    held: List[str] = []
+    if P10_TEXT_NO_UNPROMPTED_SPEECH:
+        held.extend(PHONE_TEXT_KINDS)
+    if P10_NOTIF_NO_UNPROMPTED_SPEECH:
+        held.append(PHONE_NOTIF_KIND)
+    return tuple(held)
+
+
+def _phone_speech_hold_sql() -> str:
+    # P10-READ: speech claim paths only; conversation readers no longer use a hold — RD-G7 (b)
+    held = _phone_speech_hold_sources()
+    if not held:
+        return "1 = 1"
+    return "source NOT IN (" + _sql_list(held) + ")"
+
+
+def _phone_cutoff_sql() -> str:
+    # P10-READ: a phone row is shown only after the deployment baseline; no baseline, no phone rows
+    return (
+        "(source NOT IN (" + _sql_list(PHONE_SOURCES) + ") OR detected_at > COALESCE("
+        "(SELECT value FROM meta WHERE key = '" + META_PHONE_SURFACE_CUTOFF + "'), '9999-12-31T23:59:59Z'))"
+    )
+
+
+def sender_hint_for(kind: str, canonical: str) -> Optional[str]:
+    # P10-READ: last 4 of an e164, or the literal shortcode/alnum; never logged — RD-G2c / decision 7
+    if kind == phone_ids.KIND_E164:
+        digits = "".join(ch for ch in canonical if "0" <= ch <= "9")
+        return digits[-SENDER_HINT_DIGITS:] or None
+    if kind in (phone_ids.KIND_SHORTCODE, phone_ids.KIND_ALNUM):
+        return canonical or None
+    return None
 
 
 def _phone_source_sql() -> str:
@@ -261,6 +303,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
             current = 5
         # P10-STORE: version 6 rebuilds items, and foreign_keys cannot change inside this transaction — R2
         needs_v6 = current < SCHEMA_V6
+        needs_v7 = current < SCHEMA_V7
         conn.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -272,6 +315,42 @@ def _migrate(conn: sqlite3.Connection) -> None:
         raise
     if needs_v6:
         _migrate_v6_committed(conn)
+    if needs_v7:
+        _migrate_v7_committed(conn)
+
+
+def _migrate_v7_committed(conn: sqlite3.Connection) -> None:
+    # P10-READ: schema 7 adds one nullable column and sets the deployment baseline — decisions 7 and 8.
+    # ALTER ADD COLUMN is enough: no CHECK, no rebuild. Existing rows keep a NULL hint; their raw
+    # numbers are gone, so a pre-migration row reads from its hash alone.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # a second opener may already have committed schema 7
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ?",
+            (META_SCHEMA_VERSION,),
+        ).fetchone()
+        version = int(row["value"]) if row else 0
+        if version >= SCHEMA_V7:
+            conn.execute("ROLLBACK")
+            return
+        if version < SCHEMA_V6:
+            raise RuntimeError("proactive schema 7 needs schema 6 first")
+        columns = [info[1] for info in conn.execute("PRAGMA table_info(items)")]
+        if "sender_hint" not in columns:
+            conn.execute("ALTER TABLE items ADD COLUMN sender_hint TEXT")
+        # decision 8: the baseline is the first deployment; set only when missing
+        if _meta_get(conn, META_PHONE_SURFACE_CUTOFF) is None:
+            _meta_set(conn, META_PHONE_SURFACE_CUTOFF, _iso(datetime.now(timezone.utc)))
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (META_SCHEMA_VERSION, str(SCHEMA_V7)),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        _rollback(conn)
+        raise
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -793,6 +872,7 @@ def _phone_content_absent_sql() -> str:
            AND snippet IS NULL
            AND gist IS NULL
            AND sender_display_name IS NULL
+           AND sender_hint IS NULL
            AND attachment_has IS NULL
            AND attachment_count IS NULL
            AND attachment_kind IS NULL
@@ -831,6 +911,7 @@ def _expire_cleared_phone_content_locked(
 
 def _clear_phone_content_locked(conn: sqlite3.Connection, item_id: str) -> None:
     # P10-STORE: phone body and display end at ack, dismiss, close, or forget — P10-D03
+    # P10-READ: the sender hint is content and leaves with the body — ST-G7 / decision 7
     phone = _phone_source_sql()
     conn.execute(
         f"""
@@ -840,6 +921,7 @@ def _clear_phone_content_locked(conn: sqlite3.Connection, item_id: str) -> None:
                snippet = NULL,
                gist = NULL,
                sender_display_name = NULL,
+               sender_hint = NULL,
                attachment_has = NULL,
                attachment_count = NULL,
                attachment_kind = NULL
@@ -1017,6 +1099,8 @@ def _ingest_phone_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any
         return _ingest_rejected("too_large")
     sender_kind, canonical = phone_ids.normalize(str(kwargs.get("sender_raw") or ""))
     sender_hash = phone_ids.hash(canonical)
+    # P10-READ: a recognisable tail for every parsed sender, filled here and nowhere else; never logged
+    sender_hint = sender_hint_for(sender_kind, canonical)
     clock = _now(kwargs.get("now"))
     stamp = _iso(clock)
     detected = _iso(_now(received_at))
@@ -1047,7 +1131,7 @@ def _ingest_phone_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any
               eligible_at, updated_at, subject, snippet, body, gist, calendar_status,
               device_id, revision, completeness, rcs_flag, sender_kind, is_group,
               participant_count, attachment_has, attachment_count, attachment_kind,
-              mask_kind, truncated, ranking_source, judgment, watch_evaluated
+              mask_kind, truncated, ranking_source, judgment, watch_evaluated, sender_hint
             ) VALUES (
               ?, ?, ?, '', NULL, NULL,
               ?, '', ?, ?,
@@ -1057,7 +1141,7 @@ def _ingest_phone_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any
               ?, ?, ?, ?, ?, NULL, NULL,
               ?, ?, ?, ?, ?, ?,
               ?, ?, ?, ?,
-              ?, ?, 'code', NULL, 0
+              ?, ?, 'code', NULL, 0, ?
             )
             """,
             (
@@ -1086,6 +1170,7 @@ def _ingest_phone_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any
                 attachment_kind,
                 mask_kind,
                 truncated,
+                sender_hint,
             ),
         )
         conn.execute("COMMIT")
@@ -1120,6 +1205,7 @@ def _ingest_phone_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any
                    sender_display_name = ?,
                    sender_address_hash = ?,
                    sender_kind = ?,
+                   sender_hint = ?,
                    is_group = ?,
                    participant_count = ?,
                    attachment_has = ?,
@@ -1139,6 +1225,7 @@ def _ingest_phone_item(conn: sqlite3.Connection, **kwargs: Any) -> Dict[str, Any
                 str(kwargs.get("sender_display_name") or ""),
                 sender_hash,
                 sender_kind,
+                sender_hint,
                 is_group,
                 participant_count,
                 attachment_has,
@@ -2023,8 +2110,9 @@ def _speech_block_reason(row: Optional[sqlite3.Row], earliest_surface: str, olde
     # P9-SPEAK: the label is not a speech check. An open surface attempt blocks only inside its TTL — P9-D11
     if row is None:
         return "not_found"
-    # P10-STORE: phone rows stay out of speech until Track 5 removes the hold — P10-D11
-    if row["source"] in PHONE_CONVERSATION_HOLD:
+    # P10-READ: unprompted speech about a text or notification stays off while the two named
+    # constants are True; the conversation readers no longer hold phone rows — RD-G7 (b)
+    if row["source"] in _phone_speech_hold_sources():
         return "phone_deferred"
     if int(row["loop_matched"] or 0) != 1:
         return "not_loop_matched"
@@ -2069,7 +2157,7 @@ def _claim_speech(
     if reason:
         _rollback(conn)
         return _no(reason)
-    hold = _phone_hold_sql()
+    hold = _phone_speech_hold_sql()
     cur = conn.execute(
         f"""
         UPDATE items
@@ -2131,7 +2219,7 @@ def _claim_next_speech(
     earliest_surface = _iso(clock - timedelta(seconds=SURFACE_ATTEMPT_TTL_SECONDS))
     oldest = _iso(clock - timedelta(seconds=SPEECH_MAX_AGE_SECONDS))
     conn.execute("BEGIN IMMEDIATE")
-    hold = _phone_hold_sql()
+    hold = _phone_speech_hold_sql()
     row = conn.execute(
         f"""
         SELECT id, source FROM items
@@ -2845,6 +2933,7 @@ def _forget_subject(
             UPDATE items
                SET subject = NULL, snippet = NULL, body = NULL, gist = NULL,
                    sender_address = NULL, sender_display_name = NULL,
+                   sender_hint = NULL,
                    entity_id = NULL, contacts_handle = NULL,
                    attachment_has = NULL, attachment_count = NULL, attachment_kind = NULL,
                    content_state = 'forgotten'
@@ -2969,7 +3058,8 @@ def _purge_retention(
            SET subject = NULL,
                snippet = NULL,
                gist = NULL,
-               sender_display_name = NULL
+               sender_display_name = NULL,
+               sender_hint = NULL
          WHERE content_state != 'forgotten'
            AND (
              detected_at <= ?
@@ -2980,7 +3070,7 @@ def _purge_retention(
            )
            AND (
              subject IS NOT NULL OR snippet IS NOT NULL OR gist IS NOT NULL
-             OR sender_display_name IS NOT NULL
+             OR sender_display_name IS NOT NULL OR sender_hint IS NOT NULL
            )
         """,
         (text_cutoff,),
@@ -3799,15 +3889,19 @@ def _mark_surface_confirmed(conn: sqlite3.Connection, attempt_id: str) -> Dict[s
 
 def list_surface_rows(conn: sqlite3.Connection) -> Dict[str, Any]:
     # P9-SURFACE: closed rows stay out of the pending counts — P9-D10
-    # P10-STORE: phone rows stay out of this list until Track 5 — P10-D11
+    # P10-READ: phone rows are listed (the conversation hold is gone — RD-G7), but only after the
+    # deployment baseline in meta (decision 8). No body column is read; phone display data is the
+    # sender kind, hash, hint, group flag, mask kind, and the package for a notification.
     try:
-        hold = _phone_hold_sql()
+        cutoff = _phone_cutoff_sql()
         rows = conn.execute(
             f"""
             SELECT id, source, label, eligibility, processing, conversation, delivery,
                    content_state, loop_matched, gist, subject, sender_display_name,
                    sender_address, detected_at, inject_count, selected_at, acknowledged_at,
                    message_id, thread_id, event_id,
+                   sender_kind, sender_address_hash, sender_hint, is_group, participant_count,
+                   mask_kind, idempotency_key,
                    (
                      SELECT start_at FROM calendar_events
                       WHERE event_id = items.event_id
@@ -3815,16 +3909,55 @@ def list_surface_rows(conn: sqlite3.Connection) -> Dict[str, Any]:
                    ) AS start_at
               FROM items
              WHERE closed_at IS NULL
-               AND {hold}
+               AND {cutoff}
              ORDER BY detected_at
             """
         ).fetchall()
-        return _ok(items=[dict(row) for row in rows])
+        items = []
+        for row in rows:
+            item = dict(row)
+            key = item.pop("idempotency_key", "") or ""
+            if item.get("source") == PHONE_NOTIF_KIND:
+                item["package"] = _package_from_identity(key)
+            items.append(item)
+        return _ok(items=items)
     except sqlite3.OperationalError as exc:
         text = str(exc).lower()
         return _no("locked" if "locked" in text or "busy" in text else "error")
     except Exception:
         return _no("error")
+
+
+def _package_from_identity(identity: str) -> str:
+    # P10-READ: a notification identity is version, device, kind, package, key, timestamp — NT-G9
+    parts = str(identity or "").split(IDENTITY_SEPARATOR)
+    if len(parts) >= 4 and parts[2] == PHONE_NOTIF_KIND:
+        return parts[3]
+    return ""
+
+
+def ensure_phone_surface_cutoff(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P10-READ: set the baseline ONLY when missing; a restart or redeploy never advances it — decision 8
+    return _call(_ensure_phone_surface_cutoff, conn, now=now)
+
+
+def _ensure_phone_surface_cutoff(conn: sqlite3.Connection, *, now: Optional[datetime]) -> Dict[str, Any]:
+    existing = _meta_get(conn, META_PHONE_SURFACE_CUTOFF)
+    if existing:
+        return _ok(cutoff=existing, created=False)
+    conn.execute("BEGIN IMMEDIATE")
+    existing = _meta_get(conn, META_PHONE_SURFACE_CUTOFF)
+    if existing:
+        conn.execute("COMMIT")
+        return _ok(cutoff=existing, created=False)
+    stamp = _iso(_now(now))
+    _meta_set(conn, META_PHONE_SURFACE_CUTOFF, stamp)
+    conn.execute("COMMIT")
+    return _ok(cutoff=stamp, created=True)
 
 
 def list_untold_lapses(conn: sqlite3.Connection) -> Dict[str, Any]:
@@ -3872,7 +4005,8 @@ def _provisional_select(conn: sqlite3.Connection, item_id: str, attempt_id: str,
     stamp = _iso(clock)
     quiet_before = _iso(clock - timedelta(seconds=int(kwargs["quiet_seconds"])))
     cap = int(kwargs["reinject_cap"])
-    hold = _phone_hold_sql()
+    # P10-READ: no speech hold here; a phone row needs the same baseline the listing uses — decision 8
+    cutoff = _phone_cutoff_sql()
     conn.execute("BEGIN IMMEDIATE")
     cur = conn.execute(
         f"""
@@ -3895,7 +4029,7 @@ def _provisional_select(conn: sqlite3.Connection, item_id: str, attempt_id: str,
              OR selected_at IS NULL
              OR selected_at <= ?
            )
-           AND {hold}
+           AND {cutoff}
         """,
         (attempt_id, turn_id, stamp, stamp, item_id, cap, quiet_before),
     )
@@ -4109,7 +4243,8 @@ def post_speech_candidate(
         clock = _now(now)
         earliest = _iso(clock - timedelta(seconds=int(window_seconds)))
         noted = _meta_get(conn, META_SPEECH_POST_NOTED) or ""
-        hold = _phone_hold_sql()
+        # P10-READ: no phone hold here either; speech never delivers a phone row while the
+        # unprompted-speech constants are True, so nothing phone-shaped reaches this query — RD-G7
         row = conn.execute(
             f"""
             SELECT d.attempt_id AS speech_attempt_id, i.*
@@ -4121,7 +4256,6 @@ def post_speech_candidate(
                AND i.acknowledged_at IS NULL
                AND i.content_state = 'available'
                AND d.attempt_id != ?
-               AND i.{hold}
              ORDER BY d.at DESC
              LIMIT 1
             """,

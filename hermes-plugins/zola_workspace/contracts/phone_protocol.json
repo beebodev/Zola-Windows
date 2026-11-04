@@ -504,6 +504,15 @@
     "read_code": {
       "secret": true
     },
+    "code.arm": {
+      "secret": true
+    },
+    "code.redeem": {
+      "secret": true
+    },
+    "code.disarm": {
+      "secret": true
+    },
     "diagnostic_read": {
       "secret": true
     },

@@ -676,7 +676,7 @@ class SurfaceTests(unittest.TestCase):
         with mock.patch.object(turn_context, "current_turn_id_from_context", return_value="turn-list"):
             listed = surface.whats_pending_handler({"action": "list"})
         self.assertEqual(listed.count("Handle "), surface.SURFACE_LIST_LINE_CAP)
-        self.assertIn("and 2 more.", listed)
+        self.assertIn("and 2 more emails.", listed)
         self.assertNotIn("lapse not told", listed)
         self.assertIn("Watch reply, not matched.", listed)
 

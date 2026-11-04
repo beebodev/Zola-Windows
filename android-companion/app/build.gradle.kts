@@ -12,8 +12,8 @@ android {
         applicationId = "com.beebo.zola.companion"
         minSdk = 36
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.1.0"
+        versionCode = 10
+        versionName = "1.1.1"
     }
 
     buildTypes {

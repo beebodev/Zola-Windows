@@ -26,6 +26,9 @@ public sealed class PhoneProcess
         _inner.LatchChanged += () => LatchChanged?.Invoke();
     }
 
+    // P10-READ: redeems a code handle on the same ZolaPhone pipe with the same launch secret
+    internal Voice.ICodeRedeemer CodeRedeemer => new Voice.PhoneCodeRedeemer(_secret, PipeName);
+
     public WatcherProcessLatch Latch => _inner.Latch;
 
     public bool KeepsFailing => _inner.KeepsFailing;

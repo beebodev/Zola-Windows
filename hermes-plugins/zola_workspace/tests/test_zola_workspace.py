@@ -405,6 +405,11 @@ class RegisterTests(unittest.TestCase):
                 "gmail_send_draft",
                 "whats_pending",
                 "zola_loops",
+                # P10-READ: live phone tools
+                "phone_read_texts",
+                "phone_read_notifications",
+                "phone_status",
+                "phone_read_code",
             },
         )
         self.assertTrue(all(item["is_async"] is False for item in seen["tools"]))

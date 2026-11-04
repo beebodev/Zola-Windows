@@ -38,6 +38,8 @@ internal sealed partial class CheckRunner
     private int _speechPassed;
     private int _phoneTotal;
     private int _phonePassed;
+    private int _codeTotal;
+    private int _codePassed;
 
     public int Failed { get; private set; }
 
@@ -58,12 +60,13 @@ internal sealed partial class CheckRunner
         RunSupervisionRows();
         RunSpeechRows();
         RunPhoneRows();
+        RunCodeRows();
     }
 
     public string CoverageLine()
     {
         return string.Format(
-            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}, timing rows {18}/{19}, compress rows {20}/{21}, supervision rows {22}/{23}, speech rows {24}/{25}, phone rows {26}/{27}",
+            "coverage: lifecycle rows {0}/{1}, admission rows {2}/{3}, start rows {4}/{5}, invalid pairs {6}/{7}, stop_phrase rows {8}/{9}, amendments {10}/{11}, latch rows {12}/{13}, wiring rows {14}/{15}, clarify rows {16}/{17}, timing rows {18}/{19}, compress rows {20}/{21}, supervision rows {22}/{23}, speech rows {24}/{25}, phone rows {26}/{27}, code rows {28}/{29}",
             _lifecyclePassed,
             _lifecycleTotal,
             _admissionPassed,
@@ -91,7 +94,9 @@ internal sealed partial class CheckRunner
             _speechPassed,
             _speechTotal,
             _phonePassed,
-            _phoneTotal);
+            _phoneTotal,
+            _codePassed,
+            _codeTotal);
     }
 
     private void RunLifecycleRows()
