@@ -5,7 +5,7 @@
 - Primary folder: `C:\Users\test\Dev\zola-windows`, branch `main`
 - Worktree: `C:\Users\test\Dev\zola-windows-p10-watch`, branch `p10-watch`
 - Base SHA: `166acb13af227fd8584905b399e92238e407dedd` (`main` = `origin/main` at Phase 1)
-- Worktree HEAD: `166acb13af227fd8584905b399e92238e407dedd`
+- Worktree HEAD: `7c701d9b27e125b8601ba82d40439fc9f8a94cf8` (implementation). The 7d commit records this SHA.
 - Hermes HEAD: `345cd2b057a452236de401d3534b8502a7465e8d` (clean, no porcelain)
 - Prompt: `P10-WATCH_Prompt_v1.1.md` (canonical: `C:\Users\test\Dev\zola-spikes\prompts\P10-WATCH_Prompt_v1.1.md`)
 - Prompt SHA-256 (on-disk, 76,371 bytes): `176e4adde68d056fe7257e54282d6661681519ea119c366e555ad3ee7f83b668`
@@ -1458,6 +1458,8 @@ Residuals already listed: the Hermes-internals names in the Phase 6 report; serv
 
 The four-group residual no longer includes a possessive. A longer word that starts with the name, and a one-token form, still do not match. The number-owner path still skips the 2-second wait.
 
-### 7c
+### 7c — Implementation commit
 
-Implementation commit follows this section. The SHA is recorded in the 7d commit.
+**Implementation SHA:** `7c701d9b27e125b8601ba82d40439fc9f8a94cf8`
+
+Message: `feat(P10-WATCH): person and number watches, forget by person or number, watched-text speech — P10-D13/D14/D15`
