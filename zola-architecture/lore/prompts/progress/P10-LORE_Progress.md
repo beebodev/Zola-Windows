@@ -1056,7 +1056,7 @@ Kept: `C:\Users\test\Dev\zola-spikes\crash-dumps-2026-10-17`. Not deleted by thi
 | Named constants; no content in logs or repo documents | ✅ Constants matched the code in Phase 5. Content scan found no `ZP10-` message bodies in the repo documents or the suite logs. ⚠️ listed with it: Hermes `agent.log` logs Brian's own words (S86). That is a residual, not a Phase 10 content leak. |
 | Suites on `main` | ✅ Phase 1 release run, below. |
 | Smoke after each track | ✅ Recorded in the track progress docs. Not re-run at this closeout. |
-| Lore closeout complete | ⚠️ Drafts are applied. The commit, merge, and `p10-closed` tag wait for "proceed to commit and merge". |
+| Lore closeout complete | ✅ Applied, committed, and merged. Implementation `5d2813130c8f48d13acd96eb09d6e4c877ecb57e`. Merge `d9effc5ae8b9f55345430a16e1046eeb49df68e1`. |
 
 Phase 5 items Brian chose to leave, still ⚠️: `VOICE_CONFIG.md` waits for ARCH-SWAP; `MEMORY_CONVENTIONS.md` has no live copy; `zola_tools` differs by newline only; the live `phone_test_keys.json` matches the repo and was not removed; the crash dumps are not analyzed.
 
@@ -1137,3 +1137,7 @@ Brian: proceed to commit and merge.
 **Implementation SHA:** `5d2813130c8f48d13acd96eb09d6e4c877ecb57e`
 
 Message: `docs(P10-LORE): Phase 10 lore closeout — decisions, open questions, roadmap`
+
+Docs commit recording that SHA: `c89ce146ff3900586ce406389209b26d5e857187`. Branch `p10-lore` was pushed. The tracked tree was clean.
+
+**Merge SHA (`main`):** `d9effc5ae8b9f55345430a16e1046eeb49df68e1` (`git merge --no-ff p10-lore`). Pushed to `origin/main`.
