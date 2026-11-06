@@ -1133,3 +1133,7 @@ The use line is an input to the next phase's readiness check, not a gate on the 
 ## Phase 7
 
 Brian: proceed to commit and merge.
+
+**Implementation SHA:** `5d2813130c8f48d13acd96eb09d6e4c877ecb57e`
+
+Message: `docs(P10-LORE): Phase 10 lore closeout — decisions, open questions, roadmap`
