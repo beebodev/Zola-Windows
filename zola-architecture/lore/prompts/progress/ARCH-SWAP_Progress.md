@@ -22,7 +22,7 @@
 | 4 | Retire the 39 copies | COMPLETE (accepted 2026-11-06) |
 | 5 | Identity lines under P4-D25 | COMPLETE (accepted 2026-11-06) |
 | 6 | Apply the identity edits and verify | COMPLETE (accepted 2026-11-06) |
-| 7 | Commit and merge | in progress (2026-11-06) |
+| 7 | Commit and merge | COMPLETE (2026-11-06) |
 
 ## Guardrail summary
 
@@ -862,5 +862,7 @@ Subject: `docs(ARCH-SWAP): Windows architecture docs replace the Android-era cop
 
 Merge SHA: `1fb0e6150e8354ea0bbc15a1225b83df2ad3f4f4`.
 Subject: `Merge branch 'arch-swap'`.
-`main` and `origin/main` are this merge.
+`main` and `origin/main` were this merge when it was pushed. The merge-SHA record is the commit after it.
+
+P6-D11: after that push, with a clean tree, deleted only this track's backup: `SOUL.md.bak-ARCH-SWAP-20261106-142512`. `SOUL.md.bak-P4-VOICE-20261001-091115` and the older `config.yaml.bak-*` files were left in the profile folder. No `SOUL.md.bak-ARCH-SWAP-*` file remains.
 
