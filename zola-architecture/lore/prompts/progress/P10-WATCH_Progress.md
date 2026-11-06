@@ -23,7 +23,7 @@
 | 4 | Implement and bench | STOP. Bench recorded. |
 | 5 | Review checkpoint | Run sheet amended after review. STOP for "proceed to phase 6". |
 | 6 | Smoke | Passed. Phase 6 report is written. Open watches 0. |
-| 7 | Closeout | In progress. 7a and 7b are in the closeout section. |
+| 7 | Closeout | Merged. 7i waits on his confirmation of the live state. |
 
 ## Guardrails summary
 
@@ -1463,3 +1463,17 @@ The four-group residual no longer includes a possessive. A longer word that star
 **Implementation SHA:** `7c701d9b27e125b8601ba82d40439fc9f8a94cf8`
 
 Message: `feat(P10-WATCH): person and number watches, forget by person or number, watched-text speech — P10-D13/D14/D15`
+
+### 7d–7e
+
+Docs commit recording the implementation SHA: `100b713b7eae6689d99798a4afe6148bde6d8396`. Branch `p10-watch` pushed to origin. The tracked tree was clean.
+
+### 7f — Merge
+
+The worktree client was closed so the merge could leave that folder. Client 2028 and its watcher, phone, and serve are gone.
+
+**Merge SHA (`main`):** `2e0b72ab23bdd78cd5b0b242ed77f396671d9a93` (`git merge --no-ff p10-watch`). Pushed to `origin/main`. `main` = `origin/main` at that commit.
+
+### 7g
+
+The commit that records this merge SHA follows. 7h follows that commit. 7i waits until Brian confirms the live state. Scratch `C:\Users\test\Dev\zola-spikes\p10-watch\` is still there, including the part4b backup. He relaunches the client from `main`.
