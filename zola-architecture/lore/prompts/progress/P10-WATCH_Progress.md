@@ -1476,4 +1476,14 @@ The worktree client was closed so the merge could leave that folder. Client 2028
 
 ### 7g
 
-The commit that records this merge SHA follows. 7h follows that commit. 7i waits until Brian confirms the live state. Scratch `C:\Users\test\Dev\zola-spikes\p10-watch\` is still there, including the part4b backup. He relaunches the client from `main`.
+The commit that records this merge SHA follows. 7i waits until Brian confirms the live state. Scratch `C:\Users\test\Dev\zola-spikes\p10-watch\` is still there, including the part4b backup. He relaunches the client from `main`.
+
+### 7h
+
+`git worktree remove` deregistered the worktree and did not use `--force`. Deleting the folder failed: Permission denied. The leftover folder is `C:\Users\test\Dev\zola-windows-p10-watch`. It is not a registered worktree. Close any handle on that path and delete the folder if it remains.
+
+Local `p10-watch` is deleted (was `100b713`). `origin/p10-watch` is deleted. `main` = `origin/main` = `53fea5869af561cb4969d05f4cb5f15063ed4663`.
+
+### 7i
+
+Not done. Scratch stays until Brian confirms the live state.
