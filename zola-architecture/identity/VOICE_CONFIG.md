@@ -52,6 +52,7 @@ wake_word:
 - `tts.provider`: `deepgram` (`P9-D14`). The Edge block remains in the live file and is not the active provider.
 - `tts.providers.deepgram`: command provider. The script is `%LOCALAPPDATA%\hermes\profiles\zola\zola-tts\deepgram_tts.py`. Model `aura-2-pandora-en`. Speed `0.95`. Output `mp3`.
 - The key file is `%LOCALAPPDATA%\ZolaClient\secrets\deepgram_api_key`. The key is not in `config.yaml` and not in this document.
+- Verification codes never use this voice. When Brian explicitly asks for a code, it is spoken in the local Windows voice Microsoft Zira, from memory, with no file and no network, so the value never reaches Deepgram, the Hermes speech files or a log (`R1`, amended by ARCH-36; Brian: "I'm going with Zira."). See `DESIGN_DECISIONS.md`, R1.
 - `voice.silence_duration`: `1.5` seconds of quiet after speech ends a capture. The Hermes default of 3.0 is too slow for a conversation (`P2-D09`).
 - `voice.barge_in`: `false` (`P4-D28`, applied under `P4-D25` / P4-ASK Option A). Was `true` under `P2-D09`; talking over her no longer interrupts (Cancel / "Hey Zola" after she finishes still work).
 - `voice.stop_phrases`: `["stop"]` ends the voice exchange when that is the whole utterance (`P2-D09`).
@@ -83,7 +84,9 @@ P4-REQUEST: profile clarify wait before Hermes skips — P4-D10
 
 Applied under `agent:` beside `reasoning_effort`. No serve restart required; Hermes reloads this on each clarify. No other profile key was changed in that edit.
 
-## Voice: Sonia at 0.95 (P4-VOICE Round 1)
+## Voice: Sonia at 0.95 (P4-VOICE Round 1) — historical
+
+**Historical.** Superseded on 2026-10-12 by `P9-D14`: the live voice is Deepgram Aura-2 Pandora at 0.95 (see the opening block). The Edge keys are still in `config.yaml` but are not the active provider.
 
 P4-VOICE: provisional spoken voice until live trial verdict — P4-D19
 
@@ -100,7 +103,9 @@ Diff vs first backup: Sonia + speed. Speed A/B: `1.1` → `0.95` only. Serve res
 
 **Live-trial verdict (2026-10-01):** Keep Sonia. 1.1 too fast. Speed A/B labels A=1.0, B=1.05, C=0.95 — **picked C (0.95)**. Deeper via Phase 6 pitch A/B (`0 / −2 / −4 / −6 Hz`). Husky texture (breathiness) not possible with Edge — future premium-voice item. Phase 6 command `--rate` must be `-5%` (literal duplicate of `tts.edge.speed` — both must change together).
 
-## Command provider pitch baseline (P4-VOICE Round 3)
+## Command provider pitch baseline (P4-VOICE Round 3) — historical
+
+**Historical.** The "final provider" below describes 2026-10-01. Since `P9-D14` (2026-10-12) the provider is Deepgram.
 
 P4-VOICE: command-provider Edge for pitch control — P4-D21
 
@@ -186,6 +191,7 @@ The keyword model is not a pip package. `_ensure_sherpa_model` downloads it with
 | `tts.edge.voice` | `en-GB-SoniaNeural` | 2026-10-01 | P4-D19 kept; speed set via A/B |
 | `tts.edge.speed` | `0.95` | 2026-10-01 | Speed A/B pick C (was 1.1 too fast; Edge rate=-5%) |
 | `tts.provider` | `edge` | 2026-10-01 | P4-D21: `sonia_cmd` tried then restored — latency gate fail; pitch dropped |
+| `tts.provider` | `deepgram` | 2026-10-12 | P9-D14: Aura-2 Pandora (`aura-2-pandora-en`), speed 0.95. Edge is no longer the active provider. |
 | `voice.silence_duration` | `1.5` | 2026-09-23 | passed |
 | `EstimatedWordsPerSecond` | `2.5` | 2026-09-23 | passed. Unchanged. Word rate from the six silent replies. |
 | `EstimatedWordsPerSecond` | `2.5` | 2026-10-01 | P4-D22 refit on Sonia 0.95 — constants unchanged; the 2.5 wps estimate is conservative vs measured ~3.3–3.5 wps; fallback never early on bout-duration. |
