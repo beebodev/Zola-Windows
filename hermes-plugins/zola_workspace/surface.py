@@ -100,10 +100,16 @@ CONTACTS_UNAVAILABLE_PHRASE = "contacts could not be checked"
 SHARED_NUMBER_PHRASE = "a number saved for two contacts"
 NAMELESS_CONTACT_PHRASE = "a saved contact"
 # P9-SURFACE: a watched reply asks her to tell him and to ask; still outside the frame — P9-D10
+# P9-SURFACE: a watched reply asks her to tell him and to ask; still outside the frame — P9-D10
 SURFACE_LOOP_ASK = (
     "One of these is a reply on a thread Brian asked you to watch. "
     "Tell him, then ask whether to keep watching or stop. "
     "Never stop watching on your own."
+)
+# P10-WATCH: a watched text is information for the current request — verdict 9
+SURFACE_LOOP_ASK_PHONE = (
+    "One of these is a text from someone Brian asked you to watch for. "
+    "His current request comes first; mention it when it fits."
 )
 TOKEN_MIN = 4
 
@@ -448,15 +454,16 @@ def _collapse_key(row: Dict[str, Any]) -> Optional[Tuple]:
     # hash; never a display name or the last four digits. thread_id is empty on phone ingest, so a
     # group is told apart only by is_group. Two groups from one sender therefore share a line
     # (recorded in the progress doc). An unparsed sender has no usable identity and is not merged.
-    if row.get("source") not in PHONE_TEXT_SOURCES or int(row.get("loop_matched") or 0):
+    if row.get("source") not in PHONE_TEXT_SOURCES:
         return None
+    watched = 1 if int(row.get("loop_matched") or 0) else 0
     group = int(row.get("is_group") or 0)
     if row.get("person_handle"):
-        return ("person", row["person_handle"], group)
+        return ("person", row["person_handle"], group, watched)
     if row.get("sender_kind") in (
         phone_ids.KIND_E164, phone_ids.KIND_SHORTCODE, phone_ids.KIND_ALNUM
     ) and row.get("sender_address_hash"):
-        return ("hash", row["sender_address_hash"], group)
+        return ("hash", row["sender_address_hash"], group, watched)
     return None
 
 
@@ -839,27 +846,45 @@ def _has_loop(rows: List[Dict[str, Any]]) -> bool:
     return any(int(row.get("loop_matched") or 0) for row in rows)
 
 
-def _tell(loop: bool) -> str:
+def _phone_watch(rows: List[Dict[str, Any]]) -> bool:
+    return any(
+        str(row.get("source") or "") in ("sms", "mms") and int(row.get("loop_matched") or 0)
+        for row in rows
+    )
+
+
+def _tell(loop: bool, phone_watch: bool = False) -> str:
     # P9-SURFACE: the watch sentence is added only when a matched loop is in the block — P9-D10
     if not loop:
         return SURFACE_TELL_LINE
+    if phone_watch:
+        return SURFACE_TELL_LINE + " " + SURFACE_LOOP_ASK_PHONE
     return SURFACE_TELL_LINE + " " + SURFACE_LOOP_ASK
 
 
-def _present(inner: str, loop: bool = False) -> str:
+def _present(inner: str, loop: bool = False, phone_watch: bool = False) -> str:
     # P9-SURFACE: mail stays inside the frame; this line is not retrieved text — P9-D10
-    return _tell(loop) + "\n" + framing.frame_untrusted("surface", inner)
+    return _tell(loop, phone_watch) + "\n" + framing.frame_untrusted("surface", inner)
 
 
-def _inner_cap(loop: bool = False) -> int:
+def _inner_cap(loop: bool = False, phone_watch: bool = False) -> int:
     # P9-SURFACE: the tell line, including the watch sentence, shares the 1800 cap — P9-D10
-    overhead = len(_present("", loop))
+    overhead = len(_present("", loop, phone_watch))
     return max(200, SURFACE_CHAR_CAP - overhead)
 
 
 def _build_block(rows: List[Dict[str, Any]], now: datetime, session_id: str) -> Tuple[str, List[Dict[str, Any]], Dict[str, int]]:
     # P10-READ: name every phone row first; tiers and lines depend on the contact index at read time
     _annotate_phone(rows)
+    try:
+        from . import loops as _loops
+    except ImportError:
+        import loops as _loops
+    for row in rows:
+        if int(row.get("loop_matched") or 0) and row.get("person_handle"):
+            _loops.note_session_person(
+                session_id, str(row["person_handle"]), str(row.get("person_name") or "")
+            )
     offerable = [row for row in rows if _offerable(row, now)]
     offerable.sort(key=_sort_key)
     units = _collapse(offerable)
@@ -887,17 +912,31 @@ def _build_block(rows: List[Dict[str, Any]], now: datetime, session_id: str) -> 
     # character cap with it already in the block, so it survives that too. This is a balance
     # between channels, not a claim that a saved contact matters more than important mail.
     reserved: Optional[List[Dict[str, Any]]] = None
+    watched_unit: Optional[List[Dict[str, Any]]] = None
     for unit in units:
         if unit[0].get("phone_tier") != TIER_PHONE_CONTACT:
             continue
         if reserved is None or _detected_ts(unit[0]) > _detected_ts(reserved[0]):
             reserved = unit
-    order = ([reserved] if reserved is not None else []) + [unit for unit in units if unit is not reserved]
+    for unit in units:
+        if not any(
+            int(row.get("loop_matched") or 0) and row.get("source") in PHONE_TEXT_SOURCES for row in unit
+        ):
+            continue
+        if watched_unit is None or _detected_ts(unit[0]) > _detected_ts(watched_unit[0]):
+            watched_unit = unit
+    front = []
+    if watched_unit is not None:
+        front.append(watched_unit)
+    if reserved is not None and reserved is not watched_unit:
+        front.append(reserved)
+    front_ids = {id(unit) for unit in front}
+    order = front + [unit for unit in units if id(unit) not in front_ids]
     picked_units: List[List[Dict[str, Any]]] = []
     held_units: List[List[Dict[str, Any]]] = []
     lines = [_header(session_id, now)]
     for position, unit in enumerate(order):
-        is_reserved = unit is reserved
+        is_reserved = unit is reserved or unit is watched_unit
         if not is_reserved and len(picked_units) >= SURFACE_ITEM_CAP:
             held_units.append(unit)
             continue
@@ -908,7 +947,7 @@ def _build_block(rows: List[Dict[str, Any]], now: datetime, session_id: str) -> 
         loop = any(int(row.get("loop_matched") or 0) == 1 for u in picked_units for row in u) or any(
             int(row.get("loop_matched") or 0) == 1 for row in unit
         )
-        if not is_reserved and len(trial) + (1 + len(tail) if tail else 0) > _inner_cap(loop):
+        if not is_reserved and len(trial) + (1 + len(tail) if tail else 0) > _inner_cap(loop, _phone_watch([row for u in picked_units for row in u] + unit)):
             held_units.append(unit)
             continue
         lines.append(line)
@@ -924,7 +963,7 @@ def _build_block(rows: List[Dict[str, Any]], now: datetime, session_id: str) -> 
     if tail:
         lines.append(tail)
     text = "\n".join(lines) if picked or tail else ""
-    cap = _inner_cap(_has_loop(picked))
+    cap = _inner_cap(_has_loop(picked), _phone_watch(picked))
     if len(text) > cap:
         text = text[: cap - 24].rstrip() + "\nAsk what's pending."
     return text, picked, {
@@ -963,7 +1002,7 @@ def _finish_text(
     if len(lines) == 1:
         return ""
     text = "\n".join(lines)
-    cap = _inner_cap(_has_loop(picked))
+    cap = _inner_cap(_has_loop(picked), _phone_watch(picked))
     if len(text) > cap:
         text = text[: cap - 24].rstrip() + "\nAsk what's pending."
     return text
@@ -987,7 +1026,7 @@ def _post_speech_note(conn, session_id, task_id, turn_id, now, item, speech_atte
         "post_speech_attempt_id": speech_attempt,
         "rows": {row["id"]: row},
     }
-    returned = _present(text, _has_loop([row]))
+    returned = _present(text, _has_loop([row]), _phone_watch([row]))
     _log("ok", gap=0, returned=1, items=1, chars=len(returned), ms=_ms(started))
     return returned
 
@@ -1113,7 +1152,7 @@ def _pre_llm(**kwargs: Any) -> Optional[str]:
             "rows": {row["id"]: row for row in kept},
         }
         _seen_block.add(session_id)
-        returned = _present(text, _has_loop(kept))
+        returned = _present(text, _has_loop(kept), _phone_watch(kept))
         _log(
             "ok",
             gap=1,

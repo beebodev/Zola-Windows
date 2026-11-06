@@ -297,8 +297,8 @@ class SchemaSevenTests(_Base):
     def test_migration_adds_nullable_hint_and_leaves_old_rows_empty(self) -> None:
         self._migrate_with_old_rows()
         version = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "7")
-        self.assertEqual(proactive_store.SCHEMA_VERSION, 7)
+        self.assertEqual(version, "8")
+        self.assertEqual(proactive_store.SCHEMA_VERSION, 8)
         columns = {c[1]: c for c in self.conn.execute("PRAGMA table_info(items)")}
         self.assertIn("sender_hint", columns)
         self.assertEqual(columns["sender_hint"][3], 0)  # nullable
@@ -346,7 +346,7 @@ class SchemaSevenTests(_Base):
         self._migrate_with_old_rows()
         proactive_store._migrate_v7_committed(self.conn)
         self.assertEqual(
-            self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "7"
+            self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "8"
         )
 
 

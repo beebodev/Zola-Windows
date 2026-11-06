@@ -182,8 +182,8 @@ class MigrationTests(unittest.TestCase):
         conn = proactive_store.connect(path, retry=False)
         self.addCleanup(conn.close)
         version = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        # P10-READ: SCHEMA_VERSION is 7 now; the v6 rebuild still ran on the way
-        self.assertEqual(version, "7")
+        # P10-WATCH: a full connect now lands on schema 8
+        self.assertEqual(version, "8")
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], before_items)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM loops").fetchone()[0], before_loops)
         self.assertEqual(conn.execute("SELECT value FROM meta WHERE key = 'ranker_state'").fetchone()[0], "idle")
@@ -203,7 +203,7 @@ class MigrationTests(unittest.TestCase):
         conn.close()
         again = proactive_store.connect(path, retry=False)
         self.addCleanup(again.close)
-        self.assertEqual(again.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "7")
+        self.assertEqual(again.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "8")
         second = [tuple(item) for item in again.execute("SELECT * FROM items ORDER BY id")]
         self.assertEqual(second, first)
         self.assertEqual(again.execute("PRAGMA foreign_key_check").fetchall(), [])

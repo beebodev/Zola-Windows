@@ -1250,6 +1250,235 @@ class IntakeTests(unittest.TestCase):
         self.assertFalse(claimed.get("ok"))
         self.assertEqual(claimed.get("refused_reason"), "phone_deferred")
 
+    def _sms(self, provider, received_at_ms=NOW, body="hello"):
+        payload = self._payload(
+            "messages.event",
+            provider_id=provider,
+            kind="sms",
+            revision=1,
+            completeness="complete",
+            received_at_ms=received_at_ms,
+            sender_raw="+15555550100",
+            is_group=0,
+            participant_count=1,
+            rcs_flag="no",
+            body=body,
+        )
+        return self.engine.receive("c1", self._signed(payload))
+
+    def _person_watch(self, store, digest, after="2020-01-01T00:00:00Z", lifetime="once"):
+        return store.insert_loop(
+            self.engine.conn,
+            intent="person",
+            predicate={
+                "op": "all",
+                "args": [
+                    {"op": "sender_any", "address_hashes": [digest]},
+                    {"op": "channel", "channel": "text"},
+                    {"op": "after", "at": after},
+                ],
+                "lifetime": lifetime,
+                "channel": "text",
+                "person_handle": "c_beebo",
+            },
+            session_id="sess-zp10",
+            sender_display_name="Beebo Dev",
+            address_hashes=[digest],
+            name_source="contacts_index",
+        )
+
+    def test_forget_race_phone(self) -> None:
+        from datetime import datetime, timezone
+
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        digest = ids.hash("+15555550100")
+        self._person_watch(store, digest)
+
+        def pause(name):
+            if name == "after_predicates":
+                store.forget_subject(self.engine.conn, address_hashes=[digest])
+
+        self.engine.fault = pause
+        self._sms("race-phone", body="secret words")
+        self.engine.fault = None
+        row = self.engine.conn.execute("SELECT loop_matched, body, content_state FROM items").fetchone()
+        self.assertTrue(row is None or row["loop_matched"] == 0)
+        self.assertTrue(row is None or row["body"] is None)
+        when = datetime.fromtimestamp(NOW / 1000, timezone.utc)
+        claim = store.claim_next_speech(self.engine.conn, now=when)
+        blob = json.dumps(claim)
+        self.assertNotIn("Beebo Dev", blob)
+        self.assertNotIn("secret words", blob)
+        again = json.loads(self._sms("race-phone", body="secret words").decode("utf-8"))["payload"]
+        self.assertEqual(again["result"], "suppressed")
+        stored = self.engine.conn.execute("SELECT body FROM items").fetchall()
+        self.assertFalse(any(item["body"] == "secret words" for item in stored))
+
+    def test_stop_race_phone(self) -> None:
+        from unittest import mock
+
+        from zola_workspace import loops
+        from zola_workspace import origin
+        from zola_workspace import turn_context
+
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        digest = ids.hash("+15555550100")
+        created = self._person_watch(store, digest)
+        loops.note_session_person("sess-zp10", "c_beebo", "Beebo Dev", created["id"])
+        turn_context.record_pre_llm_call(
+            turn_id="turn-stop", session_id="sess-zp10", platform="tui", user_message="Stop watching for her."
+        )
+        origin.grant_turn_for_tests("turn-stop", "Stop watching for her.")
+
+        def pause(name):
+            if name == "after_predicates":
+                with mock.patch.object(turn_context, "current_turn_id_from_context", return_value="turn-stop"):
+                    loops.close_listed(self.engine.conn, {"action": "close"})
+
+        self.engine.fault = pause
+        self._sms("stop-phone", body="hello")
+        self.engine.fault = None
+        row = self.engine.conn.execute("SELECT loop_matched FROM items").fetchone()
+        self.assertEqual(row["loop_matched"], 0)
+        self.assertEqual(self.engine.conn.execute("SELECT closed_intent FROM loops").fetchone()[0], "cancelled")
+        self.engine.conn.execute("UPDATE loops SET expires_at = ?", ("2020-01-01T00:00:00Z",))
+        self.engine.conn.commit()
+        from datetime import datetime, timezone
+
+        when = datetime.fromtimestamp(NOW / 1000, timezone.utc)
+        store.purge_retention(self.engine.conn, now=when)
+        store.purge_retention(self.engine.conn, now=when)
+        self.assertEqual(self.engine.conn.execute("SELECT closed_intent FROM loops").fetchone()[0], "cancelled")
+
+    def test_phone_row_matches_on_detected_at_through_ingest(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        moment = datetime.fromtimestamp(NOW / 1000, timezone.utc)
+        after = (moment - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._person_watch(store, ids.hash("+15555550100"), after=after)
+        early = json.loads(self._sms("early-at", NOW - 2 * 24 * 3600 * 1000).decode("utf-8"))["payload"]
+        late = json.loads(self._sms("late-at", NOW).decode("utf-8"))["payload"]
+        self.assertEqual(early["result"], "stored")
+        self.assertEqual(late["result"], "stored")
+        rows = {
+            row["message_id"]: row["loop_matched"]
+            for row in self.engine.conn.execute("SELECT message_id, loop_matched FROM items")
+        }
+        self.assertEqual(rows["early-at"], 0)
+        self.assertEqual(rows["late-at"], 1)
+
+    def test_notification_never_matches_through_ingest(self) -> None:
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        self._person_watch(store, ids.hash("+15555550100"))
+        note = self._payload(
+            "notifications.event",
+            package="com.zp10.app",
+            notification_key="n-race",
+            newest_message_timestamp="1000",
+            revision=1,
+            completeness="complete",
+            posted_at_ms=NOW,
+            text="hello",
+            is_group=0,
+            sender_raw="+15555550100",
+        )
+        ack = json.loads(self.engine.receive("c1", self._signed(note)).decode("utf-8"))["payload"]
+        self.assertEqual(ack["result"], "stored")
+        row = self.engine.conn.execute("SELECT id, loop_matched FROM items WHERE source = 'notif'").fetchone()
+        self.assertEqual(row["loop_matched"], 0)
+        claimed = store.claim_speech(self.engine.conn, row["id"])
+        self.assertFalse(claimed.get("ok"))
+        self.assertEqual(claimed.get("refused_reason"), "phone_deferred")
+
+    def test_burst_across_phone_restart(self) -> None:
+        from datetime import datetime, timezone
+
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        self._person_watch(store, ids.hash("+15555550100"), lifetime="standing")
+        for index, offset in enumerate((0, 30_000, 60_000)):
+            ack = json.loads(self._sms("burst-%s" % index, NOW + offset).decode("utf-8"))["payload"]
+            self.assertEqual(ack["result"], "stored")
+        when = datetime.fromtimestamp((NOW + 90_000) / 1000, timezone.utc)
+        first = store.claim_next_speech(self.engine.conn, now=when)
+        self.assertTrue(first.get("ok"), first)
+        self.engine.close()
+        restarted = Engine(self.home, SECRET)
+        restarted.clock = lambda: NOW + 90_000
+        self.engine = restarted
+        second = store.claim_next_speech(self.engine.conn, now=when)
+        self.assertNotEqual(second.get("item_id"), first.get("item_id"))
+        self.assertFalse(second.get("item_id"))
+
+    def test_burst_resend(self) -> None:
+        from datetime import datetime, timezone
+
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        self._person_watch(store, ids.hash("+15555550100"), lifetime="standing")
+        self._sms("burst-a", NOW)
+        again = json.loads(self._sms("burst-a", NOW + 1000).decode("utf-8"))["payload"]
+        self.assertEqual(again["result"], "duplicate")
+        self._sms("burst-b", NOW + 30_000)
+        self._sms("burst-c", NOW + 60_000)
+        when = datetime.fromtimestamp((NOW + 90_000) / 1000, timezone.utc)
+        first = store.claim_next_speech(self.engine.conn, now=when)
+        second = store.claim_next_speech(self.engine.conn, now=when)
+        self.assertTrue(first.get("ok"), first)
+        self.assertFalse(second.get("item_id"))
+        self.assertEqual(self.engine.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 3)
+
+    def test_resend_suppressed(self) -> None:
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        self._sms("lost-ack", body="secret words")
+
+        def boom(name):
+            if name == "after_commit":
+                raise RuntimeError("lost ack")
+
+        self.engine.fault = boom
+        with self.assertRaises(RuntimeError):
+            self._sms("lost-live", body="still secret")
+        self.engine.fault = None
+        store.forget_subject(self.engine.conn, address_hashes=[ids.hash("+15555550100")])
+        again = json.loads(self._sms("lost-live", body="still secret").decode("utf-8"))["payload"]
+        self.assertEqual(again["result"], "suppressed")
+        bodies = [row["body"] for row in self.engine.conn.execute("SELECT body FROM items")]
+        self.assertNotIn("still secret", bodies)
+
+    def test_replay_suppressed(self) -> None:
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        self._sms("replay-me", body="catch up")
+        store.forget_subject(self.engine.conn, address_hashes=[ids.hash("+15555550100")])
+        self.engine.close()
+        restarted = Engine(self.home, SECRET)
+        restarted.clock = lambda: NOW
+        self.engine = restarted
+        again = json.loads(self._sms("replay-me", body="catch up").decode("utf-8"))["payload"]
+        self.assertEqual(again["result"], "suppressed")
+        self.assertEqual(self.engine.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 0)
+
+    def test_repair_resend_suppressed(self) -> None:
+        self._pair()
+        _addr, _match, ids, store = load_store()
+        self._sms("repair-me", body="paired again")
+        store.forget_subject(self.engine.conn, address_hashes=[ids.hash("+15555550100")])
+        self.engine.close()
+        repaired = Engine(self.home, SECRET)
+        repaired.clock = lambda: NOW
+        self.engine = repaired
+        self._pair()
+        again = json.loads(self._sms("repair-me", body="paired again").decode("utf-8"))["payload"]
+        self.assertEqual(again["result"], "suppressed")
+        self.assertEqual(self.engine.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

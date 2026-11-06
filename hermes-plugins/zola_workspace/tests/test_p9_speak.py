@@ -301,7 +301,7 @@ class SpeakClaimTests(unittest.TestCase):
             self.assertEqual(claimed.get("source"), "gmail")
             self.assertEqual(
                 set(claimed),
-                {"ok", "item_id", "attempt_id", "name", "name_source", "source"},
+                {"ok", "item_id", "attempt_id", "name", "name_source", "source", "line_kind"},
             )
             self.assertNotIn("subject", claimed)
             self.assertNotIn("gist", claimed)
@@ -347,7 +347,7 @@ class SpeakClaimTests(unittest.TestCase):
             self.assertEqual(claimed.get("source"), "gmail")
             self.assertEqual(
                 set(claimed),
-                {"ok", "item_id", "attempt_id", "name", "name_source", "source"},
+                {"ok", "item_id", "attempt_id", "name", "name_source", "source", "line_kind"},
             )
             refused = speech.claim_for_client({"item_id": older})
             self.assertEqual(refused.get("reason"), "bad_args")
