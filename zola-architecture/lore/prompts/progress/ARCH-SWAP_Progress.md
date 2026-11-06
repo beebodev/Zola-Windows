@@ -860,3 +860,7 @@ The Android-era originals live in the Android repository.
 Implementation SHA: `533951ff6a8e022503a19ed3acda9000b9822774`.
 Subject: `docs(ARCH-SWAP): Windows architecture docs replace the Android-era copies`.
 
+Merge SHA: `1fb0e6150e8354ea0bbc15a1225b83df2ad3f4f4`.
+Subject: `Merge branch 'arch-swap'`.
+`main` and `origin/main` are this merge.
+
