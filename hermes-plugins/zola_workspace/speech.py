@@ -50,6 +50,36 @@ CALENDAR_LINES = (
     "Brian, something you asked me to watch on your calendar just changed.",
     "Heads up, one of the events you asked me to watch was updated.",
 )
+# P10-WATCH: name only, every line opens with an attention word — P10-D15 / verdict 5
+TEXT_NAMED = (
+    "Brian, quick one: {name} texted you.",
+    "Heads up, {name} just texted.",
+    "Quick one: you've got a text from {name}.",
+    "Brian, {name} texted you.",
+    "Brian, quick one: {name} just sent you a text.",
+)
+TEXT_UNNAMED = (
+    "Brian, someone you asked me to watch for just texted.",
+    "Heads up, someone you're watching for just texted.",
+    "Quick one: a text from someone you asked me to watch for.",
+)
+TEXT_NUMBER = (
+    "Brian, that number you asked me to watch just texted.",
+    "Heads up, that number you asked me to watch just texted.",
+    "Quick one: a text from the number you're watching.",
+)
+TEXT_GROUP = (
+    "Brian, quick one: {name} texted in a group thread.",
+    "Heads up, {name} just texted in a group thread.",
+    "Quick one: a group text from {name}.",
+    "Brian, {name} texted in a group thread.",
+)
+EMAIL_PERSON = (
+    "Brian, quick one: {name} emailed you.",
+    "Heads up, {name} just emailed.",
+    "Quick one: you've got an email from {name}.",
+    "Brian, {name} emailed you.",
+)
 
 _NAME = re.compile(r"^[A-Za-z](?:[A-Za-z' -]{0,38}[A-Za-z])?$")
 _speak_enabled: Optional[bool] = None
@@ -176,6 +206,10 @@ def _sender_hashes(node: Any) -> set:
         digest = str(node.get("address_hash") or "")
         if digest:
             found.add(digest)
+    if node.get("op") == "sender_any":
+        for digest in node.get("address_hashes") or []:
+            if str(digest):
+                found.add(str(digest))
     for child in node.get("args") or []:
         found.update(_sender_hashes(child))
     return found
@@ -192,8 +226,10 @@ def _name_for_item(conn, item_id: str) -> Tuple[str, str]:
         return "someone", ""
     chosen = ("someone", "")
     for loop in conn.execute(
-        "SELECT status, sender_display_name, name_source, predicate_json FROM loops"
+        "SELECT status, closed_intent, sender_display_name, name_source, predicate_json, intent FROM loops"
     ):
+        if str(loop["closed_intent"] or "") == "forgotten":
+            continue
         try:
             predicate = json.loads(loop["predicate_json"] or "{}")
         except json.JSONDecodeError:
@@ -210,6 +246,38 @@ def _name_for_item(conn, item_id: str) -> Tuple[str, str]:
             return source, cleaned
         chosen = (source, cleaned)
     return chosen
+
+
+def line_kind_for(conn, item_id: str) -> str:
+    # P10-WATCH: the channel word comes from the item, not from its content — P10-D15
+    item = proactive_store._item(conn, item_id)
+    if item is None:
+        return ""
+    source = str(item["source"] or "")
+    name_source, name = _name_for_item(conn, item_id)
+    intent = ""
+    sender = str(item["sender_address_hash"] or "")
+    for loop in conn.execute("SELECT intent, predicate_json, status FROM loops"):
+        try:
+            predicate = json.loads(loop["predicate_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if sender and sender in _sender_hashes(predicate):
+            if loop["status"] == "open" or not intent:
+                intent = str(loop["intent"] or "")
+                if loop["status"] == "open":
+                    break
+    if source in ("sms", "mms"):
+        if intent == "number":
+            return "text_number"
+        if int(item["is_group"] or 0) == 1 and name:
+            return "text_group"
+        if name and name_source == "contacts_index":
+            return "text_named"
+        return "text_unnamed"
+    if source == "gmail" and name and name_source == "contacts_index":
+        return "email_person"
+    return ""
 
 
 def snapshot_for_client(params: Optional[dict] = None) -> Dict[str, Any]:
@@ -258,6 +326,7 @@ def claim_for_client(params: Optional[dict] = None) -> Dict[str, Any]:
             "name": name,
             "name_source": name_source if name else "someone",
             "source": str(claimed.get("source") or ""),
+            "line_kind": line_kind_for(conn, item_id),
         }
     finally:
         conn.close()

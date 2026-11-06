@@ -27,8 +27,12 @@ def _instant(value: str) -> Optional[datetime]:
 
 
 def _occurred_at(item: Dict[str, Any]) -> Optional[datetime]:
-    if str(item.get("source") or "") == "calendar" or item.get("event_id"):
+    source = str(item.get("source") or "")
+    if source == "calendar" or item.get("event_id"):
         return _instant(str(item.get("event_updated") or ""))
+    # P10-WATCH: phone time is when the phone received it — P10-D08 / P10-D13
+    if source in ("sms", "mms", "notif"):
+        return _instant(str(item.get("detected_at") or ""))
     return _instant(str(item.get("internal_date") or ""))
 
 
@@ -44,6 +48,24 @@ def _node_matches(node: Dict[str, Any], item: Dict[str, Any]) -> bool:
         return str(item.get("message_id") or "") == str(node.get("message_id") or "")
     if op == "sender_is":
         return str(item.get("sender_address_hash") or "") == str(node.get("address_hash") or "")
+    if op == "sender_any":
+        sender = str(item.get("sender_address_hash") or "")
+        hashes = {str(value) for value in (node.get("address_hashes") or []) if str(value)}
+        return bool(sender) and sender in hashes
+    if op == "channel":
+        source = str(item.get("source") or "")
+        kind = str(node.get("channel") or "")
+        if source == "notif":
+            return False
+        if kind == "text":
+            return source in ("sms", "mms")
+        if kind == "email":
+            return source == "gmail"
+        if kind == "both":
+            return source in ("sms", "mms", "gmail")
+        return False
+    if op == "not_group":
+        return int(item.get("is_group") or 0) != 1
     if op == "not_source":
         message_id = str(item.get("message_id") or "")
         banned = {str(value) for value in (node.get("message_ids") or []) if str(value)}

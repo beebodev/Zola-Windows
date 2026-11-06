@@ -142,8 +142,8 @@ public sealed class ProactiveDeliveryCoordinator
         _itemId = claim.ItemId;
         _attemptId = claim.AttemptId;
         _nameSource = string.IsNullOrEmpty(claim.Name) ? "someone" : (claim.NameSource ?? "someone");
-        _phrase = SpeechPhrases.Pick(claim.Source, claim.Name, claim.NameSource, _phrases);
-        _phraseIndex = IndexOf(_phrase, claim.Source, claim.Name, claim.NameSource);
+        _phrase = SpeechPhrases.Pick(claim.Source, claim.Name, claim.NameSource, _phrases, claim.LineKind);
+        _phraseIndex = IndexOf(_phrase, claim.Source, claim.Name, claim.NameSource, claim.LineKind);
         return Store(SpeechStep.SpeechStarted, "");
     }
 
@@ -537,11 +537,33 @@ public sealed class ProactiveDeliveryCoordinator
         }
     }
 
-    private static int IndexOf(string? phrase, string? source, string? name, string? nameSource)
+    private static int IndexOf(string? phrase, string? source, string? name, string? nameSource, string? lineKind = null)
     {
         if (string.IsNullOrEmpty(phrase))
         {
             return -1;
+        }
+
+        string[]? kindSet = lineKind switch
+        {
+            "text_named" => SpeechPhrases.TextNamed,
+            "text_unnamed" => SpeechPhrases.TextUnnamed,
+            "text_number" => SpeechPhrases.TextNumber,
+            "text_group" => SpeechPhrases.TextGroup,
+            "email_person" => SpeechPhrases.EmailPerson,
+            _ => null,
+        };
+        if (kindSet is not null)
+        {
+            var rendered = phrase;
+            for (var i = 0; i < kindSet.Length; i++)
+            {
+                var candidate = kindSet[i].Replace("{name}", name ?? "", StringComparison.Ordinal);
+                if (string.Equals(candidate, rendered, StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
         }
 
         var named = !string.IsNullOrEmpty(name) && !string.Equals(nameSource, "someone", StringComparison.Ordinal);

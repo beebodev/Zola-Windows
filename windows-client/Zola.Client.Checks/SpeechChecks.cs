@@ -193,6 +193,61 @@ internal sealed partial class CheckRunner
                 && !calendar.Contains("{name}", StringComparison.Ordinal);
         });
 
+        Speech("text line kinds are not gmail lines and do not repeat", () =>
+        {
+            bool One(string kind, string name, string[] set, bool named)
+            {
+                var cursor = new PhraseCursor();
+                var first = SpeechPhrases.Pick("sms", name, "brian_message", cursor, kind);
+                var second = SpeechPhrases.Pick("sms", name, "brian_message", cursor, kind);
+                var gmail = string.Join("\n", SpeechPhrases.GmailNamed).Replace("{name}", name, StringComparison.Ordinal);
+                var inSet = false;
+                foreach (var line in set)
+                {
+                    var rendered = line.Replace("{name}", name, StringComparison.Ordinal);
+                    if (first == rendered)
+                    {
+                        inSet = true;
+                    }
+                }
+
+                var indexOf = typeof(ProactiveDeliveryCoordinator).GetMethod(
+                    "IndexOf",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                var at = indexOf is null
+                    ? -1
+                    : (int)indexOf.Invoke(null, new object?[] { first, "sms", name, "brian_message", kind })!;
+                return inSet
+                    && at == 0
+                    && first != second
+                    && !gmail.Contains(first, StringComparison.Ordinal)
+                    && (first.Contains("text", StringComparison.OrdinalIgnoreCase)
+                        || first.Contains("emailed", StringComparison.Ordinal))
+                    && (!named || first.Contains(name, StringComparison.Ordinal));
+            }
+
+            var calendar = new PhraseCursor();
+            var cal = SpeechPhrases.Pick("calendar", "Quinn", "brian_message", calendar);
+            return One("text_named", "Quinn", SpeechPhrases.TextNamed, true)
+                && One("text_unnamed", "", SpeechPhrases.TextUnnamed, false)
+                && One("text_number", "", SpeechPhrases.TextNumber, false)
+                && One("text_group", "Quinn", SpeechPhrases.TextGroup, true)
+                && One("email_person", "Quinn", SpeechPhrases.EmailPerson, true)
+                && cal.Contains("calendar", StringComparison.OrdinalIgnoreCase);
+        });
+
+        Speech("quiet hours still refuse from 22 until 07", () =>
+        {
+            var night = new DateTimeOffset(2026, 6, 1, 23, 0, 0, TimeSpan.Zero);
+            var late = new DateTimeOffset(2026, 6, 1, 22, 0, 0, TimeSpan.Zero);
+            var early = new DateTimeOffset(2026, 6, 1, 6, 30, 0, TimeSpan.Zero);
+            var day = new DateTimeOffset(2026, 6, 1, 7, 0, 0, TimeSpan.Zero);
+            return ProactiveDeliveryCoordinator.Quiet(night)
+                && ProactiveDeliveryCoordinator.Quiet(late)
+                && ProactiveDeliveryCoordinator.Quiet(early)
+                && !ProactiveDeliveryCoordinator.Quiet(day);
+        });
+
         Speech("hud fixture", () =>
         {
             var path = Path.GetFullPath(Path.Combine(

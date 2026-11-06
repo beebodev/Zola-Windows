@@ -387,6 +387,45 @@ def _start_background_refresh_locked() -> None:
     _log("refresh", state="background")
 
 
+def match_quality(person: Person, query: str) -> str:
+    """exact, token, fuzzy, or none. Watches and forget confirm token and fuzzy — P10-D13."""
+    if not isinstance(person, Person):
+        return "none"
+    if not _person_matches_query(person, query):
+        return "none"
+    q_speech = _speech_form(query)
+    name_speech = _speech_form(person.display_name)
+    if q_speech == name_speech or _compact_form(query) == _compact_form(person.display_name):
+        return "exact"
+    q_tokens = _name_tokens(query)
+    if len(q_tokens) == 1 and q_tokens[0] in _name_tokens(person.display_name):
+        return "token"
+    return "fuzzy"
+
+
+_unavailable_override: Optional[bool] = None
+
+
+def set_unavailable_for_tests(value: Optional[bool]) -> None:
+    """Force contacts_unavailable. None leaves the real flag. Inert until a test calls it."""
+    global _unavailable_override
+    _unavailable_override = value
+
+
+def set_people_for_tests(people: Optional[List[Person]]) -> None:
+    """Install an index without Google. None clears it."""
+    global _index, _loaded_at, _unavailable, _last_attempt_at
+    with _lock:
+        if people is None:
+            _index = None
+            _loaded_at = None
+            return
+        _index = _Index(list(people))
+        _loaded_at = _now()
+        _last_attempt_at = _now()
+        _unavailable = False
+
+
 def set_sync_refresh_for_tests(enabled: bool) -> None:
     """When True, refresh_if_stale runs the fetch inline (surface suite default). F8 tests leave this False."""
     global _sync_refresh_for_tests
@@ -456,6 +495,12 @@ def _refresh_on_miss() -> bool:
         return _index is not None
 
 
+def index_loaded() -> bool:
+    """True when a fetch has already installed an index. Does not start one."""
+    with _lock:
+        return _index is not None
+
+
 def get_index() -> Optional[_Index]:
     """The current index. Never blocks on Google; may kick a background refresh when stale."""
     with _lock:
@@ -470,6 +515,8 @@ def contacts_unavailable() -> bool:
     "contacts could not be checked" sentence instead of "isn't in your contacts".
     """
     with _lock:
+        if _unavailable_override is not None:
+            return bool(_unavailable_override)
         if _unavailable:
             return True
         if _index is None and _refresh_thread is not None and _refresh_thread.is_alive():
@@ -563,7 +610,7 @@ def phone_fallback_count() -> int:
 
 def reset_for_tests() -> None:
     global _index, _loaded_at, _last_attempt_at, _unavailable, _phone_fallbacks, _now, _refresh_thread
-    global _sync_refresh_for_tests
+    global _sync_refresh_for_tests, _unavailable_override
     thread = _refresh_thread
     if thread is not None and thread.is_alive():
         thread.join(5.0)
@@ -576,3 +623,4 @@ def reset_for_tests() -> None:
         _refresh_thread = None
         _now = time.monotonic
         _sync_refresh_for_tests = False
+        _unavailable_override = None

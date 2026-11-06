@@ -119,6 +119,42 @@ def extract_rcs_sender(raw: str) -> tuple:
     return KIND_UNPARSED, ""
 
 
+_GROUP_GAP = re.compile(r"[\s().\-]+")
+
+
+def spoken_number(text: str) -> tuple:
+    """Return (kind, canonical) for the number spoken in text.
+
+    A 3-3-4 group with spaces or dashes, a bare 10-digit run, and a +1 form
+    all go through normalize. The watch path and the number-forget path both
+    call this. Only an e164 result is returned; anything else is unparsed.
+    """
+    raw = str(text or "")
+    kind, canonical = normalize(raw)
+    if kind == KIND_E164:
+        return kind, canonical
+    groups = list(re.finditer(r"\d+", raw))
+    for start, group in enumerate(groups):
+        end = group.end()
+        piece_start = group.start() - 1 if group.start() and raw[group.start() - 1] == "+" else group.start()
+        kind, canonical = normalize(raw[piece_start:end])
+        if kind == KIND_E164:
+            return kind, canonical
+        digits = group.group()
+        for nxt in groups[start + 1 :]:
+            gap = raw[end : nxt.start()]
+            if not gap or _GROUP_GAP.fullmatch(gap) is None:
+                break
+            digits += nxt.group()
+            end = nxt.end()
+            if len(digits) > E164_INTL_MAX_DIGITS:
+                break
+            kind, canonical = normalize(raw[piece_start:end])
+            if kind == KIND_E164:
+                return kind, canonical
+    return KIND_UNPARSED, ""
+
+
 def matchable(kind: str) -> bool:
     return kind in MATCHABLE_KINDS
 

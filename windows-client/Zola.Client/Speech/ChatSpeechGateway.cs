@@ -62,7 +62,8 @@ internal sealed class ChatSpeechGateway : ISpeechGateway
             ReadString(root, "attempt_id"),
             ReadString(root, "name"),
             ReadString(root, "name_source"),
-            ReadString(root, "source"));
+            ReadString(root, "source"),
+            ReadString(root, "line_kind"));
     }
 
     public Task<SpeechStoreReply> SpeechStartedAsync(string itemId, string attemptId)

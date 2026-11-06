@@ -170,6 +170,15 @@ def _store_reason(result: Dict[str, Any]) -> str:
     return str(result.get("refused_reason") or result.get("reason") or "")
 
 
+_evaluate_fault_for_tests = None
+
+
+def set_evaluate_fault_for_tests(fn) -> None:
+    """Run between the predicate read and the match write. None in production."""
+    global _evaluate_fault_for_tests
+    _evaluate_fault_for_tests = fn
+
+
 def _matching(conn: sqlite3.Connection, view: Dict[str, Any], intents: Any) -> List[Dict[str, Any]]:
     listed = proactive_store.list_open_loop_predicates(conn)
     if not listed.get("ok"):
@@ -197,43 +206,24 @@ def _finish_item(
     except Exception:
         _warn("evaluate", source=view.get("source") or "-")
         return "held"
+    if _evaluate_fault_for_tests is not None:
+        _evaluate_fault_for_tests()
+    bound_loops = []
     for loop in matched:
-        noted = proactive_store.note_loop_match_on_loop(conn, loop["id"], now=now)
+        noted = proactive_store.bind_open_loop_match(conn, loop["id"], item_id, now=now)
+        if noted.get("refused_reason") == "not_open":
+            continue
         if not noted.get("ok"):
             reason = _store_reason(noted) or "match"
             if reason == "locked":
                 return "held"
             _warn(reason, source=view.get("source") or "-")
             return "held"
-    if not matched:
+        bound_loops.append(loop)
+    if not bound_loops:
         return "ok"
-    marked = proactive_store.mark_loop_eligible(conn, item_id, now=now)
-    if not marked.get("ok"):
-        if _store_reason(marked) == "locked":
-            return "held"
-        state = proactive_store.item_loop_state(conn, item_id)
-        if (
-            state.get("ok")
-            and state.get("eligibility") == "eligible"
-            and int(state.get("loop_matched") or 0) == 1
-        ):
-            pass
-        elif state.get("ok") and state.get("eligibility") == "eligible":
-            backed = proactive_store.set_loop_matched(conn, item_id, now=now)
-            if not backed.get("ok"):
-                _warn(_store_reason(backed) or "loop_not_matched", source=view.get("source") or "-")
-                if _store_reason(backed) == "locked":
-                    return "held"
-        else:
-            if state.get("closed"):
-                reason = "closed"
-            elif state.get("eligibility") in ("suppressed", "expired"):
-                reason = str(state.get("eligibility"))
-            else:
-                reason = "loop_not_matched" if state.get("eligibility") == "pending" else "not_eligible"
-            _warn(reason, source=view.get("source") or "-")
     if close_terminal:
-        for loop in matched:
+        for loop in bound_loops:
             if loop.get("intent") not in _TERMINAL_INTENTS:
                 continue
             closed = proactive_store.close_loop_from_match(conn, loop["id"], loop["intent"])

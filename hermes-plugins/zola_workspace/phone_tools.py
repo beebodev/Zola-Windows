@@ -255,6 +255,25 @@ def _ambiguous_sentence(people: Tuple[Any, ...]) -> str:
     )
 
 
+def _pronoun_person() -> Tuple[str, str]:
+    # P10-WATCH: "what did they say" uses this session's records, then a live read — verdict 10
+    try:
+        from . import loops
+    except ImportError:
+        import loops
+    turn_id = turn_context.current_turn_id_from_context()
+    record = turn_context.get_record(turn_id) if turn_id else None
+    session_id = str(getattr(record, "session_id", "") or "")
+    people = dict((loops._session_people.get(session_id) or {}))
+    if not people:
+        return "", "Who do you mean?"
+    if len(people) > 1:
+        names = [str(item.get("name") or "") for item in people.values() if item.get("name")]
+        return "", "Which one: %s?" % ", ".join(names)
+    info = next(iter(people.values()))
+    return str(info.get("name") or ""), ""
+
+
 def _resolve_target(query: str) -> Tuple[str, Tuple[str, ...], str]:
     """(display_name, numbers, sentence). A sentence means stop and say it.
 
@@ -372,6 +391,15 @@ def _read_texts(args: Dict[str, Any], started: float) -> str:
     if refused is not None:
         return refused
     query = str(args.get("person") or "").strip()
+    if query.casefold() in {"they", "them", "their", "her", "him", "he", "she"}:
+        resolved, sentence = _pronoun_person()
+        if sentence:
+            _log(TOOL_TEXTS, state=read_common.STATE_NO_MATCH, count=0, legs=0, ms=_ms(started))
+            return read_common.refuse(
+                TOOL_TEXTS, state=read_common.STATE_NO_MATCH, reason="no_target", empty_key="messages",
+                extra={"sentence": sentence},
+            )
+        query = resolved
     count = _int_arg(args.get("count"), DEFAULT_COUNT, MAX_COUNT)
     if not query or count is None:
         _log(TOOL_TEXTS, state=read_common.STATE_ERROR, reason=read_common.REASON_BAD_ARGS, count=0, ms=_ms(started))

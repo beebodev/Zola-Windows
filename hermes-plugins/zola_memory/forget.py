@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -14,6 +15,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
@@ -49,6 +51,7 @@ RECORD_KIND_FACT = "fact"
 RECORD_KIND_EPISODE = "episode"
 RECORD_KIND_PENDING = "pending_turn"
 KIND_NOTEBOOK_FACT = "notebook_fact"
+KIND_PERSON = "person"
 
 ERASE_REASON_REMOVE = "remove"
 ERASE_REASON_FORGET_INTENT = "forget_intent"
@@ -98,13 +101,27 @@ MSG_ASK_BRIAN_MULTI = (
 MSG_ASK_BRIAN_MEMORY_BLOCK = (
     "Brian hasn't said which one yet — ask him which he means before removing anything."
 )
+MSG_NOTHING_CHANGED = "I didn't change anything."
+MSG_NO_NUMBER = (
+    "No number was found in what you said. You must not say that nothing is left."
+)
+MSG_NOTHING_HELD_FOR_NUMBER = "A number was found. Nothing is held for it."
+MSG_PERSON_FORGET_MEMORY_BLOCK = (
+    "This is a person forget. forget_memory removes the notes that name them. Nothing was removed."
+)
 
 TOOL_DESCRIPTION = (
-    "Erase provider-held memory copies (index facts, episodes, pending turns) after Brian asks "
-    "to forget something. Erase-only: never creates or edits notes. Current notebook facts in "
-    "USER.md/MEMORY.md must be removed with the memory tool's remove action (that path also runs "
-    "the erase cascade). Two steps: confirm=false to list candidates; confirm=true with target_ids "
-    "Brian chose. If candidates are different subjects, ask him which one before confirming."
+    "Erase what Brian asked to forget. One person is one candidate and one question: their "
+    "contact numbers and emails, the matching memory entity, the episodes, the pending turns, "
+    "and the notebook facts in USER.md and MEMORY.md that name them. Those notebook facts are "
+    "removed inside this tool, through the memory tool's remove action. Do not call the memory "
+    "tool yourself on a person-forget turn. Two steps: confirm=false to list candidates; "
+    "confirm=true with the target_ids Brian chose. If candidates are different subjects, ask "
+    "him which one before confirming. When the result includes must_tell, convey each fact in "
+    "your own words. Do not recite a set sentence. Notifications are matched by display name "
+    "only, so some may remain. When he has a number, the texts are still on the phone. "
+    "When status is no_number, no number was found in his words. You must not say that "
+    "nothing is left. When status is nothing_held, a number was found and nothing is held for it."
 )
 
 FORGET_MEMORY_SCHEMA: Dict[str, Any] = {
@@ -236,6 +253,13 @@ def set_erase_failure_hook(hook: Optional[Callable[[], None]]) -> None:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _mentions_number(text: str) -> bool:
+    raw = str(text or "").casefold()
+    if re.search(r"\bnumber\b", raw):
+        return True
+    return any(len(group) >= 7 for group in re.findall(r"(?<![a-z])\d+", raw))
 
 
 def normalize_apostrophes(message: str) -> str:
@@ -441,6 +465,7 @@ def _take_origin_token(args: Dict[str, Any], provider: Any) -> bool:
         except Exception:
             still_brian = False
         if still_brian:
+            setattr(provider, "_forget_turn_id", turn_id)
             _log_origin_token("consumed")
             return True
         reason = "not_brian"
@@ -986,6 +1011,8 @@ class ForgetSessionState:
     hold_turn_count: int = 0
     candidate_ids: Set[str] = field(default_factory=set)
     candidate_meta: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # The contact resolved for this candidate list. The yes uses it as stored.
+    bound_contact: Optional[Dict[str, Any]] = None
     # P6-EPISODES: multi-group ask unresolved — gates memory remove/replace + confirm=true — P6-D04
     ask_brian_pending: bool = False
 
@@ -995,6 +1022,7 @@ class ForgetSessionState:
         self.hold_turn_count = 0
         self.candidate_ids.clear()
         self.candidate_meta.clear()
+        self.bound_contact = None
         self.ask_brian_pending = False
 
     def clear_on_shutdown(self) -> None:
@@ -1226,6 +1254,21 @@ def _proactive_module() -> Any:
     return None
 
 
+def _spoken_person(description: str) -> str:
+    """A short name after 'forget'. A longer or numbered request is not one."""
+    text = " ".join(str(description or "").split())
+    if not text.casefold().startswith("forget "):
+        return ""
+    rest = text.split(" ", 1)[1].strip(" .")
+    words = rest.split(" ")
+    blocked = {"everything", "about", "the", "a", "all", "number", "this", "that"}
+    if not words or len(words) > 3 or any(word.casefold() in blocked for word in words):
+        return ""
+    if any(ch.isdigit() for ch in rest):
+        return ""
+    return rest
+
+
 def entities_matching(conn: sqlite3.Connection, description: str) -> List[Dict[str, str]]:
     """Entities whose name or alias appears in the description. Empty when none match."""
     text = description or ""
@@ -1354,6 +1397,222 @@ def retry_pending_proactive(conn: sqlite3.Connection) -> Dict[str, Any]:
     return result
 
 
+def _contact_address_hashes(name: str) -> Tuple[List[str], bool]:
+    """Number and email hashes for one contact with this name. Empty when unnamed.
+
+    A loaded index is used as it is. A cold index gets one bounded fetch so a person
+    forget does not run before Contacts can be checked. No fetch starts when an index
+    is already installed.
+    """
+    mod = _proactive_module()
+    if mod is None or not name or not hasattr(mod, "contact_plan"):
+        return [], False
+    try:
+        import contact_index
+    except ImportError:
+        return [], False
+    if not contact_index.index_loaded():
+        contact_index.refresh_bounded(8)
+    if contact_index.contacts_unavailable():
+        return [], False
+    plan = mod.contact_plan(name)
+    if plan.get("state") not in ("exact", "token", "fuzzy"):
+        return [], False
+    hashes = list(plan.get("number_hashes") or []) + list(plan.get("email_hashes") or [])
+    return hashes, bool(plan.get("has_number"))
+
+
+def _confirmation_snapshot(
+    state: ForgetSessionState,
+    targets: List[Dict[str, str]],
+    conn: sqlite3.Connection,
+) -> Dict[str, Any]:
+    """Contact numbers and emails captured before any erase.
+
+    The confirm word is not searched again. A yes uses the plan stored with
+    this candidate list, plus the entity id that was confirmed.
+    """
+    hashes: List[str] = []
+    names: List[str] = []
+    entity_ids: List[str] = []
+    display = ""
+    has_number = False
+    plan_state = ""
+    in_contacts = False
+    bound_name = ""
+
+    def _take(plan: Dict[str, Any]) -> None:
+        nonlocal display, has_number, plan_state, in_contacts, bound_name
+        if not plan:
+            return
+        quality = str(plan.get("state") or "")
+        if quality in ("exact", "token", "fuzzy"):
+            in_contacts = True
+        if quality and not plan_state:
+            plan_state = quality
+        if plan.get("bound") and not bound_name:
+            bound_name = str(plan.get("bound") or "")
+        if plan.get("display_name") and not display:
+            display = str(plan.get("display_name") or "")
+        has_number = has_number or bool(plan.get("has_number"))
+        for digest in list(plan.get("number_hashes") or []) + list(plan.get("email_hashes") or []):
+            if digest and digest not in hashes:
+                hashes.append(digest)
+
+    bound = state.bound_contact or {}
+    bound_ids = set(bound.get("ids") or [])
+    if bound_ids and any(target["id"] in bound_ids for target in targets):
+        _take(bound.get("plan") or {})
+    for target in targets:
+        meta = state.candidate_meta.get(target["id"]) or {}
+        if target["kind"] in (RECORD_KIND_ENTITY, "contact", KIND_PERSON):
+            _take(meta.get("_plan") or {})
+        if target["kind"] == KIND_PERSON:
+            for entity_id in meta.get("_entity_ids") or []:
+                if entity_id not in entity_ids:
+                    entity_ids.append(entity_id)
+            for entity_id in entity_ids:
+                for digest in _alias_hashes(conn, entity_id):
+                    if digest not in hashes:
+                        hashes.append(digest)
+            if not display:
+                display = str(meta.get("_text") or meta.get("label") or "")
+        if target["kind"] == RECORD_KIND_ENTITY:
+            entity_ids.append(target["id"])
+            name = str(meta.get("_text") or meta.get("label") or "")
+            if name and name not in names:
+                names.append(name)
+            if not display:
+                display = name
+            for digest in _alias_hashes(conn, target["id"]):
+                if digest not in hashes:
+                    hashes.append(digest)
+        if target["kind"] in ("contact", KIND_PERSON) and not display:
+            display = str(meta.get("_text") or meta.get("label") or "")
+    active = bool(
+        in_contacts
+        or entity_ids
+        or any(target["kind"] in ("contact", KIND_PERSON) for target in targets)
+    )
+    return {
+        "hashes": hashes,
+        "names": names,
+        "entity_ids": entity_ids,
+        "display_name": display,
+        "has_number": has_number,
+        "state": plan_state,
+        "bound": bound_name,
+        "in_contacts": in_contacts,
+        "active": active,
+    }
+
+
+def _contact_partial_message(
+    *,
+    name: str,
+    memory_attempted: bool,
+    memory_ok: bool,
+    has_number: bool,
+) -> str:
+    """What the yes finished and what it did not. No memory-only line."""
+    del has_number
+    who = name or "that person"
+    if memory_attempted and memory_ok:
+        return (
+            "I removed the memory I was holding for "
+            + who
+            + ". I could not remove the texts, email, or watches."
+        )
+    if memory_attempted:
+        return (
+            "I could not remove the memory I was holding for "
+            + who
+            + ". I did not change the texts, email, or watches."
+        )
+    return "I could not remove the texts, email, or watches for " + who + "."
+
+
+def _record_pending_forget(
+    conn: sqlite3.Connection,
+    entity_ids: List[str],
+    payload: Dict[str, Any],
+) -> bool:
+    """Write the proactive retry. Delete an entity row only if it is still there."""
+    try:
+        from . import store as _store
+    except ImportError:
+        import store as _store
+
+    with _store.locked(conn):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for entity_id in entity_ids:
+                row = conn.execute(
+                    "SELECT id FROM entities WHERE id = ?",
+                    (entity_id,),
+                ).fetchone()
+                if row is None:
+                    continue
+                conn.execute("DELETE FROM entity_aliases WHERE entity_id = ?", (entity_id,))
+                try:
+                    conn.execute("DELETE FROM entities_fts WHERE entity_id = ?", (entity_id,))
+                except sqlite3.Error:
+                    pass
+                conn.execute("DELETE FROM episode_entities WHERE entity_id = ?", (entity_id,))
+                conn.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
+            _store.meta_set(
+                conn,
+                META_PENDING_PROACTIVE,
+                json.dumps(payload, separators=(",", ":")),
+            )
+            conn.execute("COMMIT")
+            return True
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            return False
+
+
+def _run_bound_proactive(
+    conn: sqlite3.Connection,
+    snapshot: Dict[str, Any],
+    turn_id: str = "",
+) -> Dict[str, Any]:
+    """Phone, email, and watches. Memory rows stay until this returns ok."""
+    mod = _proactive_module()
+    if mod is None:
+        return {"ok": False, "refused_reason": "missing"}
+    entity_ids = list(snapshot.get("entity_ids") or [])
+    payload = {
+        "entity_id": entity_ids[0] if len(entity_ids) == 1 else "",
+        "address_hashes": list(snapshot.get("hashes") or []),
+        "source_ids": [],
+        "display_names": [snapshot["display_name"]] if snapshot.get("display_name") else [],
+    }
+    if len(entity_ids) == 1:
+        path = mod.profile_db_path()
+        if path is not None and path.exists():
+            try:
+                proactive = mod.connect(path, retry=False)
+                try:
+                    payload["source_ids"] = mod.source_ids_for(
+                        proactive,
+                        entity_id=entity_ids[0],
+                        address_hashes=payload["address_hashes"],
+                    )
+                finally:
+                    proactive.close()
+            except Exception:
+                payload["source_ids"] = []
+    return mod.forget_subject_from_profile(
+        payload,
+        names=list(snapshot.get("names") or []),
+        turn_id=turn_id or None,
+    )
+
+
 def apply_entity_proactive_forget(conn: sqlite3.Connection, entity_id: str) -> Dict[str, Any]:
     """Memory commit first, then proactive. A proactive failure leaves the pending row."""
     name = ""
@@ -1361,6 +1620,10 @@ def apply_entity_proactive_forget(conn: sqlite3.Connection, entity_id: str) -> D
     if row is not None:
         name = row["name"] or ""
     hashes = _alias_hashes(conn, entity_id)
+    contact_hashes, has_number = _contact_address_hashes(name)
+    for digest in contact_hashes:
+        if digest not in hashes:
+            hashes.append(digest)
     source_ids: List[str] = []
     mod = _proactive_module()
     if mod is not None:
@@ -1390,7 +1653,270 @@ def apply_entity_proactive_forget(conn: sqlite3.Connection, entity_id: str) -> D
     result = mod.forget_subject_from_profile(payload, names=[name] if name else None)
     if result.get("ok"):
         _clear_pending_proactive(conn)
+        if has_number:
+            result["has_number"] = True
     return result
+
+
+def _names_person(text: str, name: str) -> bool:
+    """True when name is its own word in text. A possessive counts. Short names do not match."""
+    try:
+        import contact_index
+    except ImportError:
+        return False
+    spoken = contact_index._speech_form(name)
+    if len(spoken) < 3:
+        return False
+    # A straight or curly apostrophe-s is the name, not a longer word.
+    plain = re.sub(r"'s(?!\w)", " ", normalize_apostrophes(text or ""), flags=re.IGNORECASE)
+    return (" " + spoken + " ") in (" " + contact_index._speech_form(plain) + " ")
+
+
+def _plan_for_forget(provider: Any, description: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Contact plan from his message, then from the tool description.
+
+    A cold index waits up to 2 seconds inside contact_plan_waiting. At that
+    bound the plan state is unavailable.
+    """
+    mod = _proactive_module()
+    message = str(getattr(provider, "_current_user_message", "") or "").strip()
+    query = message or description
+    if mod is None or not hasattr(mod, "contact_plan_waiting"):
+        return None, query
+    person_shaped = bool(_spoken_person(query) or (description and _spoken_person(description)))
+    if not person_shaped:
+        try:
+            import contact_index
+
+            loaded = contact_index.index_loaded()
+        except ImportError:
+            loaded = False
+        if loaded and hasattr(mod, "contact_plan"):
+            plan = mod.contact_plan(query)
+            if plan.get("state") in ("exact", "token", "fuzzy", "which"):
+                return plan, query
+        return {"state": "missing"}, query
+    plan = mod.contact_plan_waiting(query)
+    matched = ("exact", "token", "fuzzy", "which")
+    if plan.get("state") in matched:
+        return plan, query
+    if description and description.strip() and description.strip() != query and hasattr(mod, "contact_plan"):
+        alt = mod.contact_plan(description)
+        if alt.get("state") in matched:
+            return alt, description
+    return plan, query
+
+
+def _message_names_a_person(message: str) -> bool:
+    """True when this turn's words are a forget of one named person."""
+    if _spoken_person(message):
+        return True
+    if not has_forget_intent(message):
+        return False
+    mod = _proactive_module()
+    if mod is None or not hasattr(mod, "contact_plan"):
+        return False
+    try:
+        import contact_index
+
+        if not contact_index.index_loaded():
+            return False
+    except ImportError:
+        return False
+    plan = mod.contact_plan(message)
+    return plan.get("state") in ("exact", "token", "fuzzy")
+
+
+def _absorb_person(
+    conn: sqlite3.Connection,
+    cands: List[Dict[str, Any]],
+    plan: Optional[Dict[str, Any]],
+    query: str,
+) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """One contact match becomes one person candidate. Episodes fold into it."""
+    if not plan:
+        return cands, None
+    state_name = str(plan.get("state") or "")
+    if state_name == "which":
+        return cands, None
+    if state_name not in ("exact", "token", "fuzzy", "unavailable"):
+        return cands, None
+    display = str(plan.get("display_name") or "")
+    if state_name == "unavailable":
+        mod = _proactive_module()
+        named = mod.forget_watches_named(query) if mod is not None and hasattr(mod, "forget_watches_named") else {}
+        names = [str(item) for item in (named.get("names") or []) if item]
+        spoken = names[0] if len(names) == 1 else _spoken_person(query)
+        matched_entities = [
+            entity
+            for entity in entities_matching(conn, query)
+            if spoken and _names_person(entity.get("name") or "", spoken)
+        ]
+        # No contact, no stored watch, and no memory entity: leave the old
+        # episode and notebook candidates alone.
+        if not names and not matched_entities:
+            return cands, None
+        display = spoken or (names[0] if names else "person")
+        plan = {
+            "state": "unavailable",
+            "bound": str(plan.get("bound") or "unavailable"),
+            "display_name": display,
+            "handle": "",
+            "number_hashes": list(named.get("hashes") or []),
+            "email_hashes": [],
+            "has_number": bool(named.get("hashes")),
+        }
+    name = display
+    if state_name in ("exact", "token", "fuzzy") and name:
+        seen = {cand["id"] for cand in cands}
+        for extra in search_candidates(conn, name):
+            if extra["id"] not in seen:
+                cands.append(extra)
+                seen.add(extra["id"])
+    entity_ids: List[str] = []
+    seen_entities: Set[str] = set()
+    for source in (name, query):
+        for entity in entities_matching(conn, source):
+            if entity["id"] in seen_entities:
+                continue
+            if _names_person(entity.get("name") or "", name) or _names_person(name, entity.get("name") or ""):
+                seen_entities.add(entity["id"])
+                entity_ids.append(entity["id"])
+    episode_ids: List[str] = []
+    pending_ids: List[str] = []
+    kept: List[Dict[str, Any]] = []
+    for cand in cands:
+        text = str(cand.get("_text") or "")
+        if _names_person(text, name) and cand.get("kind") == RECORD_KIND_EPISODE:
+            episode_ids.append(cand["id"])
+            continue
+        if _names_person(text, name) and cand.get("kind") == RECORD_KIND_PENDING:
+            pending_ids.append(cand["id"])
+            continue
+        if _names_person(text, name) and cand.get("kind") == KIND_NOTEBOOK_FACT:
+            continue
+        if cand.get("kind") == RECORD_KIND_ENTITY and cand.get("id") in entity_ids:
+            continue
+        kept.append(cand)
+    handle = str(plan.get("handle") or "")
+    person = {
+        "id": "person:" + (handle or "unavailable"),
+        "kind": KIND_PERSON,
+        "date": "",
+        "label": display or "person",
+        "_text": display or "",
+        "_plan": plan,
+        "_entity_ids": entity_ids,
+        "_episode_ids": episode_ids,
+        "_pending_ids": pending_ids,
+    }
+    return kept + [person], person
+
+
+def _delete_named_entities(conn: sqlite3.Connection, entity_ids: List[str]) -> None:
+    """Delete these entities once no episode still points at them."""
+    if not entity_ids:
+        return
+    try:
+        from . import store as _store
+    except ImportError:
+        import store as _store
+
+    with _store.locked(conn):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for entity_id in entity_ids:
+                linked = conn.execute(
+                    "SELECT COUNT(*) FROM episode_entities WHERE entity_id = ?",
+                    (entity_id,),
+                ).fetchone()[0]
+                if linked:
+                    continue
+                try:
+                    conn.execute("DELETE FROM entities_fts WHERE entity_id = ?", (entity_id,))
+                except sqlite3.Error:
+                    pass
+                conn.execute("DELETE FROM entity_aliases WHERE entity_id = ?", (entity_id,))
+                conn.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+
+
+def _facts_naming(conn: sqlite3.Connection, name: str) -> List[Dict[str, str]]:
+    if not _names_person(name, name):
+        return []
+    found: List[Dict[str, str]] = []
+    for row in conn.execute(
+        "SELECT id, target, text FROM facts WHERE state = 'active'"
+    ):
+        text = row["text"] or ""
+        if _names_person(text, name):
+            found.append({"id": row["id"], "target": row["target"] or "memory", "text": text})
+    return found
+
+
+def _mirror_notebook_remove(provider: Any, target: str, old_text: str) -> None:
+    """The same mirror Hermes runs after a committed memory-tool remove."""
+    if hasattr(provider, "on_memory_write"):
+        provider.on_memory_write("remove", target, "", metadata={"old_text": old_text})
+        return
+    try:
+        from . import fact_index
+    except ImportError:
+        import fact_index
+    home = getattr(provider, "_hermes_home", None)
+    if home is None:
+        home = Path(os.environ.get("HERMES_HOME") or "")
+    fact_index.handle_memory_write(
+        provider._conn,
+        home,
+        action="remove",
+        target=target,
+        content="",
+        metadata={"old_text": old_text},
+        user_message=getattr(provider, "_current_user_message", "") or "",
+        provider=provider,
+    )
+
+
+def _sweep_notebook(provider: Any, name: str) -> Dict[str, Any]:
+    """Remove USER.md/MEMORY.md entries that name the person, via memory_tool.
+
+    memory_tool is Hermes's writer. It locks, rereads, and saves. This function
+    does not write those files itself. After a committed remove it calls the
+    provider mirror Hermes uses, on_memory_write.
+    """
+    facts = _facts_naming(provider._conn, name)
+    if not facts:
+        return {"ok": True, "removed": 0, "failed": 0}
+    try:
+        from tools.memory_tool import load_on_disk_store, memory_tool
+    except Exception:
+        return {"ok": False, "removed": 0, "failed": len(facts), "reason": "no_memory_tool"}
+    disk = load_on_disk_store()
+    removed = 0
+    failed = 0
+    for fact in facts:
+        target = "user" if fact["target"] == "user" else "memory"
+        try:
+            raw = memory_tool(action="remove", target=target, old_text=fact["text"], store=disk)
+            parsed = json.loads(raw) if isinstance(raw, str) else {}
+        except Exception:
+            parsed = {}
+        if parsed.get("success") is True and parsed.get("staged") is not True:
+            try:
+                _mirror_notebook_remove(provider, target, fact["text"])
+            except Exception:
+                failed += 1
+                continue
+            removed += 1
+        else:
+            failed += 1
+    return {"ok": failed == 0, "removed": removed, "failed": failed}
 
 
 def handle_forget_memory(
@@ -1465,18 +1991,80 @@ def handle_forget_memory(
     description = str(args.get("description") or "")
 
     if not confirm:
+        message_text = str(provider._current_user_message or "")
         cands = search_candidates(conn, description)
-        # P9-STORE: a unique entity is a confirmable candidate so forget can take that path — P9-D06
-        for entity in entities_matching(conn, description):
-            cands.append(
-                {
-                    "id": entity["id"],
-                    "kind": RECORD_KIND_ENTITY,
-                    "date": "",
-                    "label": entity["name"] or "person",
-                    "_text": entity["name"] or "",
-                }
+        plan, query = _plan_for_forget(provider, description)
+        # His message names the person and the tool description left it out.
+        if (
+            plan
+            and plan.get("state") in ("exact", "token", "fuzzy")
+            and query.strip()
+            and query.strip() != description.strip()
+        ):
+            seen_ids = {cand["id"] for cand in cands}
+            for extra in search_candidates(conn, query):
+                if extra["id"] not in seen_ids:
+                    cands.append(extra)
+                    seen_ids.add(extra["id"])
+        # One contact match is one person, covering the entity and the episodes.
+        cands, person = _absorb_person(conn, cands, plan, query)
+        if person is None:
+            # P9-STORE: a unique entity is a confirmable candidate so forget can take that path — P9-D06
+            matched_entities = entities_matching(conn, query)
+            if description and description.strip() != query:
+                for entity in entities_matching(conn, description):
+                    if all(entity["id"] != have["id"] for have in matched_entities):
+                        matched_entities.append(entity)
+            for entity in matched_entities:
+                cands.append(
+                    {
+                        "id": entity["id"],
+                        "kind": RECORD_KIND_ENTITY,
+                        "date": "",
+                        "label": entity["name"] or "person",
+                        "_text": entity["name"] or "",
+                    }
+                )
+        number_mod = _proactive_module()
+        number_plan = (
+            number_mod.number_forget_plan(query)
+            if number_mod is not None and hasattr(number_mod, "number_forget_plan")
+            else None
+        )
+        if (
+            (not number_plan or not number_plan.get("hash"))
+            and description
+            and description.strip() != query
+            and number_mod is not None
+        ):
+            number_plan = number_mod.number_forget_plan(description)
+        number_status = ""
+        asked_for_number = _mentions_number(description) or _mentions_number(query)
+        if number_plan and number_plan.get("state") in ("number", "unavailable") and number_plan.get("hash"):
+            held = (
+                number_mod.held_for_number(str(number_plan.get("hash")))
+                if hasattr(number_mod, "held_for_number")
+                else None
             )
+            if held == 0:
+                number_status = "nothing_held"
+            else:
+                cands.append(
+                    {
+                        "id": "number:" + str(number_plan.get("hash")),
+                        "kind": "number",
+                        "date": "",
+                        "label": "a number",
+                        "_text": "",
+                        "_plan": number_plan,
+                    }
+                )
+        elif asked_for_number and number_plan and number_plan.get("status") == "no_number":
+            number_status = "no_number"
+        if person is not None:
+            state.bound_contact = {"ids": {person["id"]}, "plan": person.get("_plan") or {}}
+        else:
+            state.bound_contact = None
         # P6-FORGET: all listed IDs (incl. notebook_fact) for hold-end; confirm=true refuses notebook — P6-D06
         state.candidate_ids = {c["id"] for c in cands}
         state.candidate_meta = {c["id"]: c for c in cands}
@@ -1512,11 +2100,31 @@ def handle_forget_memory(
         elif cands:
             state.ask_brian_pending = False
             msg = "One match. Ask Brian to confirm before erasing."
+        elif number_status == "nothing_held":
+            state.ask_brian_pending = False
+            msg = MSG_NOTHING_HELD_FOR_NUMBER
+        elif number_status == "no_number":
+            state.ask_brian_pending = False
+            msg = MSG_NO_NUMBER
         else:
             state.ask_brian_pending = False
             msg = "No matches."
+        missing_name = (
+            _spoken_person(query)
+            if plan is not None and plan.get("state") == "missing" and not cands
+            else ""
+        )
+        if missing_name:
+            mod = _proactive_module()
+            msg = (
+                mod.forget_person_message(name=missing_name, state="missing")
+                if mod is not None and hasattr(mod, "forget_person_message")
+                else msg
+            )
         # P9-STORE: no mapped person means the pending list is untouched — P9-D06
-        if not ask_brian and not entities_matching(conn, description):
+        elif not ask_brian and not entities_matching(conn, query) and not any(
+            c.get("kind") in ("contact", KIND_PERSON) for c in cands
+        ):
             msg = msg + " " + MSG_PROACTIVE_UNMAPPED
         # P6-EPISODES: sanitize on every confirm=false (incl. no matches) — Phase 7-WAL
         try:
@@ -1527,18 +2135,64 @@ def handle_forget_memory(
         for g in groups:
             for c in g["candidates"]:
                 c.pop("_text", None)
-        return _done(
-            {
-                "ok": True,
-                "confirm": False,
-                "groups": groups,
-                "message": msg,
-                "_cand_count": len(cands),
-                "_group_count": len(groups),
-            }
-        )
+        payload = {
+            "ok": True,
+            "confirm": False,
+            "groups": groups,
+            "message": msg,
+            "_cand_count": len(cands),
+            "_group_count": len(groups),
+        }
+        if number_status:
+            payload["status"] = number_status
+        return _done(payload)
 
     # confirm=true
+    turn_id = str(getattr(provider, "_forget_turn_id", "") or "")
+    widen_mod = _proactive_module()
+    if widen_mod is not None and hasattr(widen_mod, "take_forget_widen"):
+        widened = widen_mod.take_forget_widen(provider._session_id or "", description)
+        if widened and widened.get("ok"):
+            proactive_result = widen_mod.forget_subject_from_profile(
+                {
+                    "entity_id": "",
+                    "address_hashes": list(widened.get("hashes") or []),
+                    "source_ids": [],
+                    "display_names": [widened.get("display_name") or ""],
+                },
+                turn_id=turn_id or None,
+            )
+            if not proactive_result.get("ok"):
+                reason = str(proactive_result.get("refused_reason") or "error")
+                return _done(
+                    {
+                        "ok": False,
+                        "confirm": True,
+                        "refused_reason": reason,
+                        "erased": [],
+                        "counts": {},
+                        "message": MSG_NOTHING_CHANGED,
+                    },
+                    refused=reason,
+                )
+            message = widen_mod.forget_person_message(
+                name=str(widened.get("display_name") or ""),
+                texts=int(proactive_result.get("texts") or 0),
+                emails=int(proactive_result.get("emails") or 0),
+                watches=int(proactive_result.get("watches") or 0),
+                notifications=int(proactive_result.get("notifications") or 0),
+                has_number=True,
+                state="exact",
+            )
+            return _done(
+                {
+                    "ok": bool(proactive_result.get("ok")),
+                    "confirm": True,
+                    "erased": [{"id": "forget_widen", "kind": "contact"}],
+                    "counts": {},
+                    "message": message,
+                }
+            )
     target_ids = [str(x) for x in (args.get("target_ids") or [])]
     authority = has_forget_intent(provider._current_user_message or "") or hold_active(state)
     if not authority or not is_brian_conversation(provider._platform, provider._parent_session_id):
@@ -1579,28 +2233,168 @@ def handle_forget_memory(
             )
         targets.append({"id": tid, "kind": kind})
 
-    plain = [target for target in targets if target["kind"] != RECORD_KIND_ENTITY]
+    plain = [
+        target
+        for target in targets
+        if target["kind"] not in (RECORD_KIND_ENTITY, "contact", "number", KIND_PERSON)
+    ]
     entity_targets = [target for target in targets if target["kind"] == RECORD_KIND_ENTITY]
+    number_targets = [target for target in targets if target["kind"] == "number"]
+    # The contact plan was stored at confirm=false. Read it before any erase,
+    # and do not search the confirm word for the name.
+    snapshot = _confirmation_snapshot(state, targets, conn)
     ok = True
     counts: Dict[str, int] = {}
-    if plain:
-        ok, counts = forget_cascade(
+    proactive_result: Optional[Dict[str, Any]] = None
+    # Ticket and contact resolution before any row changes. A memory-only
+    # confirm has no proactive plan and does not consult the store ticket.
+    if snapshot["active"] or number_targets:
+        gate = _proactive_module()
+        refused = gate.ticket_reason(turn_id or None) if gate is not None and hasattr(gate, "ticket_reason") else ""
+        if refused:
+            return _done(
+                {
+                    "ok": False,
+                    "confirm": True,
+                    "refused_reason": refused,
+                    "erased": [],
+                    "counts": {},
+                    "message": MSG_NOTHING_CHANGED,
+                },
+                refused=refused,
+            )
+        if snapshot["active"] and str(snapshot.get("state") or "") not in (
+            "exact",
+            "token",
+            "fuzzy",
+            "unavailable",
+            "",
+        ):
+            return _done(
+                {
+                    "ok": False,
+                    "confirm": True,
+                    "refused_reason": "unresolved",
+                    "erased": [],
+                    "counts": {},
+                    "message": MSG_NOTHING_CHANGED,
+                },
+                refused="unresolved",
+            )
+    if snapshot["active"]:
+        proactive_result = _run_bound_proactive(conn, snapshot, turn_id)
+        if not proactive_result.get("ok"):
+            reason = str(proactive_result.get("refused_reason") or "error")
+            return _done(
+                {
+                    "ok": False,
+                    "confirm": True,
+                    "refused_reason": reason,
+                    "erased": [],
+                    "counts": {},
+                    "message": MSG_NOTHING_CHANGED,
+                },
+                refused=reason,
+            )
+        proactive_result = dict(proactive_result)
+        proactive_result["display_name"] = snapshot["display_name"]
+        proactive_result["has_number"] = snapshot["has_number"]
+        proactive_result["in_contacts"] = snapshot["in_contacts"]
+        proactive_result["state"] = snapshot["state"] or "exact"
+        proactive_result["bound"] = snapshot.get("bound") or ""
+    elif number_targets:
+        for target in number_targets:
+            plan = (state.candidate_meta.get(target["id"]) or {}).get("_plan") or {}
+            mod = _proactive_module()
+            if mod is None:
+                return _done(
+                    {
+                        "ok": False,
+                        "confirm": True,
+                        "refused_reason": "missing",
+                        "erased": [],
+                        "counts": {},
+                        "message": MSG_NOTHING_CHANGED,
+                    },
+                    refused="missing",
+                )
+            proactive_result = mod.forget_subject_from_profile(
+                {
+                    "entity_id": "",
+                    "address_hashes": [plan.get("hash") or ""],
+                    "source_ids": [],
+                    "display_names": [],
+                },
+                turn_id=turn_id or None,
+            )
+            if not proactive_result.get("ok"):
+                reason = str(proactive_result.get("refused_reason") or "error")
+                return _done(
+                    {
+                        "ok": False,
+                        "confirm": True,
+                        "refused_reason": reason,
+                        "erased": [],
+                        "counts": {},
+                        "message": MSG_NOTHING_CHANGED,
+                    },
+                    refused=reason,
+                )
+            proactive_result = dict(proactive_result)
+            proactive_result["number_only"] = True
+            proactive_result["display_name"] = plan.get("display_name") or ""
+            if plan.get("display_name") and plan.get("state") == "number":
+                mod.note_forget_widen(provider._session_id or "", plan)
+    episode_ids: List[str] = []
+    pending_ids: List[str] = []
+    entity_ids: List[str] = [target["id"] for target in entity_targets]
+    memory_targets: List[Dict[str, str]] = []
+    for target in plain:
+        if target["kind"] == RECORD_KIND_EPISODE:
+            episode_ids.append(target["id"])
+        else:
+            memory_targets.append(target)
+    for target in targets:
+        if target["kind"] != KIND_PERSON:
+            continue
+        meta = state.candidate_meta.get(target["id"]) or {}
+        for episode_id in meta.get("_episode_ids") or []:
+            if episode_id not in episode_ids:
+                episode_ids.append(episode_id)
+        for entity_id in meta.get("_entity_ids") or []:
+            if entity_id not in entity_ids:
+                entity_ids.append(entity_id)
+        for pending_id in meta.get("_pending_ids") or []:
+            if pending_id not in pending_ids:
+                pending_ids.append(pending_id)
+    memory_targets = (
+        [{"id": episode_id, "kind": RECORD_KIND_EPISODE} for episode_id in episode_ids]
+        + [{"id": pending_id, "kind": RECORD_KIND_PENDING} for pending_id in pending_ids]
+        + memory_targets
+    )
+    memory_attempted = bool(memory_targets or entity_ids)
+    memory_ok = True
+    if memory_targets:
+        memory_ok, counts = forget_cascade(
             conn,
-            plain,
+            memory_targets,
             reason=ERASE_REASON_TOOL,
             terms_source=description,
         )
-    entity_hits = entities_matching(conn, description)
-    proactive_result: Optional[Dict[str, Any]] = None
-    # P9-STORE: proactive runs only after the memory side commits, and only for one entity — P9-D06
-    if (
-        ok
-        and len(entity_hits) == 1
-        and any(target["id"] == entity_hits[0]["id"] for target in entity_targets)
-    ):
-        proactive_result = apply_entity_proactive_forget(conn, entity_hits[0]["id"])
-        if not proactive_result.get("ok"):
+    if memory_ok and entity_ids:
+        _delete_named_entities(conn, entity_ids)
+    notes = {"ok": True, "removed": 0, "failed": 0}
+    person_name = str(snapshot.get("display_name") or "")
+    if memory_ok and person_name and any(target["kind"] == KIND_PERSON for target in targets):
+        notes = _sweep_notebook(provider, person_name)
+        if not notes.get("ok"):
             ok = False
+    if not memory_ok:
+        ok = False
+    if proactive_result is not None:
+        proactive_result["memory_notes"] = int(notes.get("removed") or 0)
+        proactive_result["memory_episodes"] = int(counts.get("episode_rows") or 0)
+        proactive_result["notes_failed"] = int(notes.get("failed") or 0)
     state.forget_in_session = True
     mark_drop(state, provider._current_user_message or "")
     for ht in state.hold_user_texts:
@@ -1624,13 +2418,57 @@ def handle_forget_memory(
         ok=ok,
     )
     erased = [{"id": t["id"], "kind": t["kind"]} for t in targets]
-    if proactive_result is not None and not proactive_result.get("ok"):
-        message = MSG_PROACTIVE_PARTIAL
-    elif proactive_result is not None and proactive_result.get("ok"):
+    entity_hits = [] if snapshot.get("in_contacts") else entities_matching(conn, description)
+    if proactive_result is not None and not proactive_result.get("ok") and snapshot.get("in_contacts"):
+        message = _contact_partial_message(
+            name=str(snapshot.get("display_name") or ""),
+            memory_attempted=memory_attempted,
+            memory_ok=memory_ok,
+            has_number=bool(snapshot.get("has_number")),
+        )
+    elif memory_attempted and not memory_ok and (
+        snapshot.get("in_contacts") or snapshot.get("display_name")
+    ):
         message = (
-            "Erased from provider memory. Tell Brian plainly it is gone from your memory; "
-            "conversation logs still have it."
-            + MSG_PROACTIVE_INCLUDED
+            "I removed the texts, email, and watches for "
+            + str(snapshot.get("display_name") or "that person")
+            + ". I could not remove the memory."
+        )
+    elif proactive_result is not None and not proactive_result.get("ok"):
+        message = MSG_PROACTIVE_PARTIAL
+    elif proactive_result is not None and proactive_result.get("number_only"):
+        owner = str(proactive_result.get("display_name") or "")
+        if owner:
+            message = (
+                "I've forgotten the texts from that number. It's saved for "
+                + owner
+                + ". Want me to forget "
+                + owner
+                + " entirely?"
+            )
+        else:
+            message = "I've forgotten the texts from that number."
+    elif proactive_result is not None and proactive_result.get("ok") and proactive_result.get("display_name"):
+        message = mod.forget_person_message(
+            name=str(proactive_result.get("display_name") or ""),
+            texts=int(proactive_result.get("texts") or 0),
+            emails=int(proactive_result.get("emails") or 0),
+            watches=int(proactive_result.get("watches") or 0),
+            notifications=int(proactive_result.get("notifications") or 0),
+            memory_notes=int(proactive_result.get("memory_notes") or 0),
+            memory_episodes=int(proactive_result.get("memory_episodes") or 0),
+            has_number=bool(proactive_result.get("has_number")),
+            state=str(proactive_result.get("state") or "exact"),
+            bound=str(proactive_result.get("bound") or snapshot.get("bound") or ""),
+        ) if (mod := _proactive_module()) is not None else MSG_PROACTIVE_INCLUDED
+        if int(proactive_result.get("notes_failed") or 0):
+            message += " I could not remove the notes that name them."
+    elif snapshot.get("in_contacts"):
+        message = _contact_partial_message(
+            name=str(snapshot.get("display_name") or ""),
+            memory_attempted=memory_attempted,
+            memory_ok=memory_ok,
+            has_number=bool(snapshot.get("has_number")),
         )
     elif len(entity_hits) != 1:
         message = (
@@ -1642,18 +2480,37 @@ def handle_forget_memory(
         message = (
             "Erased from provider memory. Tell Brian plainly it is gone from your memory; "
             "conversation logs still have it."
+            + MSG_PROACTIVE_INCLUDED
         )
-    return _done(
-        {
-            "ok": ok,
-            "confirm": True,
-            "erased": erased,
-            "counts": counts,
-            "message": message,
-            "_cand_count": len(erased),
-            "_group_count": 0,
-        }
+    payload = {
+        "ok": ok,
+        "confirm": True,
+        "erased": erased,
+        "counts": counts,
+        "message": message,
+        "_cand_count": len(erased),
+        "_group_count": 0,
+    }
+    # The two limits are facts she must convey. The message does not script them.
+    tell_number = bool(
+        (proactive_result or {}).get("has_number")
+        or (proactive_result or {}).get("number_only")
+        or snapshot.get("has_number")
     )
+    person_result = proactive_result is not None and (
+        proactive_result.get("display_name")
+        or proactive_result.get("number_only")
+        or snapshot.get("display_name")
+    )
+    if person_result and message != MSG_NOTHING_CHANGED:
+        tell_mod = _proactive_module()
+        if tell_mod is not None and hasattr(tell_mod, "forget_must_tell"):
+            payload["must_tell"] = tell_mod.forget_must_tell(has_number=tell_number)
+    refused = "-"
+    if not ok:
+        refused = str((proactive_result or {}).get("refused_reason") or "partial")
+        payload["refused_reason"] = refused
+    return _done(payload, refused=refused)
 
 
 def end_hold_if_candidate_removed(
@@ -1875,6 +2732,14 @@ def pre_tool_call_hook(
                 ok=False,
             )
             return {"action": "block", "message": MSG_ASK_BRIAN_MEMORY_BLOCK}
+        if _message_names_a_person(getattr(provider, "_current_user_message", "") or ""):
+            memlog.write_event(
+                memlog.LOG_EVENT_FORGET_GUARD,
+                action="blocked",
+                tool=MEMORY_TOOL_NAME,
+                ok=False,
+            )
+            return {"action": "block", "message": MSG_PERSON_FORGET_MEMORY_BLOCK}
         memlog.write_event(
             memlog.LOG_EVENT_FORGET_GUARD,
             action="allowed",

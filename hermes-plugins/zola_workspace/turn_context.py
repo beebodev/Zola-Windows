@@ -74,6 +74,12 @@ def record_pre_llm_call(
     tid = str(turn_id or "")
     now = time.monotonic()
     _prune_expired(now)
+    message = user_message if isinstance(user_message, str) else ""
+    try:
+        from . import loops
+    except ImportError:
+        import loops  # type: ignore
+    loops.note_turn(str(session_id or ""), message)
     if not tid:
         return
     _records_by_turn_id[tid] = TurnRecord(
@@ -147,22 +153,35 @@ def resolve_turn_from_permit(message_text: str) -> Optional[str]:
     return tid
 
 
-def is_brian_turn(turn_id: Optional[str] = None) -> bool:
-    """True only for this exact turn_id, platform tui, empty parent, unexpired.
+def _log_brian_block(reason: str) -> None:
+    """One reason code for a branch that used to return False with no line."""
+    try:
+        _origin_logger.warning("brian_turn reason=%s", reason)
+    except Exception:
+        pass
 
-    Missing, stale, mismatched, or absent key → False. No session/latest fallback.
+
+def brian_turn_block_reason(turn_id: Optional[str] = None) -> str:
+    """Empty string when this turn may write. Otherwise a reason code.
+
+    A missing argument reads the tool ContextVar. forget_memory does not set
+    that variable; callers that have the turn id pass it in.
     """
     # P8-HARDEN: "this turn" means the approved turn_id correlation only — P8-D02
     tid = str(turn_id or "") if turn_id is not None else current_turn_id_from_context()
     if not tid:
-        return False
+        _log_brian_block("empty_turn_id")
+        return "empty_turn_id"
     rec = get_record(tid)
     if rec is None:
-        return False
+        _log_brian_block("no_turn_record")
+        return "no_turn_record"
     if (rec.platform or "").lower() != PLATFORM_TUI:
-        return False
+        _log_brian_block("platform")
+        return "platform"
     if rec.parent_session_id:
-        return False
+        _log_brian_block("parent_session")
+        return "parent_session"
     # P9-FIX-ARM: tui + empty parent is not origin; the prompt.submit ticket is — P8-D02
     try:
         reason = _origin().refusal_reason(tid)
@@ -173,8 +192,16 @@ def is_brian_turn(turn_id: Optional[str] = None) -> bool:
             _origin().log_refuse(reason, tid)
         except Exception:
             pass
-        return False
-    return True
+        return str(reason)
+    return ""
+
+
+def is_brian_turn(turn_id: Optional[str] = None) -> bool:
+    """True only for this exact turn_id, platform tui, empty parent, unexpired.
+
+    Missing, stale, mismatched, or absent key → False. No session/latest fallback.
+    """
+    return brian_turn_block_reason(turn_id) == ""
 
 
 def pre_llm_call_hook(**kwargs: Any) -> None:

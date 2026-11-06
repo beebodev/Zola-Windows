@@ -936,15 +936,19 @@ class Engine:
             "message_id": item.get("message_id"),
             "sender_address_hash": item.get("sender_address_hash"),
             "detected_at": item.get("detected_at"),
+            "is_group": item.get("is_group") or 0,
         }
+        if self.fault is not None:
+            self.fault("after_predicates")
         for loop in found.get("loops") or []:
             if not self.loop_match.evaluate(loop.get("predicate") or {}, view):
                 continue
-            noted = self.store.note_loop_match_on_loop(self.conn, loop["id"])
+            if str(item.get("source") or "") == "notif":
+                continue
+            noted = self.store.bind_open_loop_match(self.conn, loop["id"], item["id"])
+            if noted.get("refused_reason") == "not_open":
+                continue
             if not (noted.get("ok") or noted.get("already")):
-                return
-            marked = self.store.set_loop_matched(self.conn, item["id"])
-            if not (marked.get("ok") or marked.get("already")):
                 return
         saved = self.store.mark_watch_evaluated(self.conn, item["id"])
         if not saved.get("ok"):

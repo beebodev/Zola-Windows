@@ -28,14 +28,25 @@ _LOG = logging.getLogger("zola_workspace.proactive_store")
 # P9-STORE: marker so zola_memory can find this module without a hard import cycle — P9-D06
 PROACTIVE_STORE_MARKER = "p9-store"
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 # P10-STORE: the v6 rebuild writes 6 even after SCHEMA_VERSION moves on — P10-D11
 SCHEMA_V6 = 6
 # P10-READ: schema 7 adds items.sender_hint (RD-G2c / decision 7); the v7 step writes 7 on its own
 SCHEMA_V7 = 7
+# P10-WATCH: schema 8 widens the loops CHECKs — verdict 12
+SCHEMA_V8 = 8
 # P9-STORE: why a loop ended; NULL means the live row was already closed before this column — P9-D09
 CLOSED_INTENTS = frozenset(
-    {"reply", "cancelled", "status_change", "confirm_close", "expired", "forgotten"}
+    {
+        "reply",
+        "cancelled",
+        "status_change",
+        "confirm_close",
+        "expired",
+        "forgotten",
+        "delivered",
+        "acknowledged",
+    }
 )
 DB_DIRNAME = "proactive"
 DB_FILENAME = "proactive.db"
@@ -52,7 +63,10 @@ SURFACE_ATTEMPT_TTL_SECONDS = 600
 # P9-SPEAK: one follow-up note after evidenced speech, inside the surface gap — P9-D07
 POST_SPEECH_WINDOW_SECONDS = 900
 META_SPEECH_POST_NOTED = "speech_post_noted_attempt"
-NAME_SOURCES = frozenset({"mail", "contacts_ticket", "brian_message"})
+NAME_SOURCES = frozenset({"mail", "contacts_ticket", "brian_message", "contacts_index"})
+# P10-WATCH: burst and standing gap — verdicts 6 and 14
+BURST_WINDOW_SECONDS = 180
+STANDING_MIN_GAP_SECONDS = 1800
 RANK_ATTEMPT_CAP = 5
 BODY_MAX_AGE_DAYS = 7
 TEXT_MAX_AGE_DAYS = 7
@@ -130,10 +144,10 @@ def _sql_list(values: Sequence[str]) -> str:
 
 
 def _phone_speech_hold_sources() -> tuple:
-    # P10-READ: read at call time so a test (and Track 6) can flip one constant — RD-G7 (b)
+    # P10-READ: notifications stay out of the claim query while their constant is True.
+    # P10-WATCH: texts are not excluded here. An unwatched text is refused in
+    # _speech_block_reason while P10_TEXT_NO_UNPROMPTED_SPEECH is True — P10-D15.
     held: List[str] = []
-    if P10_TEXT_NO_UNPROMPTED_SPEECH:
-        held.extend(PHONE_TEXT_KINDS)
     if P10_NOTIF_NO_UNPROMPTED_SPEECH:
         held.append(PHONE_NOTIF_KIND)
     return tuple(held)
@@ -169,19 +183,29 @@ def _phone_source_sql() -> str:
     return "source IN (" + _sql_list(PHONE_SOURCES) + ")"
 
 
-def _ticket_ok(turn_id: Optional[str] = None) -> bool:
+def ticket_reason(turn_id: Optional[str] = None) -> str:
+    """Empty when the store may write. Otherwise the branch that refused.
+
+    A test override skips the turn check. Production passes the turn id the
+    tool already proved; calling with no id reads the ContextVar, which
+    forget_memory's dispatch does not set.
+    """
     if _ticket_override is not None:
-        return bool(_ticket_override)
+        return "" if _ticket_override else "origin"
     try:
         try:
             from . import turn_context
         except ImportError:
             import turn_context
         if turn_id:
-            return bool(turn_context.is_brian_turn(turn_id))
-        return bool(turn_context.is_brian_turn())
+            return str(turn_context.brian_turn_block_reason(turn_id) or "")
+        return str(turn_context.brian_turn_block_reason() or "")
     except Exception:
-        return False
+        return "origin"
+
+
+def _ticket_ok(turn_id: Optional[str] = None) -> bool:
+    return ticket_reason(turn_id) == ""
 
 
 def _no(reason: str) -> Dict[str, Any]:
@@ -304,6 +328,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # P10-STORE: version 6 rebuilds items, and foreign_keys cannot change inside this transaction — R2
         needs_v6 = current < SCHEMA_V6
         needs_v7 = current < SCHEMA_V7
+        needs_v8 = current < SCHEMA_V8
         conn.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -317,6 +342,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _migrate_v6_committed(conn)
     if needs_v7:
         _migrate_v7_committed(conn)
+    if needs_v8:
+        _migrate_v8_committed(conn)
 
 
 def _migrate_v7_committed(conn: sqlite3.Connection) -> None:
@@ -671,6 +698,71 @@ def _migrate_v6(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _migrate_v8_committed(conn: sqlite3.Connection) -> None:
+    # P10-WATCH: CHECK constraints cannot grow in place. Rebuild loops only — verdict 12.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ?",
+            (META_SCHEMA_VERSION,),
+        ).fetchone()
+        version = int(row["value"]) if row else 0
+        if version >= SCHEMA_V8:
+            conn.execute("ROLLBACK")
+            return
+        if version < SCHEMA_V7:
+            raise RuntimeError("proactive schema 8 needs schema 7 first")
+        _rebuild_loops_v8(conn)
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (META_SCHEMA_VERSION, str(SCHEMA_V8)),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        _rollback(conn)
+        raise
+
+
+def _rebuild_loops_v8(conn: sqlite3.Connection) -> None:
+    columns = [info[1] for info in conn.execute("PRAGMA table_info(loops)")]
+    conn.execute("ALTER TABLE loops RENAME TO loops_v7")
+    conn.execute(
+        """
+        CREATE TABLE loops (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK (status IN ('open', 'closed', 'expired')),
+          intent TEXT NOT NULL,
+          predicate_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          matched_at TEXT,
+          lapse_told INTEGER NOT NULL DEFAULT 0,
+          session_id TEXT NOT NULL,
+          entity_id TEXT,
+          source_ids_json TEXT NOT NULL,
+          address_hashes_json TEXT NOT NULL,
+          sender_display_name TEXT,
+          subject TEXT,
+          closed_intent TEXT
+            CHECK (
+              closed_intent IS NULL OR closed_intent IN (
+                'reply', 'cancelled', 'status_change', 'confirm_close',
+                'expired', 'forgotten', 'delivered', 'acknowledged'
+              )
+            ),
+          lapse_attempt_id TEXT,
+          lapse_attempt_turn_id TEXT,
+          name_source TEXT NOT NULL DEFAULT 'mail'
+            CHECK (name_source IN ('mail', 'contacts_ticket', 'brian_message', 'contacts_index'))
+        )
+        """
+    )
+    listed = ", ".join(columns)
+    conn.execute(f"INSERT INTO loops ({listed}) SELECT {listed} FROM loops_v7")
+    conn.execute("DROP TABLE loops_v7")
 
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
@@ -1251,7 +1343,7 @@ def list_unevaluated_phone_items(conn: sqlite3.Connection) -> Dict[str, Any]:
         phone = _phone_source_sql()
         rows = conn.execute(
             f"""
-            SELECT id, source, message_id, sender_address_hash, detected_at, idempotency_key
+            SELECT id, source, message_id, sender_address_hash, detected_at, idempotency_key, is_group
               FROM items
              WHERE {phone}
                AND watch_evaluated = 0
@@ -2093,6 +2185,8 @@ def _set_conversation(
         return _no("illegal_transition")
     if dest == "acknowledged":
         _clear_phone_content_locked(conn, item_id)
+        # P10-WATCH: acknowledging the matched item closes a one-shot. Other watches stay — verdict 3
+        _satisfy_matched_watches_locked(conn, item_id, stamp, "acknowledged")
     conn.execute("COMMIT")
     return _ok()
 
@@ -2106,13 +2200,201 @@ def claim_speech(
     return _call(_claim_speech, conn, item_id, now=now)
 
 
-def _speech_block_reason(row: Optional[sqlite3.Row], earliest_surface: str, oldest: str) -> Optional[str]:
+def _loop_match():
+    try:
+        from . import loop_match
+    except ImportError:
+        import loop_match
+    return loop_match
+
+
+def _row_get(row: sqlite3.Row, key: str, default: Any = "") -> Any:
+    try:
+        value = row[key]
+    except (IndexError, KeyError):
+        return default
+    return default if value is None else value
+
+
+def _watch_clock(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _item_view(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "source": str(_row_get(row, "source")),
+        "message_id": str(_row_get(row, "message_id")),
+        "sender_address_hash": str(_row_get(row, "sender_address_hash")),
+        "detected_at": str(_row_get(row, "detected_at")),
+        "is_group": int(_row_get(row, "is_group", 0) or 0),
+        "thread_id": str(_row_get(row, "thread_id")),
+        "internal_date": str(_row_get(row, "internal_date") or _row_get(row, "detected_at")),
+    }
+
+
+def _watch_holds_item(predicate: Dict[str, Any], item: Dict[str, Any], clock: datetime) -> bool:
+    # P10-WATCH: a burst and a standing gap belong to the watch that matched — verdicts 6, 13, 14
+    detected = _watch_clock(item.get("detected_at"))
+    anchor = _watch_clock(predicate.get("burst_anchor_at"))
+    spoken = _watch_clock(predicate.get("last_spoken_at"))
+    if anchor is not None and detected is not None:
+        if detected <= anchor + timedelta(seconds=BURST_WINDOW_SECONDS):
+            return True
+    if spoken is not None and detected is not None and detected <= spoken:
+        return True
+    if predicate.get("lifetime") == "standing" and spoken is not None:
+        if clock < spoken + timedelta(seconds=STANDING_MIN_GAP_SECONDS):
+            return True
+    return False
+
+
+def _phone_watch_allows(conn: sqlite3.Connection, row: sqlite3.Row, clock: datetime) -> bool:
+    # P10-WATCH: a text speaks only while a person or number watch still wants it — P10-D15
+    view = _item_view(row)
+    matcher = _loop_match()
+    item_id = str(_row_get(row, "id"))
+    for loop in conn.execute(
+        "SELECT id, intent, predicate_json FROM loops WHERE status = 'open'"
+    ):
+        if loop["intent"] not in ("person", "number"):
+            continue
+        try:
+            predicate = json.loads(loop["predicate_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(predicate, dict) or not matcher.evaluate(predicate, view):
+            continue
+        if _watch_holds_item(predicate, view, clock):
+            continue
+        if _other_claim_in_flight(conn, predicate, item_id, matcher):
+            continue
+        return True
+    return False
+
+
+def _other_claim_in_flight(conn: sqlite3.Connection, predicate: Dict[str, Any], item_id: str, matcher: Any) -> bool:
+    rows = conn.execute(
+        """
+        SELECT id, source, message_id, sender_address_hash, detected_at, is_group, thread_id
+          FROM items
+         WHERE delivery IN ('claimed', 'speech_started')
+           AND id != ?
+        """,
+        (item_id,),
+    ).fetchall()
+    for other in rows:
+        if matcher.evaluate(predicate, _item_view(other)):
+            return True
+    return False
+
+
+def _same_watch_claim_in_flight(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    # P10-WATCH: a text and an email from one person are one line — G-ONE-LINE
+    view = _item_view(row)
+    matcher = _loop_match()
+    item_id = str(_row_get(row, "id"))
+    for loop in conn.execute("SELECT intent, predicate_json FROM loops WHERE status = 'open'"):
+        if loop["intent"] not in ("person", "number"):
+            continue
+        try:
+            predicate = json.loads(loop["predicate_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(predicate, dict) or not matcher.evaluate(predicate, view):
+            continue
+        if _other_claim_in_flight(conn, predicate, item_id, matcher):
+            return True
+    return False
+
+
+def _satisfy_matched_watches_locked(conn: sqlite3.Connection, item_id: str, stamp: str, reason: str) -> None:
+    # P10-WATCH: only person and number watches that match this item. A reply watch is left alone — verdict 13
+    item = _item(conn, item_id)
+    if item is None:
+        return
+    view = _item_view(item)
+    matcher = _loop_match()
+    for loop in conn.execute(
+        "SELECT id, intent, predicate_json FROM loops WHERE status = 'open'"
+    ):
+        if loop["intent"] not in ("person", "number"):
+            continue
+        try:
+            predicate = json.loads(loop["predicate_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(predicate, dict) or not matcher.evaluate(predicate, view):
+            continue
+        if reason == "acknowledged":
+            if predicate.get("lifetime") != "once":
+                continue
+            conn.execute(
+                """
+                UPDATE loops
+                   SET status = 'closed',
+                       closed_intent = 'acknowledged',
+                       sender_display_name = NULL,
+                       subject = NULL
+                 WHERE id = ? AND status = 'open'
+                """,
+                (loop["id"],),
+            )
+            continue
+        predicate["last_spoken_at"] = stamp
+        predicate["burst_anchor_at"] = str(item["detected_at"] or "")
+        if predicate.get("lifetime") == "once":
+            conn.execute(
+                """
+                UPDATE loops
+                   SET status = 'closed',
+                       closed_intent = 'delivered',
+                       predicate_json = ?,
+                       sender_display_name = NULL,
+                       subject = NULL
+                 WHERE id = ? AND status = 'open'
+                """,
+                (json.dumps(predicate, separators=(",", ":")), loop["id"]),
+            )
+        else:
+            conn.execute(
+                "UPDATE loops SET predicate_json = ? WHERE id = ? AND status = 'open'",
+                (json.dumps(predicate, separators=(",", ":")), loop["id"]),
+            )
+
+
+def _speech_block_reason(
+    row: Optional[sqlite3.Row],
+    earliest_surface: str,
+    oldest: str,
+    *,
+    conn: Optional[sqlite3.Connection] = None,
+    now: Optional[datetime] = None,
+) -> Optional[str]:
     # P9-SPEAK: the label is not a speech check. An open surface attempt blocks only inside its TTL — P9-D11
     if row is None:
         return "not_found"
-    # P10-READ: unprompted speech about a text or notification stays off while the two named
-    # constants are True; the conversation readers no longer hold phone rows — RD-G7 (b)
+    # P10-READ / P10-WATCH: a notification never speaks. An unwatched text does not either — P10-D15
     if row["source"] in _phone_speech_hold_sources():
+        return "phone_deferred"
+    if (
+        row["source"] in PHONE_TEXT_KINDS
+        and P10_TEXT_NO_UNPROMPTED_SPEECH
+        and conn is not None
+        and not _phone_watch_allows(conn, row, _now(now))
+    ):
+        return "phone_deferred"
+    if conn is not None and row["source"] != PHONE_NOTIF_KIND and _same_watch_claim_in_flight(conn, row):
         return "phone_deferred"
     if int(row["loop_matched"] or 0) != 1:
         return "not_loop_matched"
@@ -2153,7 +2435,9 @@ def _claim_speech(
     if not recovered.get("ok"):
         return recovered
     conn.execute("BEGIN IMMEDIATE")
-    reason = _speech_block_reason(_item(conn, item_id), earliest_surface, oldest)
+    reason = _speech_block_reason(
+        _item(conn, item_id), earliest_surface, oldest, conn=conn, now=clock
+    )
     if reason:
         _rollback(conn)
         return _no(reason)
@@ -2220,7 +2504,7 @@ def _claim_next_speech(
     oldest = _iso(clock - timedelta(seconds=SPEECH_MAX_AGE_SECONDS))
     conn.execute("BEGIN IMMEDIATE")
     hold = _phone_speech_hold_sql()
-    row = conn.execute(
+    candidates = conn.execute(
         f"""
         SELECT id, source FROM items
          WHERE loop_matched = 1
@@ -2238,10 +2522,18 @@ def _claim_next_speech(
            AND detected_at >= ?
            AND {hold}
          ORDER BY detected_at, id
-         LIMIT 1
         """,
         (earliest_surface, oldest),
-    ).fetchone()
+    ).fetchall()
+    row = None
+    for candidate in candidates:
+        reason = _speech_block_reason(
+            _item(conn, candidate["id"]), earliest_surface, oldest, conn=conn, now=clock
+        )
+        if reason:
+            continue
+        row = candidate
+        break
     if row is None:
         conn.execute("COMMIT")
         return _no("nothing_speakable")
@@ -2396,6 +2688,8 @@ def _mark_delivered(
         """,
         (_new_id(), item_id, attempt_id, stamp),
     )
+    # P10-WATCH: delivery closes a one-shot and starts a standing watch's gap — verdicts 3 and 14
+    _satisfy_matched_watches_locked(conn, item_id, stamp, "delivered")
     conn.execute("COMMIT")
     return _ok()
 
@@ -2772,6 +3066,9 @@ def _close_loop(
 ) -> Dict[str, Any]:
     if not _ticket_ok():
         return _no("origin")
+    # A close on Brian's turn always has a reason. NULL is only for rows closed before the column.
+    if not closed_intent:
+        closed_intent = "cancelled"
     conn.execute("BEGIN IMMEDIATE")
     cur = conn.execute(
         """
@@ -2866,6 +3163,296 @@ def _name_hit(name: str, row: sqlite3.Row) -> bool:
     return token in blob
 
 
+def contact_plan(description: str) -> Dict[str, Any]:
+    # P10-WATCH: memory asks the store, which asks the one contact index — verdict 7
+    try:
+        from . import contact_index
+        from . import phone_ids
+    except ImportError:
+        import contact_index
+        import phone_ids
+    if contact_index.contacts_unavailable():
+        return {"state": "unavailable"}
+    hits = []
+    index = contact_index.get_index()
+    speech = " " + contact_index._speech_form(description) + " "
+    if index is not None and speech.strip():
+        for person in index.people:
+            name = contact_index._speech_form(person.display_name)
+            if len(name) >= 3 and (" " + name + " ") in speech:
+                hits.append(person)
+    if not hits:
+        hits = list(contact_index.match_people_by_name(description))
+    if len(hits) > 1:
+        return {"state": "which", "names": [person.display_name for person in hits]}
+    if len(hits) != 1:
+        return {"state": "missing"}
+    person = hits[0]
+    numbers = list(contact_index.canonical_numbers_for(person))
+    quality = contact_index.match_quality(person, description)
+    if quality == "none":
+        quality = "exact"
+    return {
+        "state": quality,
+        "handle": person.handle,
+        "display_name": person.display_name,
+        "number_hashes": [phone_ids.hash(number) for number in numbers],
+        "email_hashes": list(person.email_hashes),
+        "has_number": bool(numbers),
+    }
+
+
+def contact_plan_waiting(description: str) -> Dict[str, Any]:
+    """Resolve a forget against Contacts, waiting out one cold index.
+
+    A loaded index is used immediately. A cold index waits up to Track 5's
+    2 seconds. At that bound, with still no index, the plan is unavailable
+    and the forget continues with what it can already match.
+    """
+    try:
+        from . import contact_index
+    except ImportError:
+        import contact_index
+    if contact_index.contacts_unavailable():
+        return {"state": "unavailable", "bound": "unavailable"}
+    if not contact_index.index_loaded():
+        contact_index.refresh_bounded(contact_index.TURN_REFRESH_BOUND_SECONDS)
+        if contact_index.contacts_unavailable() or not contact_index.index_loaded():
+            return {"state": "unavailable", "bound": "timeout"}
+    plan = contact_plan(description)
+    if plan.get("state") == "unavailable" and "bound" not in plan:
+        plan = dict(plan)
+        plan["bound"] = "unavailable"
+    return plan
+
+
+def number_forget_plan(description: str) -> Dict[str, Any]:
+    # P10-WATCH: a spoken number forgets that number only — verdict 7
+    try:
+        from . import phone_ids
+        from . import contact_index
+    except ImportError:
+        import phone_ids
+        import contact_index
+
+    kind, canonical = phone_ids.spoken_number(description)
+    if kind != phone_ids.KIND_E164:
+        return {"state": "none", "status": "no_number"}
+    if contact_index.contacts_unavailable():
+        return {
+            "state": "unavailable",
+            "hash": phone_ids.hash(canonical),
+            "display_name": "",
+        }
+    digest = phone_ids.hash(canonical)
+    index = contact_index.get_index()
+    owners = list(index.by_number_hash(digest)) if index is not None else []
+    if len(owners) > 1:
+        return {"state": "shared", "hash": digest}
+    owner = owners[0] if owners else None
+    plan: Dict[str, Any] = {"state": "number", "hash": digest, "display_name": "", "handle": ""}
+    if owner is not None:
+        numbers = list(contact_index.canonical_numbers_for(owner))
+        plan.update(
+            {
+                "display_name": owner.display_name,
+                "handle": owner.handle,
+                "has_number": True,
+                "number_hashes": [phone_ids.hash(number) for number in numbers],
+                "email_hashes": list(owner.email_hashes),
+            }
+        )
+    return plan
+
+
+def held_for_number(digest: str) -> Optional[int]:
+    """Items still stored for this number, plus open watches on it.
+
+    None when the store cannot be read. Zero means a number was found and
+    nothing is held for it.
+    """
+    if not digest:
+        return 0
+    path = profile_db_path()
+    if path is None or not path.exists():
+        return None
+    try:
+        conn = connect(path, retry=False)
+    except Exception:
+        return None
+    try:
+        items = conn.execute(
+            """
+            SELECT COUNT(*) FROM items
+             WHERE sender_address_hash = ?
+               AND COALESCE(content_state, '') != 'forgotten'
+            """,
+            (digest,),
+        ).fetchone()[0]
+        watches = 0
+        for row in conn.execute("SELECT address_hashes_json, status FROM loops"):
+            if row["status"] != "open":
+                continue
+            try:
+                hashes = json.loads(row["address_hashes_json"] or "[]")
+            except json.JSONDecodeError:
+                hashes = []
+            if digest in hashes:
+                watches += 1
+        return int(items) + watches
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def note_forget_widen(session_id: str, plan: Dict[str, Any]) -> None:
+    try:
+        from . import loops
+    except ImportError:
+        import loops
+    loops._mint(session_id, "forget_widen", dict(plan))
+
+
+def take_forget_widen(session_id: str, message: str) -> Optional[Dict[str, Any]]:
+    try:
+        from . import loops
+    except ImportError:
+        import loops
+    token = loops._confirm_pending(session_id)
+    if token is None or token.get("action") != "forget_widen":
+        return None
+    if loops._answer_of(message) != "yes":
+        loops._confirms.pop(session_id, None)
+        return {"refused": "lapsed"}
+    plan = dict(token.get("plan") or {})
+    current = loops._confirm_pending(session_id)
+    if current is None:
+        return {"refused": "lapsed"}
+    person_hashes = list(plan.get("number_hashes") or []) + list(plan.get("email_hashes") or [])
+    if plan.get("number_hashes") or plan.get("email_hashes"):
+        try:
+            from . import contact_index
+            from . import phone_ids
+        except ImportError:
+            import contact_index
+            import phone_ids
+        index = contact_index.get_index()
+        person = index.by_handle.get(plan.get("handle")) if index is not None else None
+        if person is not None:
+            numbers = [phone_ids.hash(number) for number in contact_index.canonical_numbers_for(person)]
+            if sorted(numbers) != sorted(plan.get("number_hashes") or []) or sorted(person.email_hashes) != sorted(
+                plan.get("email_hashes") or []
+            ):
+                loops._confirms.pop(session_id, None)
+                return {"refused": "confirm_stale"}
+    loops._confirms.pop(session_id, None)
+    plan["hashes"] = person_hashes
+    plan["ok"] = True
+    return plan
+
+
+def forget_watches_named(description: str) -> Dict[str, Any]:
+    # Contacts are down. Forget only hashes already stored on a watch whose name he said.
+    path = profile_db_path()
+    if path is None or not path.exists():
+        return {"ok": False, "names": []}
+    try:
+        from . import contact_index
+    except ImportError:
+        import contact_index
+    conn = connect(path, retry=False)
+    try:
+        speech = " " + contact_index._speech_form(description) + " "
+        names = []
+        hashes = []
+        for row in conn.execute("SELECT sender_display_name, address_hashes_json FROM loops"):
+            name = str(row["sender_display_name"] or "")
+            spoken = contact_index._speech_form(name)
+            if len(spoken) < 3 or (" " + spoken + " ") not in speech:
+                continue
+            names.append(name)
+            try:
+                hashes.extend(json.loads(row["address_hashes_json"] or "[]"))
+            except json.JSONDecodeError:
+                continue
+    finally:
+        conn.close()
+    return {"ok": True, "names": names, "hashes": hashes}
+
+
+# P10-WATCH: a tombstone does not follow the companion onto a new install — P10-D14
+REINSTALL_TOMBSTONE_LIMIT = (
+    "A tombstone covers a resend, a catch-up replay, and a re-pair of the same install. "
+    "It does not cover a new install."
+)
+
+
+def forget_must_tell(*, has_number: bool) -> List[Dict[str, str]]:
+    """Facts the reply has to convey. The caller words them. This is not a script."""
+    facts = [
+        {
+            "id": "notifications_display_name",
+            "fact": "Notifications are matched by display name only, so some may remain.",
+        }
+    ]
+    if has_number:
+        facts.append({"id": "texts_on_phone", "fact": "The texts are still on the phone."})
+    return facts
+
+
+def forget_person_message(
+    *,
+    name: str,
+    texts: int = 0,
+    emails: int = 0,
+    watches: int = 0,
+    notifications: int = 0,
+    memory_notes: int = 0,
+    memory_episodes: int = 0,
+    has_number: bool = False,
+    state: str = "exact",
+    bound: str = "",
+) -> str:
+    # P10-WATCH: name the kinds actually removed. The phone and notification limits are must_tell.
+    del has_number
+    if state == "unavailable":
+        waited = " within 2 seconds" if bound == "timeout" else ""
+        return (
+            "I forgot what I could for "
+            + name
+            + ". Contacts couldn't be checked"
+            + waited
+            + ", so this may be incomplete."
+        )
+    if state == "missing" and not (texts or emails or watches or notifications or memory_notes or memory_episodes):
+        return (
+            "I couldn't find "
+            + name
+            + " in your contacts, and I'm not holding anything under that name."
+        )
+    held: List[str] = []
+    if texts:
+        held.append("the texts I was holding")
+    if emails:
+        held.append("the email I was holding")
+    if watches:
+        held.append("the watches I was holding")
+    if memory_notes:
+        held.append("the notes I was holding")
+    if memory_episodes:
+        held.append("the episodes I was holding")
+    if not held:
+        return "I wasn't holding anything for " + name + "."
+    if len(held) == 1:
+        kinds = held[0]
+    elif len(held) == 2:
+        kinds = held[0] + " and " + held[1]
+    else:
+        kinds = ", ".join(held[:-1]) + ", and " + held[-1]
+    return "I've forgotten " + name + ", including " + kinds + "."
+
+
 def forget_subject(
     conn: sqlite3.Connection,
     *,
@@ -2873,6 +3460,8 @@ def forget_subject(
     address_hashes: Optional[Sequence[str]] = None,
     source_ids: Optional[Sequence[str]] = None,
     names: Optional[Sequence[str]] = None,
+    display_names: Optional[Sequence[str]] = None,
+    turn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     # P9-STORE: entity, address hash, and source id first; a text sweep is extra — P9-D06
     return _call(
@@ -2882,7 +3471,13 @@ def forget_subject(
         address_hashes=list(address_hashes or []),
         source_ids=list(source_ids or []),
         names=list(names or []),
+        display_names=list(display_names or []),
+        turn_id=turn_id,
     )
+
+
+def _forget_name_key(name: str) -> str:
+    return " ".join(str(name or "").split()).casefold()
 
 
 def _forget_subject(
@@ -2892,17 +3487,23 @@ def _forget_subject(
     address_hashes: List[str],
     source_ids: List[str],
     names: List[str],
+    display_names: Optional[List[str]] = None,
     ticket_checked: bool = False,
+    turn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     # A retry finishes a forget that already passed the ticket. Store open has no turn.
-    if not ticket_checked and not _ticket_ok():
-        return _no("origin")
+    if not ticket_checked:
+        reason = ticket_reason(turn_id)
+        if reason:
+            return _no(reason)
     hashes = {value for value in address_hashes if value}
     sources = {value for value in source_ids if value}
+    whole_names = {_forget_name_key(name) for name in (display_names or []) if _forget_name_key(name)}
     conn.execute("BEGIN IMMEDIATE")
     rows = conn.execute("SELECT * FROM items").fetchall()
     delete_ids = []
     redact_ids = []
+    kind_counts = {"texts": 0, "emails": 0, "notifications": 0}
     for row in rows:
         linked = False
         if entity_id and row["entity_id"] == entity_id:
@@ -2911,10 +3512,20 @@ def _forget_subject(
             linked = True
         elif row["message_id"] in sources or row["thread_id"] in sources or row["event_id"] in sources:
             linked = True
-        elif entity_id and any(_name_hit(name, row) for name in names):
+        elif row["source"] == PHONE_NOTIF_KIND and whole_names:
+            # P10-WATCH: notifications match the whole display name only — P10-D14 / verdict 8
+            if _forget_name_key(row["sender_display_name"]) in whole_names:
+                linked = True
+        elif entity_id and row["source"] != PHONE_NOTIF_KIND and any(_name_hit(name, row) for name in names):
             linked = True
         if not linked:
             continue
+        if row["source"] in PHONE_TEXT_KINDS:
+            kind_counts["texts"] += 1
+        elif row["source"] == "gmail":
+            kind_counts["emails"] += 1
+        elif row["source"] == PHONE_NOTIF_KIND:
+            kind_counts["notifications"] += 1
         if row["delivery"] in _IN_FLIGHT:
             redact_ids.append(row["id"])
         else:
@@ -2928,6 +3539,13 @@ def _forget_subject(
         conn.execute("DELETE FROM deliveries WHERE item_id = ?", (item_id,))
         conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
     for item_id in redact_ids:
+        gone = conn.execute(
+            "SELECT source, idempotency_key FROM items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if gone is not None and gone["source"] in PHONE_SOURCES:
+            # P10-WATCH: an in-flight phone row is tombstoned as well as redacted — P10-D14
+            _write_tombstone_locked(conn, str(gone["idempotency_key"]), forget_stamp)
         conn.execute(
             """
             UPDATE items
@@ -2938,6 +3556,14 @@ def _forget_subject(
                    attachment_has = NULL, attachment_count = NULL, attachment_kind = NULL,
                    content_state = 'forgotten'
              WHERE id = ?
+            """,
+            (item_id,),
+        )
+        conn.execute(
+            """
+            UPDATE item_attempts
+               SET status = 'released'
+             WHERE item_id = ? AND purpose = 'speech' AND status IN ('open', 'uncertain')
             """,
             (item_id,),
         )
@@ -2955,15 +3581,21 @@ def _forget_subject(
             or loop_hashes & hashes
             or loop_sources & sources
         ):
-            # Keep the row so a prior close reason stays. An open loop ends as forgotten.
+            # An open watch ends as forgotten. A delivered or acknowledged watch
+            # for this same person is retagged forgotten. A cancelled close stays.
             cur = conn.execute(
                 """
                 UPDATE loops
                    SET status = 'closed',
                        closed_intent = 'forgotten',
                        sender_display_name = NULL,
-                       subject = NULL
-                 WHERE id = ? AND status = 'open'
+                       subject = NULL,
+                       address_hashes_json = '[]'
+                 WHERE id = ?
+                   AND (
+                        status = 'open'
+                        OR closed_intent IN ('delivered', 'acknowledged')
+                   )
                 """,
                 (loop["id"],),
             )
@@ -2973,6 +3605,10 @@ def _forget_subject(
         items_deleted=len(delete_ids),
         items_redacted=len(redact_ids),
         loops_deleted=loops_deleted,
+        texts=kind_counts["texts"],
+        emails=kind_counts["emails"],
+        notifications=kind_counts["notifications"],
+        watches=loops_deleted,
     )
 
 
@@ -3234,6 +3870,7 @@ def _retry_pending(memory: sqlite3.Connection, conn: sqlite3.Connection) -> Dict
         address_hashes=list(payload.get("address_hashes") or []),
         source_ids=list(payload.get("source_ids") or []),
         names=[],
+        display_names=list(payload.get("display_names") or []),
         ticket_checked=True,
     )
     if not result.get("ok"):
@@ -3252,7 +3889,11 @@ def retry_pending_forget(
     return _call(_retry_pending, memory, conn)
 
 
-def forget_subject_from_profile(payload: Dict[str, Any], names: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+def forget_subject_from_profile(
+    payload: Dict[str, Any],
+    names: Optional[Sequence[str]] = None,
+    turn_id: Optional[str] = None,
+) -> Dict[str, Any]:
     path = profile_db_path()
     if path is None or not path.exists():
         return _no("missing")
@@ -3270,6 +3911,8 @@ def forget_subject_from_profile(payload: Dict[str, Any], names: Optional[Sequenc
             address_hashes=list(payload.get("address_hashes") or []),
             source_ids=list(payload.get("source_ids") or []),
             names=list(names or []),
+            display_names=list(payload.get("display_names") or []),
+            turn_id=turn_id,
         )
     finally:
         conn.close()
@@ -3568,6 +4211,117 @@ def _set_loop_matched(
          WHERE id = ? AND closed_at IS NULL AND loop_matched = 0
         """,
         (stamp, item_id),
+    )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def bind_open_loop_match(
+    conn: sqlite3.Connection,
+    loop_id: str,
+    item_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    # P10-WATCH: the loop is still open in the same transaction that marks the item — verdict 3
+    return _call(_bind_open_loop_match, conn, loop_id, item_id, now=now)
+
+
+def _bind_open_loop_match(
+    conn: sqlite3.Connection,
+    loop_id: str,
+    item_id: str,
+    *,
+    now: Optional[datetime],
+) -> Dict[str, Any]:
+    stamp = _iso(_now(now))
+    conn.execute("BEGIN IMMEDIATE")
+    loop = conn.execute(
+        "SELECT status, matched_at FROM loops WHERE id = ?",
+        (loop_id,),
+    ).fetchone()
+    if loop is None or loop["status"] != "open":
+        _rollback(conn)
+        return _no("not_open")
+    item = conn.execute(
+        "SELECT source, eligibility, loop_matched, closed_at FROM items WHERE id = ?",
+        (item_id,),
+    ).fetchone()
+    if item is None or item["closed_at"] is not None:
+        _rollback(conn)
+        return _no("illegal_transition")
+    if str(item["source"] or "") == PHONE_NOTIF_KIND:
+        _rollback(conn)
+        return _no("notif")
+    if not loop["matched_at"]:
+        cur = conn.execute(
+            """
+            UPDATE loops
+               SET matched_at = ?
+             WHERE id = ? AND status = 'open' AND matched_at IS NULL
+            """,
+            (stamp, loop_id),
+        )
+        if cur.rowcount != 1:
+            _rollback(conn)
+            return _no("illegal_transition")
+    if int(item["loop_matched"] or 0) == 1:
+        conn.execute("COMMIT")
+        return _ok(already=True)
+    if item["eligibility"] == "pending":
+        cur = conn.execute(
+            """
+            UPDATE items
+               SET eligibility = 'eligible',
+                   loop_matched = 1,
+                   eligible_at = ?,
+                   updated_at = ?
+             WHERE id = ?
+               AND eligibility = 'pending'
+               AND closed_at IS NULL
+               AND loop_matched = 0
+            """,
+            (stamp, stamp, item_id),
+        )
+    else:
+        cur = conn.execute(
+            """
+            UPDATE items
+               SET loop_matched = 1, updated_at = ?
+             WHERE id = ? AND closed_at IS NULL AND loop_matched = 0
+            """,
+            (stamp, item_id),
+        )
+    if cur.rowcount != 1:
+        _rollback(conn)
+        return _no("illegal_transition")
+    conn.execute("COMMIT")
+    return _ok()
+
+
+def replace_loop_predicate(
+    conn: sqlite3.Connection,
+    loop_id: str,
+    predicate: Dict[str, Any],
+) -> Dict[str, Any]:
+    # P10-WATCH: group inclusion is a predicate change, written only here — verdict 14
+    return _call(_replace_loop_predicate, conn, loop_id, predicate)
+
+
+def _replace_loop_predicate(
+    conn: sqlite3.Connection,
+    loop_id: str,
+    predicate: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not _ticket_ok():
+        return _no("origin")
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute(
+        "UPDATE loops SET predicate_json = ? WHERE id = ? AND status = 'open'",
+        (json.dumps(predicate, separators=(",", ":")), loop_id),
     )
     if cur.rowcount != 1:
         _rollback(conn)

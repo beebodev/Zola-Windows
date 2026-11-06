@@ -46,7 +46,8 @@ public readonly record struct SpeechClaimResult(
     string? AttemptId,
     string? Name,
     string? NameSource,
-    string? Source);
+    string? Source,
+    string? LineKind = null);
 
 public readonly record struct SpeechStoreReply(bool Ok, string? Reason)
 {
