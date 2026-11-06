@@ -352,22 +352,109 @@ Recorded limits:
 - Twenty-two real items reached the re-injection cap during the surfacing smoke. The 24-hour bound uses `detected_at`.
 - Hermes logs an 80-character preview of every user message. At 900×640 the VOICE and MIC lines overlap her hair.
 
+## Phase 10 — COMPLETE: Android Companion
+
+Phase 10 shipped the Android companion. The phone reports texts and allowlisted notifications to this PC over Tailscale. The PC decides importance. Complete means every planned track shipped. `main` at the start of this closeout is `cd023a59b0c929497a559d16a8a2852a783be78d`.
+
+| Item | Implementation | Merge |
+|---|---|---|
+| P10PRE | `99c799d3d4cd542106279f5ba39c35220ee90e5f` | `f07ae366238e5b99df5d045b90d528fed831359a` |
+| Build plan | `9f245622b4eb0d44ef8fb26e6f2fb35f5b3af691` | `4099a18079d3a32981e95f0c077d9c492ae14b39` |
+| P10-STORE | `0bacf3f8a7a2c20b429557f068f1fdbc61795ad4` | `c9677297e50ce0a2c2d45d59f171e506eeb04642` |
+| P10-INTAKE | `eda4714a88c07ea5ca99e41c93fd1327e6e9d6f6` | `2e467c50b7b54a9e8f4cd6a352eaf652f7d4c4a6` |
+| P10-COMPANION | `839cb7ab63f601790bb1df012d92172e6f0e10de` | `7c59c1891405bf45728d3bc5d4c7b6e8519ef241` |
+| P10-NOTIFY | `a85134fad27013db24db1680af588dbbb2374036` | `89f72c17b0b3bb662fe7563bb9b0273ed500ecec` |
+| P10-READ | `d9f14b884f2632f0251a08c0d5990d94b5acace8` | `d5fe1463495aa155277b17357cbf6ed50d8a52da` |
+| P10-WATCH | `7c701d9b27e125b8601ba82d40439fc9f8a94cf8` | `2e0b72ab23bdd78cd5b0b242ed77f396671d9a93` |
+| P10-SPIKE-TRANSPORT | no repo commits | Findings outside the repo |
+
+Docs follow-ups are in the Phase 1 inventory. The scratch-deletion note on current `main` is `cd023a59b0c929497a559d16a8a2852a783be78d`.
+
+Suites on `cd023a59` (`P10-LORE_Progress.md`): workspace 582, memory 162, tools 44, tts 8, phone 71 (rerun after the client was closed; the first run was 69 pass and 2 mutex failures while the client held the mutex), client checks 250 (speech 40, phone 16, code 32), Kotlin 98. The Kotlin run needed `ANDROID_HOME` for that process. No `local.properties` was written.
+
+Shipped:
+- the phone–PC contract and store schemas 6–8;
+- `zola-phone`, supervised, Tailscale-only, with pairing and the Companion row;
+- the companion: texts with masking, cursors and reads; notifications from the allowlist;
+- Zola reads the phone, says when it's unavailable, and reads codes only on request in a local voice;
+- person and number watches, watched-text speech, and forget by person or number.
+
+Amendments:
+- C10: the rerun is 6 hours. Completeness was scored on that rerun only. Companion time is resolved to about 1 s because of the clock offset between phone and PC.
+- Messenger is excluded. Brian: "In reality, I don't really use Messenger much. I'm good with excluding it altogether."
+- ARCH-36: a code is read by local Zira. The Hermes voice path writes text and audio to files, so it cannot carry a code.
+
+Limits:
+- Name-only unprompted lines: temporary limit.
+- Notifications never speak: temporary limit.
+- One sentence instead of the office-door ask: temporary limit.
+- Code-only ranking of texts: temporary limit.
+- Only watched items speak: temporary limit.
+- Fixed speech templates: temporary limit.
+- No follow-up listening after an unprompted line: temporary limit.
+- Contacts as the measure of a known sender, and not trust: temporary limit.
+- Unprompted lines only on this PC: temporary limit.
+- Texts to the model only on request: temporary limit.
+- The phone decides visibility only: architectural boundary.
+- One route to the phone: architectural boundary.
+- Codes only on an explicit request, local voice: architectural boundary.
+- Untrusted content never creates a watch or a forget: architectural boundary.
+- 7-day raw content: architectural boundary.
+- Authorization outside model judgment, and explicit approval before a consequential action: architectural boundary.
+- No sending: deferred capability.
+- Attachments metadata only: deferred capability.
+- No multi-device framework: deferred capability.
+- W2 Firebase wake: deferred capability.
+- Public route: deferred capability.
+
+Honest items:
+- C10 passed under those amendments, not as a 12-hour run graded on end-to-end delay.
+- RCS labelling is usually `unknown`. RCS can land in either provider. Group RCS and the sender-shape probe were not proven.
+- Automatic spam filtering is unverified. Provider id reuse was observed only.
+- The synthetic code value remains in `state.db` and in one `proactive.db` row.
+- `forget_memory`'s store ticket failed silently until the turn id was carried.
+- Track 5 wrote `time.sleep(20)` into the live contact index without a STOP, then restored it.
+- Track 4 ran tap scripts and UI dumps on the phone. That hands-off breach was stopped.
+- R3 failed once by answering from the previous read.
+- Two blank close-reason rows and three 2026-10-13 reply rows were left as they are.
+- F5 is a unit test only. W7 is tested in code, not live spoken behavior.
+- Phase 5: the live `fake_phone.py` matches the repo copy. The difference the track docs recorded is gone.
+- A `zola-phone` and a serve each survived a client close.
+- Serve dump `python.exe.25760.dmp` (2026-11-03) joins the earlier dumps under S51. It was not caused by Track 5. Three later `python.exe` dumps (2026-11-04 11:04, 2026-11-05 13:32, 2026-11-05 14:46) are named in S51. WER captures every `python.exe`, so the crashing process is not identified.
+- Forget still misses an older name form, a one-token form, and a longer word that starts with the name.
+- The number-owner path skips the 2-second wait.
+- She may withhold unmasked code-looking text in a history read.
+- `notification_queue_drops=2` is the N9 overflow and was not reset.
+- Ingest leaves `thread_id` empty. History items carry it. Stored items do not.
+
 ## Next
 
-Phase 10 — Android companion: scoped separately and running in parallel; recorded at its own lore closeout.
+1. ARCH-SWAP, after the Phase 10 closeout merges and before any P11PRE work.
+2. SPEECH-BASELINE (prompt v1.4) on the `p10-closed` tag. Measurement only.
+3. The first process track: test gate, stable and development builds.
+4. The serve crash investigation (S51), before Phase 11 scoping.
+5. Phase 11 — Memory and World Understanding. P11PRE first.
+
+SOP v3 adopted at the Phase 10 lore closeout (2026-11-06); its transition rules apply until the first process track merges.
 
 ## Later candidates
 
-Brian's call. One line of evidence each. Every bullet from the previous current-stage list is here, in the shipped list, or covered by the Phase 10 line.
+- **Sending texts (S90).** No public API for a third-party app to send RCS. A notification Reply action exists only while the notification exists. Approval would follow email.
+- **Notification speech (S91).** Notifications do not speak. Display-name matching is a guess.
+- **Listening after an unprompted line.** It waits on the speech pipeline (S77).
+- **Phase 12 — Proactive Intelligence and Engagement.** Code-only ranking of texts is a temporary limit. The build plan's "Phase 11" for that ranking is superseded by the 2026-10-19 re-sequence.
+- **Transport fallbacks (S92).** W2 is untested. A public route stays deferred. Reconnect targets are qualification targets, not guarantees.
+
+Phase 9 later candidates, carried unchanged:
 
 - **Speech pipeline (S77).** Submit to first audio was about 4.6 s on a simple turn and about 16 s on a tool turn. The follow-up quiet is 0.5 s. The ordinary-reply echo is still accepted.
 - **Barge-in (S36).** Wake during playback remains. The 2026-10-12 deferral covers it. A new TTS provider does not restore it.
 - **Voice I/O ownership (S56).** The upstream-blocked voice items still sit in the voice and audio layer. `S69` (a Hermes prefix in front of a whole-message match) and `S70` (no playback-completion signal) stay open beside it.
 - **`agent.execution_guidance` (S54).** The largest measured latency lever remains (tool rounds about +8–12 s/turn; 17.8 s vs 5.4 s submit to audio). The Gmail skill route is gone. The decision stays open.
-- **Backend crash cause (S51).** Supervision and crash diagnostics shipped in P9-SUPERVISE. Three dumps on 2026-10-17 are not analyzed. Brian chose to diagnose later. The cause stays open.
+- **Backend crash cause (S51).** Supervision and crash diagnostics shipped in P9-SUPERVISE. Dumps from 2026-10-17, 2026-10-20 and 2026-11-03 are not analyzed (see S51). Brian chose to diagnose later. The cause stays open.
 - **Phase 7 voice, still open.** `S52` stop-vs-silence race. `S55` streaming TTS bake-off. `S57` no cards in voice; Workspace sends are done, and batch and command approvals are not. `S58` smaller Whisper models. `S59` `silence_duration`, data only.
 - **Carried from Phase 8.** `S35` session and always approvals. `S40` UI polish. `S28` session UI retirement (episodes exist; evaluate).
-- **Autonomy.** Brian is scoping it separately.
+- **Autonomy.** Re-sequenced on 2026-10-19: proactive judgment and engagement is Phase 12 (above).
 - **Memory round two (S46–S50, S63).** Associative recall and fact-authority migration were left for measured evidence. An attributed save was not chosen.
 - **Workspace expansions (S60, S61, S62, S64).** Mark read, archive, and label; calendar writes; attachment bytes; Office extraction. Each was deferred on purpose.
 - **Summary selectivity (S67).** Triage summaries and one gist omitted addresses. Brian accepted the smoke and did not ask for a fix.
@@ -376,8 +463,8 @@ Brian's call. One line of evidence each. Every bullet from the previous current-
 - **Per-agent voices and direct agent conversations (S72 remainder).** The Systems panel and spoken watcher status shipped. Talking to each agent, and a voice of its own, did not.
 - **Recognition (S75).** Speaker identification, then face, as signals. Neither is authentication.
 - **Kasa (S76).** Lights only. A small local tool, and an install decision if it needs one.
-- **Store and watcher coverage (S84, S85).** A closed loop is not deleted. Series delete, Contacts-only addresses, sent mail, and watching while the client is closed remain.
-- **Privacy and logs (S86).** The chat-history sentence is still unpublished. A privacy-page paragraph is drafted and waiting for Brian to publish. The privacy plan still names Gemini for reasoning and Gemini Live for voice. `presence.log` is 177,214,171 bytes and unrotated.
+- **Store and watcher coverage (S84, S85).** A closed loop is not deleted. Series delete, sent mail, and watching while the client is closed remain (the Contacts-only-address part closed at the Phase 10 closeout).
+- **Privacy and logs (S86).** The chat-history sentence is still unpublished. The Phase 9 privacy paragraph was published on 2026-10-19. The Track 5 phone paragraph was published on 2026-11-06 (Last updated November 6, 2026). The privacy plan's cloud list is corrected at this closeout. `presence.log` is 272,639,188 bytes on 2026-11-06 and unrotated.
 
 ## Source documents
 - Audit series: `zola-architecture/audit/winh-hermes-gap/`

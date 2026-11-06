@@ -329,11 +329,10 @@ Define which processing must stay on-device, which can go to cloud services, and
 
 **May use cloud processing with disclosure:**
 
-- speech-to-text transcription (current: Deepgram)
-- language model reasoning (current: Gemini)
-- conversational voice synthesis (current: Gemini Live API)
+- reply-voice synthesis (current: Deepgram Aura-2). Speech-to-text stays on the PC.
+- language model reasoning and background ranking (current: OpenAI, under his account). Background ranking receives the sender's display name, the sender's domain, the subject, and a trimmed mail body. It does not receive phone content.
 - weather, traffic, and mapping data
-- calendar and messaging metadata (not content)
+- calendar metadata (not content)
 
 **Requires user choice (hybrid options):**
 
@@ -350,6 +349,8 @@ When data must be transmitted to cloud services:
 - strip identifying information where the task can be completed without it
 - do not transmit Tier 1 data to cloud services under any circumstances
 - do not transmit raw communication content, except the trimmed body sent for background ranking (display name, sender domain, subject, and that trimmed body). Store the label and the gist, and delete the body in that same write
+
+When he asks her to read a text or an allowlisted notification in a conversation, that content is sent to the model as part of that conversation, as email is when he asks her to read mail. A verification code is read by a local voice and is not sent to a cloud voice.
 - treat third-party API responses as untrusted and validate before using
 
 ### Local-First Memory Option
