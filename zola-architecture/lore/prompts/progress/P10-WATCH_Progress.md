@@ -23,7 +23,7 @@
 | 4 | Implement and bench | STOP. Bench recorded. |
 | 5 | Review checkpoint | Run sheet amended after review. STOP for "proceed to phase 6". |
 | 6 | Smoke | Passed. Phase 6 report is written. Open watches 0. |
-| 7 | Closeout | Merged. 7i waits on his confirmation of the live state. |
+| 7 | Closeout | COMPLETE. Scratch deleted. The leftover worktree folder is still on disk. |
 
 ## Guardrails summary
 
@@ -1486,4 +1486,4 @@ Local `p10-watch` is deleted (was `100b713`). `origin/p10-watch` is deleted. `ma
 
 ### 7i
 
-Not done. Scratch stays until Brian confirms the live state.
+Brian relaunched from `main`. Client 13744, the primary Debug build. One watcher, one phone, one serve. Scratch `C:\Users\test\Dev\zola-spikes\p10-watch\` is deleted, including the part4b backup. The leftover folder `C:\Users\test\Dev\zola-windows-p10-watch` is still on disk and is not a worktree.
