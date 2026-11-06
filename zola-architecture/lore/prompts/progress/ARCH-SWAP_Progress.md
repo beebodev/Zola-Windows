@@ -857,3 +857,6 @@ Brian, verbatim: "proceed to commit and merge." Under the SOP v3.0 transition, t
 
 The Android-era originals live in the Android repository.
 
+Implementation SHA: `533951ff6a8e022503a19ed3acda9000b9822774`.
+Subject: `docs(ARCH-SWAP): Windows architecture docs replace the Android-era copies`.
+
