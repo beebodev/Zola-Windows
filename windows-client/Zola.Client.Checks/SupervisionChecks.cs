@@ -521,6 +521,251 @@ internal sealed partial class CheckRunner
                 && !SupervisionConstants.RetentionExpired(fresh, now, SupervisionConstants.DumpRetentionDays)
                 && SupervisionConstants.RetentionExpired(expired, now, SupervisionConstants.ServeStderrRetentionDays);
         });
+
+        // S51F-FIX: LostTurnNotice table — S51F-D04
+        Supervision("lost turn notice for in-flight typed turn", () =>
+        {
+            var d = LostTurnNotice.Decide(false, false, true, false, false, false);
+            return d.ShowNotice && d.FinalizeLiveAsInterrupted && d.SkipReason is null
+                && SupervisionConstants.LostTurnNoticeText
+                    == "Sorry, your last request didn't go through. Please ask again."
+                && SupervisionConstants.LostTurnNoticeText.Contains('\'')
+                && !SupervisionConstants.LostTurnNoticeText.Contains('\u2019');
+        });
+
+        Supervision("lost turn notice for in-flight voice turn", () =>
+        {
+            var d = LostTurnNotice.Decide(false, false, false, true, false, false);
+            return d.ShowNotice && d.FinalizeLiveAsInterrupted;
+        });
+
+        Supervision("lost turn notice while awaiting transcript after capture", () =>
+        {
+            var d = LostTurnNotice.Decide(false, true, false, false, true, false);
+            return d.ShowNotice && !d.FinalizeLiveAsInterrupted;
+        });
+
+        Supervision("lost turn notice none when idle", () =>
+        {
+            var d = LostTurnNotice.Decide(false, true, false, false, false, false);
+            return !d.ShowNotice && d.SkipReason == "not_in_flight";
+        });
+
+        Supervision("lost turn notice none on deliberate shutdown", () =>
+        {
+            var d = LostTurnNotice.Decide(true, false, true, true, true, false);
+            return !d.ShowNotice && d.SkipReason == "deliberate";
+        });
+
+        Supervision("lost turn notice second unreachable is skipped", () =>
+        {
+            var first = LostTurnNotice.Decide(false, false, true, false, false, false);
+            var second = LostTurnNotice.Decide(false, false, true, false, false, alreadyApplied: true);
+            return first.ShowNotice && !second.ShowNotice && second.SkipReason == "already_applied";
+        });
+
+        Supervision("lost turn notice none when turn already finalized", () =>
+        {
+            var d = LostTurnNotice.Decide(false, true, false, false, false, false);
+            return !d.ShowNotice && d.SkipReason == "not_in_flight";
+        });
+
+        Supervision("lost turn notice keeps interrupted mark for partial text path", () =>
+        {
+            var d = LostTurnNotice.Decide(false, false, true, false, false, false);
+            return d.ShowNotice && d.FinalizeLiveAsInterrupted;
+        });
+
+        Supervision("turn_ui_finalized line is fields only", () =>
+        {
+            var line = LostTurnNotice.FormatUiFinalized(7, "lost", DateTimeOffset.Parse("2026-11-09T13:00:00Z"));
+            return line.StartsWith("turn_ui_finalized ", StringComparison.Ordinal)
+                && line.Contains("turn=7", StringComparison.Ordinal)
+                && line.Contains("status=lost", StringComparison.Ordinal)
+                && line.Contains("time=", StringComparison.Ordinal)
+                && !line.Contains("Sorry", StringComparison.Ordinal)
+                && !line.Contains("didn't", StringComparison.Ordinal)
+                && !line.Contains("ask again", StringComparison.Ordinal);
+        });
+
+        // S51F-FIX: faulthandler + pid log shape — S51F-D06
+        Supervision("faulthandler helper sets only PYTHONFAULTHANDLER=1", () =>
+        {
+            var start = new System.Diagnostics.ProcessStartInfo();
+            start.Environment["KEEP_ME"] = "yes";
+            PythonStart.ApplyFaultHandler(start);
+            return start.Environment[SupervisionConstants.FaultHandlerEnv] == SupervisionConstants.FaultHandlerValue
+                && start.Environment["KEEP_ME"] == "yes";
+        });
+
+        Supervision("serve spawn calls the shared faulthandler helper", () =>
+        {
+            var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+            var manager = File.ReadAllText(Path.Combine(root, "Zola.Client", "HermesProcessManager.cs"));
+            var pythonStart = File.ReadAllText(Path.Combine(root, "Zola.Client", "Supervision", "PythonStart.cs"));
+            return manager.Contains("PythonStart.ApplyFaultHandler(start)", StringComparison.Ordinal)
+                && pythonStart.Contains("ApplyFaultHandler(start)", StringComparison.Ordinal)
+                && pythonStart.Contains("SupervisionConstants.FaultHandlerEnv", StringComparison.Ordinal);
+        });
+
+        Supervision("supervision log includes launcher and child pid fields", () =>
+        {
+            var withChild = SupervisionLog.Format(
+                SupervisionConstants.ProcServe,
+                SupervisionConstants.EventRestart,
+                1,
+                2,
+                100,
+                "200");
+            var unknown = SupervisionLog.Format(
+                SupervisionConstants.ProcWatcher,
+                SupervisionConstants.EventStart,
+                0,
+                1,
+                50,
+                ChildPidLookup.Unknown);
+            return withChild
+                    == "supervisor proc=serve event=restart restarts=1 generation=2 launcher_pid=100 child_pid=200"
+                && unknown
+                    == "supervisor proc=watcher event=start restarts=0 generation=1 launcher_pid=50 child_pid=unknown";
+        });
+
+        Supervision("child pid lookup picks deepest python leaf in a fake tree", () =>
+        {
+            // launcher → intermediate → python (leaf)
+            IReadOnlyList<ChildPidLookup.ProcessNode> Children(int pid) => pid switch
+            {
+                1 => new[] { new ChildPidLookup.ProcessNode(2, "uv.exe") },
+                2 => new[] { new ChildPidLookup.ProcessNode(3, "python.exe") },
+                _ => Array.Empty<ChildPidLookup.ProcessNode>(),
+            };
+            var leaf = ChildPidLookup.FindLeafPythonPid(1, Children);
+            var resolved = ChildPidLookup.TryResolve(1, timeoutMs: 200, listChildren: Children);
+            return leaf == 3 && resolved == "3";
+        });
+
+        Supervision("child pid lookup prefers deeper interpreter over parent python", () =>
+        {
+            IReadOnlyList<ChildPidLookup.ProcessNode> Children(int pid) => pid switch
+            {
+                10 => new[] { new ChildPidLookup.ProcessNode(20, "python.exe") },
+                20 => new[] { new ChildPidLookup.ProcessNode(30, "python.exe") },
+                _ => Array.Empty<ChildPidLookup.ProcessNode>(),
+            };
+            return ChildPidLookup.FindLeafPythonPid(10, Children) == 30;
+        });
+
+        Supervision("child pid lookup times out to unknown without waiting on a slow finder", () =>
+        {
+            var started = Environment.TickCount64;
+            var result = ChildPidLookup.TryResolve(
+                1,
+                timeoutMs: 50,
+                listChildren: _ =>
+                {
+                    Thread.Sleep(2_000);
+                    return Array.Empty<ChildPidLookup.ProcessNode>();
+                });
+            var elapsed = Environment.TickCount64 - started;
+            return result == ChildPidLookup.Unknown && elapsed < 1_000;
+        });
+
+        // S51F-FIX: gap order — Invalidate clears RecorderState before BlockInput; mark survives — S51F-D04
+        Supervision("outage mark: transcribing then Invalidate leaves idle path with notice", () =>
+        {
+            // Mirrors InvalidateCaptureForOutage: snapshot → Idle → consume → Decide (OutageGap order).
+            const string stateTranscribing = "transcribing";
+            const string stateIdle = "idle";
+            var mark = new OutageAwaitingMark();
+            var recorderState = stateTranscribing;
+            mark.BeginGap();
+            mark.NoteWasTranscribing(
+                string.Equals(recorderState, stateTranscribing, StringComparison.Ordinal));
+            recorderState = stateIdle;
+            var awaiting = mark.Consume();
+            var decision = LostTurnNotice.Decide(false, true, false, false, awaiting, false);
+            return recorderState == stateIdle
+                && awaiting
+                && decision.ShowNotice
+                && !decision.FinalizeLiveAsInterrupted;
+        });
+
+        Supervision("outage mark: dropped pending transcript sets the flag", () =>
+        {
+            // Non-empty DiscardPending result only — not the P7-D10 admit stamp.
+            var mark = new OutageAwaitingMark();
+            mark.BeginGap();
+            mark.NotePendingTranscriptDropped(true);
+            return mark.Consume()
+                && LostTurnNotice.Decide(false, true, false, false, true, false).ShowNotice;
+        });
+
+        Supervision("outage mark: flag consumed once so a second gap has no notice", () =>
+        {
+            var mark = new OutageAwaitingMark();
+            mark.BeginGap();
+            mark.NoteWasTranscribing(true);
+            var first = mark.Consume();
+            var second = mark.Consume();
+            mark.BeginGap();
+            var afterNextGapStart = mark.Consume();
+            var d1 = LostTurnNotice.Decide(false, true, false, false, first, false);
+            var d2 = LostTurnNotice.Decide(false, true, false, false, second, alreadyApplied: true);
+            var d3 = LostTurnNotice.Decide(false, true, false, false, afterNextGapStart, false);
+            return first && !second && !afterNextGapStart
+                && d1.ShowNotice
+                && !d2.ShowNotice
+                && !d3.ShowNotice;
+        });
+
+        Supervision("outage mark: idle at the gap → no flag, no notice", () =>
+        {
+            var mark = new OutageAwaitingMark();
+            mark.BeginGap();
+            mark.NoteWasTranscribing(
+                string.Equals("idle", "transcribing", StringComparison.Ordinal));
+            mark.NotePendingTranscriptDropped(false);
+            var awaiting = mark.Consume();
+            var decision = LostTurnNotice.Decide(false, true, false, false, awaiting, false);
+            return !awaiting && !decision.ShowNotice && decision.SkipReason == "not_in_flight";
+        });
+
+        Supervision("outage mark: stop-phrase admit stamp then idle gap → no notice", () =>
+        {
+            // Stop phrase sets _pendingTranscriptAt then returns without submit; stamp alone must not mark.
+            var mark = new OutageAwaitingMark();
+            var pendingTranscriptAt = DateTimeOffset.Parse("2026-11-09T14:00:00Z"); // stamp set, no submit
+            mark.BeginGap();
+            mark.NoteWasTranscribing(false);
+            mark.NotePendingTranscriptDropped(dropped: false); // no DiscardPending log line
+            _ = pendingTranscriptAt; // stamp ignored by design
+            var awaiting = mark.Consume();
+            var decision = LostTurnNotice.Decide(false, true, false, false, awaiting, false);
+            var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+            var voice = File.ReadAllText(Path.Combine(root, "Zola.Client", "VoiceController.cs"));
+            return !awaiting
+                && !decision.ShowNotice
+                && decision.SkipReason == "not_in_flight"
+                && !voice.Contains("hadAdmittedPending", StringComparison.Ordinal)
+                && voice.Contains(
+                    "NotePendingTranscriptDropped(discardedDeferredStart)",
+                    StringComparison.Ordinal);
+        });
+
+        Supervision("outage mark wiring is on VoiceController outage methods", () =>
+        {
+            var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+            var voice = File.ReadAllText(Path.Combine(root, "Zola.Client", "VoiceController.cs"));
+            var window = File.ReadAllText(Path.Combine(root, "Zola.Client", "MainWindow.xaml.cs"));
+            return voice.Contains("_outageAwaiting.BeginGap()", StringComparison.Ordinal)
+                && voice.Contains("_outageAwaiting.NoteWasTranscribing(", StringComparison.Ordinal)
+                && voice.Contains("_outageAwaiting.NotePendingTranscriptDropped(", StringComparison.Ordinal)
+                && voice.Contains("ConsumeWasAwaitingTranscriptAtOutage", StringComparison.Ordinal)
+                && window.Contains("ConsumeWasAwaitingTranscriptAtOutage()", StringComparison.Ordinal)
+                && !window.Contains(
+                    "RecorderState,\r\n            VoiceController.StateTranscribing",
+                    StringComparison.Ordinal);
+        });
     }
 
     private static int ActionIndex(IReadOnlyList<TtsRestore.Action> actions, TtsRestore.Action action)

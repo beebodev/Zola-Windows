@@ -34,6 +34,10 @@
     <Compile Include="..\Zola.Client\Supervision\WatcherJob.cs" Link="Supervision\WatcherJob.cs" />
     <Compile Include="..\Zola.Client\Supervision\PythonStart.cs" Link="Supervision\PythonStart.cs" />
     <Compile Include="..\Zola.Client\Supervision\PhonePollGate.cs" Link="Supervision\PhonePollGate.cs" />
+    <!-- S51F-FIX: lost-turn notice + child-pid lookup (pure / injectable) — S51F-D04 / S51F-D06 -->
+    <Compile Include="..\Zola.Client\Supervision\LostTurnNotice.cs" Link="Supervision\LostTurnNotice.cs" />
+    <Compile Include="..\Zola.Client\Supervision\ChildPidLookup.cs" Link="Supervision\ChildPidLookup.cs" />
+    <Compile Include="..\Zola.Client\Supervision\OutageAwaitingMark.cs" Link="Supervision\OutageAwaitingMark.cs" />
     <Compile Include="..\Zola.Client\PhonePipe.cs" Link="PhonePipe.cs" />
     <!-- P9-SPEAK: coordinator, phrases, echo, and HUD are pure — P9-D11 -->
     <Compile Include="..\Zola.Client\Speech\SpeechConstants.cs" Link="Speech\SpeechConstants.cs" />
@@ -53,5 +57,6 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Speech" Version="9.0.4" />
+    <PackageReference Include="System.Management" Version="9.0.4" />
   </ItemGroup>
 </Project>

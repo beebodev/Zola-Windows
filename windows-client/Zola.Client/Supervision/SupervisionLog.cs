@@ -8,18 +8,30 @@ public static class SupervisionLog
 {
     public static string Format(string proc, string eventName, int restarts, long generation)
     {
-        return Format(proc, eventName, restarts, generation, null);
+        return Format(proc, eventName, restarts, generation, null, null);
     }
 
-    public static string Format(string proc, string eventName, int restarts, long generation, int? pid)
+    public static string Format(
+        string proc,
+        string eventName,
+        int restarts,
+        long generation,
+        int? launcherPid,
+        string? childPid = null)
     {
         var line = "supervisor proc=" + proc
             + " event=" + eventName
             + " restarts=" + restarts.ToString(CultureInfo.InvariantCulture)
             + " generation=" + generation.ToString(CultureInfo.InvariantCulture);
-        if (pid is int value)
+        // S51F-FIX: launcher and optional interpreter child — S51F-D06
+        if (launcherPid is int launcher)
         {
-            line += " pid=" + value.ToString(CultureInfo.InvariantCulture);
+            line += " launcher_pid=" + launcher.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (!string.IsNullOrEmpty(childPid))
+        {
+            line += " child_pid=" + childPid;
         }
 
         return line;
@@ -27,12 +39,18 @@ public static class SupervisionLog
 
     public static void Write(string proc, string eventName, int restarts, long generation)
     {
-        Write(proc, eventName, restarts, generation, null);
+        Write(proc, eventName, restarts, generation, null, null);
     }
 
-    public static void Write(string proc, string eventName, int restarts, long generation, int? pid)
+    public static void Write(
+        string proc,
+        string eventName,
+        int restarts,
+        long generation,
+        int? launcherPid,
+        string? childPid = null)
     {
-        var line = Format(proc, eventName, restarts, generation, pid);
+        var line = Format(proc, eventName, restarts, generation, launcherPid, childPid);
         try
         {
             var root = Path.Combine(

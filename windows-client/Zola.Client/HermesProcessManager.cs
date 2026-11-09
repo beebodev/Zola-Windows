@@ -249,6 +249,8 @@ public sealed partial class HermesProcessManager : IDisposable
         {
             start.Environment[PythonStart.SecretEnv] = PhoneLaunchSecret;
         }
+        // S51F-FIX: same faulthandler helper as watcher/phone — S51F-D06
+        PythonStart.ApplyFaultHandler(start);
         PrependPythonPath(start, hermesRoot);
         start.Environment.Remove("HERMES_DESKTOP");
         start.Environment.Remove("HERMES_WEB_DIST");
@@ -335,6 +337,14 @@ public sealed partial class HermesProcessManager : IDisposable
             OwnsProcess = true;
             ServeProcessId = child.Id;
         }
+
+        // S51F-FIX: start line with pids; lookup never blocks ready wait — S51F-D06
+        ChildPidLookup.WriteEventAsync(
+            SupervisionConstants.ProcServe,
+            SupervisionConstants.EventStart,
+            Policy.AttemptsInWindow(DateTimeOffset.Now),
+            generation,
+            child.Id);
 
         child.BeginOutputReadLine();
         child.BeginErrorReadLine();

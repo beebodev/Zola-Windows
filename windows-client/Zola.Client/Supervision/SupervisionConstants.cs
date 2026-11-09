@@ -20,6 +20,10 @@ public static class SupervisionConstants
     public const string StatusKeepsFailing = "Zola's backend keeps failing. Restart Zola to try again.";
     public const string VoiceOfflineLabel = "Offline";
 
+    // S51F-FIX: neutral system line when a crash drops an open request — S51F-D04
+    // S51F-FIX: Brian-approved notice; straight ASCII apostrophe (U+0027) — S51F-D04
+    public const string LostTurnNoticeText = "Sorry, your last request didn't go through. Please ask again.";
+
     public const string ProcServe = "serve";
     public const string ProcWatcher = "watcher";
     public const string ProcPhone = "phone";
@@ -32,10 +36,13 @@ public static class SupervisionConstants
     public const string EventResolveFailed = "resolve_failed";
     public const string EventJobAssigned = "job_assigned";
     public const string EventJobAssignFailed = "job_assign_failed";
+    public const string EventStart = "start";
     public const string WatcherOutputFileName = "zola_watcher.out.log";
     public const string PhoneOutputFileName = "zola_phone.out.log";
     public const int WatcherAlreadyRunningExit = 2;
     public const string GapReason = "backend-unreachable";
+    public const string FaultHandlerEnv = "PYTHONFAULTHANDLER";
+    public const string FaultHandlerValue = "1";
 
     public static bool StderrShouldRotate(long length) => length >= ServeStderrMaxBytes;
 

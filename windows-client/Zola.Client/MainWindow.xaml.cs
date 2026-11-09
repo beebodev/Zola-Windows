@@ -33,6 +33,8 @@ public sealed partial class MainWindow : Window
     private bool _streaming;
     private int _compressInFlight;
     private bool _turnFinalized = true;
+    // S51F-FIX: at most one lost-request notice per dropped turn — S51F-D04
+    private bool _lostNoticeApplied;
     private bool _unreachable;
     private bool _keepsFailing;
     private int _orphanInterruptedCompletes;
@@ -386,6 +388,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // S51F-FIX: a recovered session may notice a later dropped turn — S51F-D04
+        _lostNoticeApplied = false;
+
         // P2-SPEAK: every SessionReady cancels a leftover follow-up from the previous session — P2-D06
         _voice.OnSessionReady();
         // P4-REQUEST: reconcile parked/open requests against this session's open_requests — P4-D11
@@ -547,6 +552,7 @@ public sealed partial class MainWindow : Window
             // P1-CLIENT: show the user turn locally; prompt.submit's status is not the assistant reply — P1-D01
             _streaming = true;
             _turnFinalized = false;
+            _lostNoticeApplied = false;
             StatusText.Text = "Sending…";
         }
 
@@ -1168,6 +1174,7 @@ public sealed partial class MainWindow : Window
 
         _turnFinalized = false;
         _streaming = true;
+        _lostNoticeApplied = false;
         // P2-SPEAK: the controller owns the speaking estimate; the window only forwards the event — P2-D12
         _voice.OnTurnStarted();
         StatusText.Text = "Responding…";
@@ -1241,6 +1248,8 @@ public sealed partial class MainWindow : Window
             _live = null;
             // P2-SPEAK: interrupted complete starts no follow-up timer — P2-D12
             _voice.OnTurnCompleted("interrupted");
+            // S51F-FIX: fields-only finalize mark for SM2 — S51F-D04
+            _voice.NoteTurnUiFinalized("interrupted");
             StatusText.Text = "Interrupted.";
             UpdateChrome();
             return;
@@ -1267,6 +1276,8 @@ public sealed partial class MainWindow : Window
         _live = null;
         // P2-SPEAK: complete starts the follow-up timer; error does not — P2-D12
         _voice.OnTurnCompleted(outcome);
+        // S51F-FIX: fields-only finalize mark for SM2 — S51F-D04
+        _voice.NoteTurnUiFinalized(outcome);
         StatusText.Text = outcome == "error" ? "The turn ended with an error." : "Session ready.";
         UpdateChrome();
     }
@@ -1300,17 +1311,61 @@ public sealed partial class MainWindow : Window
 
     private void ShowSupervisionStatus(bool keepsFailing)
     {
+        // S51F-FIX: consume one-shot outage mark (RecorderState is already Idle after Invalidate) — S51F-D04
+        var streaming = _streaming;
+        var turnFinalized = _turnFinalized;
+        var timingOpen = _voice.TurnTimingIsOpen;
+        var awaitingTranscript = _voice.ConsumeWasAwaitingTranscriptAtOutage();
+
         _keepsFailing = keepsFailing;
         _unreachable = true;
         _streaming = false;
         _sessionReady = false;
         _voice.AbandonPendingQuestion(SupervisionConstants.GapReason);
         _display.ClearToolActivity();
+        TryApplyLostTurnNotice(streaming, turnFinalized, timingOpen, awaitingTranscript);
         StatusText.Text = keepsFailing
             ? SupervisionConstants.StatusKeepsFailing
             : SupervisionConstants.StatusRestarting;
         DetailText.Text = "";
         UpdateChrome();
+    }
+
+    private void TryApplyLostTurnNotice(
+        bool streaming,
+        bool turnFinalized,
+        bool timingOpen,
+        bool awaitingTranscript)
+    {
+        var decision = LostTurnNotice.Decide(
+            deliberate: _backend.IsShutdown || _backend.Policy.IsDeliberate,
+            turnFinalized: turnFinalized,
+            streaming: streaming,
+            timingOpen: timingOpen,
+            awaitingTranscript: awaitingTranscript,
+            alreadyApplied: _lostNoticeApplied);
+        if (!decision.ShowNotice)
+        {
+            return;
+        }
+
+        _lostNoticeApplied = true;
+        if (decision.FinalizeLiveAsInterrupted && _live is not null)
+        {
+            // Keep any partial reply text; mark interrupted so it is not live streaming.
+            StyleLive("interrupted", _live.Body.Text ?? "", replaceText: false);
+            _live = null;
+        }
+
+        if (!turnFinalized)
+        {
+            _turnFinalized = true;
+            _streaming = false;
+            _voice.OnTurnCompleted("interrupted");
+        }
+
+        AddBubble("System", SupervisionConstants.LostTurnNoticeText, mine: false);
+        _voice.NoteTurnUiFinalized(LostTurnNotice.StatusLost);
     }
 
     private void OnComposerKeyDown(object sender, KeyRoutedEventArgs e)
