@@ -63,8 +63,8 @@ G-SCOPE · G-NOCHANGE · G-NO-RESTART · G-DEPS (no install until Phase 1 STOP v
 | Record | SHA |
 |--------|-----|
 | Audit commit | `6050cf250b6a22c8303b6a142c68341a6c71bfcf` |
-| Tip-SHA commit | _(pending 7e)_ |
-| Merge on `main` | _(pending 7f/g)_ |
+| Tip-SHA commit | `b0cce02be9b577a413db59290014b3317fd1930d` |
+| Merge on `main` | `7be69490f1ce7a89d52c33a47d9003089e117ea6` |
 
 ---
 
