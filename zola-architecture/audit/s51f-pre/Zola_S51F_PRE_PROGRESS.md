@@ -50,7 +50,7 @@ G-SCOPE · G-P4-D25 · G-NO-RESTART · G-NO-REPRO · G-LOGS · G-EVENTLOG · G-D
 | 5 Lost-request handling | **COMPLETE** → `Zola_S51F_PRE_03_LostRequest.md` |
 | 6 Better evidence next time | **COMPLETE** → `Zola_S51F_PRE_04_Diagnostics.md` |
 | 7 Synthesis | **COMPLETE** → `Zola_S51F_PRE_SYNTHESIS.md` |
-| 8 Closeout | **IN PROGRESS** |
+| 8 Closeout | **COMPLETE** |
 
 ---
 
@@ -251,10 +251,10 @@ Allowlisted fields only in audit docs (times, pids, lengths, event names, tool n
 | Record | SHA |
 |--------|-----|
 | Audit commit | `53877a824a90940695777be29f8638c8fc4766bb` |
-| Tip-SHA commit | _(this commit)_ |
-| Merge on `main` | _(pending)_ |
+| Tip-SHA commit | `82d5b141920a2fb906b9760cf72d1be8ed1163cd` |
+| Merge on `main` | `4368af2cc8012688d6a538d89df8c6790664b93c` |
 
-Backup deleted (P6-D11): _(pending)_
+Backup deleted (P6-D11): `config.yaml.bak-S51F-20261109-102200` (after merge push + clean tree).
 
 ---
 
