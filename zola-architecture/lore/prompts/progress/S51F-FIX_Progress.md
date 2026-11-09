@@ -42,7 +42,7 @@ G-SCOPE · G-P4-D25 · G-ARCH · G-NO-RESUBMIT · G-NO-RESTART (SM2 kill excepti
 | 4 Implement W2+W3 | **done** |
 | 5 Review fixes | **done** (incl. follow-ups 1–2) |
 | 6 Smoke / experience | **done** |
-| 7 Commit and merge | **in progress** (Brian: proceed to commit and merge) |
+| 7 Commit and merge | **done** |
 
 ---
 
@@ -529,3 +529,24 @@ Scope verified: allowed client/Checks/`VOICE_CONFIG.md`/progress only; `VOICE_CO
 
 **Implementation SHA:** `37e5f494b20c885d784aec81b3ca5736a02db61f`  
 Subject: `fix(S51F): Hermes beeps off, lost-request notice, faulthandler and pid logging — S51F-D03/D04/D06`.
+
+**Merge SHA:** `74941cf72f1e00bb979a9f29ec13aa03fa6b4666`  
+Subject: `Merge branch 's51f-fix'`.  
+**Tag:** `fix-s51f` → merge commit. `main` / `origin/main` = merge.
+
+### Suites on merged tip (Zola closed)
+
+| Suite | Result |
+|-------|--------|
+| Client build | OK |
+| Checks | **271** PASS / 0 FAIL |
+| zola_workspace | **582** OK |
+| zola_memory | **162** OK |
+| zola_tools | **44** OK |
+| zola_tts | **8** OK |
+| zola_phone | **71** OK |
+| Kotlin | **98** / assembleDebug OK |
+
+### P6-D11
+
+After merge push + clean tree: delete `config.yaml.bak-S51F-FIX-20261109-131403` only.
