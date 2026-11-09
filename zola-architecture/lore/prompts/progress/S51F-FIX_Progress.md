@@ -526,3 +526,6 @@ SM1–SM3 pass; experience checks pass; ChildPid leaf fix + suites green.
 Brian, verbatim: “proceed to commit and merge.” (SOP v3 transition = everyday-build approval.)
 
 Scope verified: allowed client/Checks/`VOICE_CONFIG.md`/progress only; `VOICE_CONFIG.md` SHA-256 `4c12f3f47fe8376c75bb6499655cc7fee9457d30a039c59dc84e327f6f5b63eb`; hermes-agent clean at `345cd2b057a452236de401d3534b8502a7465e8d`.
+
+**Implementation SHA:** `37e5f494b20c885d784aec81b3ca5736a02db61f`  
+Subject: `fix(S51F): Hermes beeps off, lost-request notice, faulthandler and pid logging — S51F-D03/D04/D06`.
