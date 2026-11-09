@@ -135,7 +135,8 @@ public sealed class SupervisedPython
             assigned = false;
         }
 
-        SupervisionLog.Write(
+        // S51F-FIX: log launcher/child pids without delaying the spawn path — S51F-D06
+        ChildPidLookup.WriteEventAsync(
             _procName,
             assigned ? SupervisionConstants.EventJobAssigned : SupervisionConstants.EventJobAssignFailed,
             _supervisor.Policy.AttemptsInWindow(DateTimeOffset.Now),
@@ -178,6 +179,7 @@ public sealed class SupervisedPython
         {
             SetLatch(WatcherProcessLatch.Restarting);
             SupervisionLog.Write(_procName, SupervisionConstants.EventRestart, restarts, generation);
+            // S51F-FIX: restart continues immediately; child pid is resolved on the next spawn log — S51F-D06
             Task.Delay(TimeSpan.FromSeconds(SupervisionConstants.RestartBackoffSeconds))
                 .ContinueWith(_ => Start());
             return;

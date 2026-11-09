@@ -37,6 +37,14 @@ public static class PythonStart
             start.Environment[SecretEnv] = launchSecret;
         }
 
+        // S51F-FIX: one shared faulthandler bit for every supervised Python — S51F-D06
+        ApplyFaultHandler(start);
         return start;
+    }
+
+    // S51F-FIX: only PYTHONFAULTHANDLER=1; leave every other variable alone — S51F-D06
+    public static void ApplyFaultHandler(ProcessStartInfo start)
+    {
+        start.Environment[SupervisionConstants.FaultHandlerEnv] = SupervisionConstants.FaultHandlerValue;
     }
 }

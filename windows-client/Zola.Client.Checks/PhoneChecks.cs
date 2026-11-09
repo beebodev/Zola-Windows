@@ -27,6 +27,7 @@ internal sealed partial class CheckRunner
                 && start.Environment["PYTHONUNBUFFERED"] == "1"
                 && start.Environment["ZOLA_WATCHER_PARENT_PID"] == "42"
                 && start.Environment["PYTHONPATH"] == @"C:\profile\plugins" + Path.PathSeparator + @"C:\hermes"
+                && start.Environment[SupervisionConstants.FaultHandlerEnv] == SupervisionConstants.FaultHandlerValue
                 && !start.Environment.ContainsKey(PythonStart.SecretEnv);
         });
         Phone("phone start plan carries the secret and a different module", () =>
@@ -42,6 +43,7 @@ internal sealed partial class CheckRunner
             return string.Join(" ", start.ArgumentList) == "-m zola_phone"
                 && start.Environment["ZOLA_PHONE_PARENT_PID"] == "42"
                 && start.Environment[PythonStart.SecretEnv] == "launch-secret"
+                && start.Environment[SupervisionConstants.FaultHandlerEnv] == SupervisionConstants.FaultHandlerValue
                 && !start.Environment.ContainsKey("ZOLA_WATCHER_PARENT_PID");
         });
         Phone("companion latch wins and unknown stays hidden", () =>
@@ -89,6 +91,7 @@ internal sealed partial class CheckRunner
                 "PYTHONUNBUFFERED",
                 "ZOLA_WATCHER_PARENT_PID",
                 "PYTHONPATH",
+                SupervisionConstants.FaultHandlerEnv,
             ];
             foreach (var key in start.Environment.Keys)
             {
@@ -106,6 +109,7 @@ internal sealed partial class CheckRunner
                 && start.Environment["PYTHONUNBUFFERED"] == "1"
                 && start.Environment["ZOLA_WATCHER_PARENT_PID"] == "42"
                 && start.Environment["PYTHONPATH"] == @"C:\profile\plugins" + Path.PathSeparator + @"C:\hermes"
+                && start.Environment[SupervisionConstants.FaultHandlerEnv] == SupervisionConstants.FaultHandlerValue
                 && !start.Environment.ContainsKey(PythonStart.SecretEnv);
         });
         Phone("phone restarts three times and the fourth keeps failing", () =>

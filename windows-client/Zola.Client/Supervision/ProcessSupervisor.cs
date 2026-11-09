@@ -43,22 +43,14 @@ internal sealed class ProcessSupervisor
         if (!_backend.Generations.IsCurrentProcess(processGeneration))
         {
             // P9-SUPERVISE: a stale process generation is logged and ignored — P9-D02
-            SupervisionLog.Write(
-                SupervisionConstants.ProcServe,
-                SupervisionConstants.EventStale,
-                _backend.Policy.AttemptsInWindow(DateTimeOffset.Now),
-                processGeneration);
+            WriteServeWithPids(SupervisionConstants.EventStale, processGeneration);
             return;
         }
 
         if (!processExit && !_backend.Generations.IsCurrentEpoch(connectionEpoch))
         {
             // P9-SUPERVISE: a stale connection epoch is logged and ignored — P9-D02
-            SupervisionLog.Write(
-                SupervisionConstants.ProcServe,
-                SupervisionConstants.EventStale,
-                _backend.Policy.AttemptsInWindow(DateTimeOffset.Now),
-                processGeneration);
+            WriteServeWithPids(SupervisionConstants.EventStale, processGeneration);
             return;
         }
 
@@ -109,29 +101,23 @@ internal sealed class ProcessSupervisor
                     case RecoveryAction.Stopped:
                         return;
                     case RecoveryAction.Terminal:
-                        SupervisionLog.Write(
-                            SupervisionConstants.ProcServe,
+                        WriteServeWithPids(
                             SupervisionConstants.EventKeepsFailing,
-                            _backend.Policy.AttemptsInWindow(now),
                             _backend.Generations.ProcessGeneration);
                         await _showKeepsFailing().ConfigureAwait(false);
                         return;
                     case RecoveryAction.TreeKillThenTerminal:
                         // P9-SUPERVISE: past the restart limit the process is still tree-killed — P9-D02
                         _backend.KillGenerationForRestart();
-                        SupervisionLog.Write(
-                            SupervisionConstants.ProcServe,
+                        WriteServeWithPids(
                             SupervisionConstants.EventKeepsFailing,
-                            _backend.Policy.AttemptsInWindow(now),
                             _backend.Generations.ProcessGeneration);
                         await _showKeepsFailing().ConfigureAwait(false);
                         return;
                     case RecoveryAction.SpawnAfterBackoff:
                     case RecoveryAction.TreeKillThenSpawn:
-                        SupervisionLog.Write(
-                            SupervisionConstants.ProcServe,
+                        WriteServeWithPids(
                             SupervisionConstants.EventRestart,
-                            _backend.Policy.AttemptsInWindow(now),
                             _backend.Generations.ProcessGeneration);
                         if (action == RecoveryAction.TreeKillThenSpawn)
                         {
@@ -210,5 +196,23 @@ internal sealed class ProcessSupervisor
 
             await Task.Delay(200).ConfigureAwait(false);
         }
+    }
+
+    // S51F-FIX: launcher pid sync; child pid async so restart never waits on WMI — S51F-D06
+    private void WriteServeWithPids(string eventName, long generation)
+    {
+        var restarts = _backend.Policy.AttemptsInWindow(DateTimeOffset.Now);
+        if (_backend.ServeProcessId is int launcher)
+        {
+            ChildPidLookup.WriteEventAsync(
+                SupervisionConstants.ProcServe,
+                eventName,
+                restarts,
+                generation,
+                launcher);
+            return;
+        }
+
+        SupervisionLog.Write(SupervisionConstants.ProcServe, eventName, restarts, generation);
     }
 }

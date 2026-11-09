@@ -30,6 +30,7 @@ voice:
   barge_in: false
   stop_phrases: ["stop"]
   thinking_sound: false
+  beep_enabled: false
 # P2-VOICE: Hermes must not install packages during a probe or a turn — P2-D10
 security:
   allow_lazy_installs: false
@@ -57,6 +58,7 @@ wake_word:
 - `voice.barge_in`: `false` (`P4-D28`, applied under `P4-D25` / P4-ASK Option A). Was `true` under `P2-D09`; talking over her no longer interrupts (Cancel / "Hey Zola" after she finishes still work).
 - `voice.stop_phrases`: `["stop"]` ends the voice exchange when that is the whole utterance (`P2-D09`).
 - `voice.thinking_sound`: `false` (`S51F-D01`, 2026-11-09; was `true` under `P2-D09`). Brian: "It feels very AI or robotic and not realistic to what an actual conversation would do." When she needs a moment she says so in her own words (SOUL). Also removes the main user of the shared `sd.play` audio stream implicated in the S51 crashes.
+- `voice.beep_enabled`: `false` (`S51F-D03`, 2026-11-09; key was absent, Hermes default `true`). Turns off the listen-start and capture-end beeps, the last use of the shared `sd.play` audio stream implicated in the S51 crashes. Listening state stays visible in the presence UI. `beep_volume: 0` was ruled out because it still calls PortAudio.
 - `security.allow_lazy_installs`: `false` stops Hermes from installing packages during a probe or a turn. A missing dependency shows up as a requirement hint (`P2-D10`).
 - `wake_word.enabled`: `true` so Hermes will accept `wake.start` from Voice mode (`P2-D04`).
 - `wake_word.provider`: `sherpa` is the keyword engine that can enroll a custom phrase. openWakeWord only ships `hey_hermes` (`P2-D04`).
@@ -193,6 +195,7 @@ The keyword model is not a pip package. `_ensure_sherpa_model` downloads it with
 | `tts.provider` | `edge` | 2026-10-01 | P4-D21: `sonia_cmd` tried then restored — latency gate fail; pitch dropped |
 | `tts.provider` | `deepgram` | 2026-10-12 | P9-D14: Aura-2 Pandora (`aura-2-pandora-en`), speed 0.95. Edge is no longer the active provider. |
 | `voice.thinking_sound` | `false` | 2026-11-09 | S51F-D01: thinking sound off; crash watch (S51) starts at the relaunch. |
+| `voice.beep_enabled` | `false` | 2026-11-09 | S51F-D03: Hermes beeps off; with D01, nothing in this profile uses the shared `sd.play` stream. The S51F-FIX relaunch restarts the crash watch. |
 | `voice.silence_duration` | `1.5` | 2026-09-23 | passed |
 | `EstimatedWordsPerSecond` | `2.5` | 2026-09-23 | passed. Unchanged. Word rate from the six silent replies. |
 | `EstimatedWordsPerSecond` | `2.5` | 2026-10-01 | P4-D22 refit on Sonia 0.95 — constants unchanged; the 2.5 wps estimate is conservative vs measured ~3.3–3.5 wps; fallback never early on bout-duration. |

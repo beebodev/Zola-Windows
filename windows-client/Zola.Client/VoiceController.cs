@@ -364,6 +364,35 @@ sealed class VoiceController
 
     public bool TurnRunning { get; private set; }
 
+    // S51F-FIX: open turn_timing for lost-request in-flight checks — S51F-D04
+    public bool TurnTimingIsOpen
+    {
+        get
+        {
+            lock (_turnTimingGate)
+            {
+                return _turnTiming.IsOpen;
+            }
+        }
+    }
+
+    public int TurnTimingNumber
+    {
+        get
+        {
+            lock (_turnTimingGate)
+            {
+                return _turnTiming.TurnNumber;
+            }
+        }
+    }
+
+    // S51F-FIX: fields-only UI finalize line for SM2 — S51F-D04
+    public void NoteTurnUiFinalized(string status)
+    {
+        WriteTimeline(LostTurnNotice.FormatUiFinalized(TurnTimingNumber, status, DateTimeOffset.Now));
+    }
+
     // P9-SPEAK: idle stamps. The wake stamp is an admitted wake, not a detector re-arm — P9-D11
     public DateTimeOffset? LastWakeUtc { get; private set; }
 
@@ -1638,8 +1667,18 @@ sealed class VoiceController
         }
     }
 
+    // S51F-FIX: survives OutageGap clearing RecorderState before ShowSupervisionStatus — S51F-D04
+    private readonly OutageAwaitingMark _outageAwaiting = new();
+
+    public bool ConsumeWasAwaitingTranscriptAtOutage() => _outageAwaiting.Consume();
+
     public void InvalidateCaptureForOutage()
     {
+        // S51F-FIX: clear then snapshot before Idle so BlockInput can still see a lost capture — S51F-D04
+        _outageAwaiting.BeginGap();
+        _outageAwaiting.NoteWasTranscribing(
+            string.Equals(RecorderState, StateTranscribing, StringComparison.Ordinal));
+
         // P9-SUPERVISE: snapshot TTS, then invalidate capture, before a restart is awaited — P9-D02
         TtsBeforeGap = _ttsOn;
         InvalidateCapture(SupervisionConstants.GapReason);
@@ -1654,15 +1693,19 @@ sealed class VoiceController
     public void DropPendingTranscriptForOutage()
     {
         // P9-SUPERVISE: a deferred transcript must not call prompt.submit or AnswerClarify — P9-D02
+        var discardedDeferredStart = false;
         lock (_lifecycleGate)
         {
             var dropped = _lifecycle.DiscardPending(SupervisionConstants.GapReason);
-            if (!string.IsNullOrEmpty(dropped.LogLine))
+            discardedDeferredStart = !string.IsNullOrEmpty(dropped.LogLine);
+            if (discardedDeferredStart)
             {
                 WriteTimeline(dropped.LogLine);
             }
         }
 
+        // S51F-FIX: only a real discard marks awaiting — not the P7-D10 admit stamp (_pendingTranscriptAt) — S51F-D04
+        _outageAwaiting.NotePendingTranscriptDropped(discardedDeferredStart);
         _pendingTranscriptAt = null;
         Interlocked.Exchange(ref _admittedEpoch, long.MinValue);
     }
