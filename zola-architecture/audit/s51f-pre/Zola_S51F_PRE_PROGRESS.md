@@ -250,8 +250,8 @@ Allowlisted fields only in audit docs (times, pids, lengths, event names, tool n
 
 | Record | SHA |
 |--------|-----|
-| Audit commit | _(pending)_ |
-| Tip-SHA commit | _(pending)_ |
+| Audit commit | `53877a824a90940695777be29f8638c8fc4766bb` |
+| Tip-SHA commit | _(this commit)_ |
 | Merge on `main` | _(pending)_ |
 
 Backup deleted (P6-D11): _(pending)_
