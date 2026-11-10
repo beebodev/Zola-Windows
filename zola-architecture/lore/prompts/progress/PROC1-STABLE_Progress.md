@@ -628,3 +628,9 @@ ChildPidLookup.WriteEventAsync(
 At 09:19:35 the log has `phone` `job_assigned` and `serve` `start`, and watcher processes were live (pids 7136 / 19220 @ 09:19:33), but there is **no** `watcher` `job_assigned` and **no** `watcher` `job_assign_failed` for that generation. Assign failure alone would still emit `job_assign_failed`. So the gap means the watcher spawn path either did not reach `WriteEventAsync`, or the async write did not land in `supervisor.log` for that launch — while phone's path did. Not fixed in this track.
 
 ### Step 1 — implementation commit
+
+| Item | Value |
+|------|-------|
+| Implementation commit | `ed985f7357534f77a57da8f1c947c8efeca9b21e` |
+| Message | `feat(PROC1-STABLE): stable folder promotion, backup and restore scripts — PROC1-D1/D2/D3/D12/D13` |
+| Files | `tools/stable/*` (6) + this progress doc |
