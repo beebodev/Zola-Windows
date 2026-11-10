@@ -678,12 +678,19 @@ All at or above floors.
 
 ### Step 6 — delete branch / worktree
 
-Recorded after delete below.
+| Item | Value |
+|------|-------|
+| Branch delete | `git push origin --delete proc1-stable`; local `git branch -D proc1-stable` |
+| Worktree | removed `C:\Users\test\Dev\zola-windows-proc1-stable` |
 
 ### Step 7 — live checkout sync
 
-Recorded after sync below.
+| Item | Value |
+|------|-------|
+| Before | `9d6458432c9e56e9a69f2f616e3da727acedfe10` |
+| After | `f5d9a3f401e0c0af7382d6821af78d9b8b428dd7` (`git pull --ff-only origin main`) |
+| Eligibility | on `main`, clean; SM-S2 had client under `stable\fix-s51f\` |
 
-## Phase 8 complete (pre-delete)
+## Phase 8 complete
 
-Implementation `ed985f7`; merge `5db407f`; main tip `44e5925`; tag `proc1-stable`. Suites on tip PASS. Watcher wait after close: gone (continue).
+Implementation `ed985f7357534f77a57da8f1c947c8efeca9b21e`; merge `5db407f805f99898d83a1e9221532d1d158c99a8`; main tip (closeout) `f5d9a3f401e0c0af7382d6821af78d9b8b428dd7`; tag `proc1-stable` -> merge. Suites on tip PASS. Watcher wait after close: gone (continue). Live checkout synced.
