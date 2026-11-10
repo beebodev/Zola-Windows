@@ -681,7 +681,7 @@ All at or above floors.
 | Item | Value |
 |------|-------|
 | Branch delete | `git push origin --delete proc1-stable`; local `git branch -D proc1-stable` |
-| Worktree | removed `C:\Users\test\Dev\zola-windows-proc1-stable` |
+| Worktree | git worktree remove Permission denied (folder in use by Cursor); unregistered via worktree prune. Folder C:\Users\test\Dev\zola-windows-proc1-stable still on disk — delete when unlocked. |
 
 ### Step 7 — live checkout sync
 
