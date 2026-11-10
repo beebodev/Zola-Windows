@@ -27,8 +27,8 @@
 |---|---|---|
 | 1 Setup and inventory plan | **DONE** | Worktree created; DoT read; inventory plan below |
 | 2 Investigation | **DONE** | Five docs in `zola-architecture/audit/proc1/` |
-| 3 Synthesis | **DONE — STOP** | `PROC1_SYNTHESIS.md`; Brian facts recorded |
-| 4 Closeout | pending | Only on "proceed to commit and merge" |
+| 3 Synthesis | **DONE** | `PROC1_SYNTHESIS.md`; Brian facts recorded |
+| 4 Closeout | **DONE** | Merged to `origin/main` (see below) |
 
 ---
 
@@ -217,3 +217,17 @@ Wrote `zola-architecture/audit/proc1/PROC1_SYNTHESIS.md`.
 - Suggested waves W1–W6 with stable folder first.
 
 *End of Phase 3. Awaiting "proceed to commit and merge" for Phase 4.*
+
+---
+
+## Phase 4 — Closeout
+
+| Field | Value |
+|---|---|
+| Audit commit | `659025cf7647abb6ce723692ae852401a2901ecd` |
+| Merge commit | `9c7059a5c5e2426a241803914ecd7c35ae067afc` |
+| `origin/main` at Phase 1 | `9d6458432c9e56e9a69f2f616e3da727acedfe10` (unchanged at fetch before merge) |
+| Diff vs `origin/main` before record commit | only `zola-architecture/audit/proc1/*` + this progress doc |
+| Live checkout | left at Phase 1 HEAD on local `main` (behind `origin/main` by docs-only commits; **not** updated — next track syncs when Zola isn't in use) |
+
+*PROC1 AUDIT COMPLETE.*
