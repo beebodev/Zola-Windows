@@ -666,3 +666,24 @@ At 09:19:35 the log has `phone` `job_assigned` and `serve` `start`, and watcher 
 All at or above floors.
 
 **job_assigned quote + 09:19 note:** see Phase 8 section above (no fix).
+
+### Step 5 — push main + tag
+
+| Item | Value |
+|------|-------|
+| Pushed | `origin/main` = `44e5925d539f5937628d309ec818bb958186f69d` (docs on merge) |
+| Merge (tagged) | `5db407f805f99898d83a1e9221532d1d158c99a8` |
+| Tag | annotated `proc1-stable` -> merge commit; pushed `refs/tags/proc1-stable` |
+| Diff re-check before push | only `tools/stable/*` + this progress doc |
+
+### Step 6 — delete branch / worktree
+
+Recorded after delete below.
+
+### Step 7 — live checkout sync
+
+Recorded after sync below.
+
+## Phase 8 complete (pre-delete)
+
+Implementation `ed985f7`; merge `5db407f`; main tip `44e5925`; tag `proc1-stable`. Suites on tip PASS. Watcher wait after close: gone (continue).
