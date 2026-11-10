@@ -32,7 +32,7 @@
 | 5 Env var + Prepare | DONE | Env set; Prepare fix-s51f OK; plugin diff = 3 zola_tools (CRLF) |
 | 6 Switch | DONE | Switch SUCCESS (build staging); SM-S2 PASS |
 | 7 Smoke / experience | DONE | SM-S1/S2/S3 + experience PASS |
-| 8 Commit and merge | IN PROGRESS | Step 4 amendment: watcher wait after close |
+| 8 Commit and merge | DONE | Merged; suites on tip PASS |
 
 ## Guardrails summary
 
@@ -634,3 +634,35 @@ At 09:19:35 the log has `phone` `job_assigned` and `serve` `start`, and watcher 
 | Implementation commit | `ed985f7357534f77a57da8f1c947c8efeca9b21e` |
 | Message | `feat(PROC1-STABLE): stable folder promotion, backup and restore scripts — PROC1-D1/D2/D3/D12/D13` |
 | Files | `tools/stable/*` (6) + this progress doc |
+
+### Step 2 — fetch / origin/main
+
+`origin/main` still at plan merge `396a60229490a32bdc03632bee2d269a32120b33` (unchanged since Phase 1). Proceed.
+
+### Step 3 — merge
+
+| Item | Value |
+|------|-------|
+| Merge commit | `5db407f805f99898d83a1e9221532d1d158c99a8` |
+| Strategy | `git checkout --detach origin/main`; `git merge --no-ff proc1-stable` |
+| `git diff --stat origin/main..HEAD` | only `tools/stable/*` (6) + this progress doc |
+
+### Step 4 — suites on merged tip + watcher wait
+
+**Close (crash-watch):** client already exited before phone suite. `supervisor.log`: `phone` `event=stop` **2026-11-10T10:16:29.5063172-08:00**; `watcher` `event=stop` **2026-11-10T10:16:29.5399867-08:00**.
+
+**Watcher wait (amendment):** after client exit, polled up to 15s for watcher process / `Local\ZolaWatcher`. First sample **2026-11-10T10:17:39.0961382-08:00**: watcher_pids=[] starts=[] `Local\ZolaWatcher`=FREE. Watcher gone — continue. (Did not stop anything.)
+
+| Suite | Result | Floor |
+|-------|--------|-------|
+| Checks | **271 PASS / 0 FAIL** | 271 |
+| zola_workspace | **582 OK** (112.175s) | 582 |
+| zola_memory | **162 OK** (16.786s) | 162 |
+| zola_tools | **44 OK** | 44 |
+| zola_tts | **8 OK** | 8 |
+| zola_phone (Zola closed) | **71 OK** (44.815s) | 71 |
+| Kotlin | **98** unit, 0 fail/error/skip; assembleDebug OK | 98 |
+
+All at or above floors.
+
+**job_assigned quote + 09:19 note:** see Phase 8 section above (no fix).
