@@ -365,8 +365,13 @@ function Get-ZolaRunningStatus {
 function Assert-ZolaNotRunning {
     param(
         [scriptblock]$Probe,
-        [string[]]$MutexNames
+        [string[]]$MutexNames,
+        [switch]$RequireProbe
     )
+    # PROC1-ID: TestMode must inject a probe — never scan real processes — PROC1-D13
+    if ($RequireProbe -and -not $Probe) {
+        throw 'TestMode requires -RunningZolaProbe'
+    }
     $st = Get-ZolaRunningStatus -Probe $Probe -MutexNames $MutexNames
     if ($st.Running) {
         throw ("Refuse: Zola appears running: " + ($st.Reasons -join '; '))
@@ -825,6 +830,7 @@ function Invoke-SqliteTool {
 
 function Get-DigestOfText {
     param([string]$Text)
+    if ($null -eq $Text) { $Text = '' }
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -834,19 +840,247 @@ function Get-DigestOfText {
     }
 }
 
-function Get-HermesStateDigest {
+# PROC1-ID: digest algorithm versions recorded in the stable manifest — PROC1-D13
+$script:DigestAlgoLocalEditV2 = 'v2-content'
+$script:DigestAlgoPipFreezeV1 = 'v1-pip-freeze' # script golden / legacy only
+$script:DigestAlgoPipFreezeV2 = 'v2-pip-freeze-clean'
+$script:DigestAlgoLocalEditV1 = 'v1-porcelain' # script golden / legacy only
+
+function Get-PluginCompareRulesObject {
+    # PROC1-ID: one authority — Switch embeds this in the manifest for the client — PROC1-D13
+    [ordered]@{
+        maps = @(
+            foreach ($m in $script:PluginMaps) {
+                [ordered]@{ repo = [string]$m.Repo; live_rel = ([string]$m.LiveRel).Replace('\', '/') }
+            }
+        )
+        structural_excludes = @('tests/', '__pycache__/', '*.pyc')
+        named_excludes      = @($script:NamedPluginExcludes)
+        tts_rel             = 'zola-tts/deepgram_tts.py'
+    }
+}
+
+function Get-DigestAlgorithmsObject {
+    [ordered]@{
+        hermes_local_edit = $script:DigestAlgoLocalEditV2
+        pip_freeze        = $script:DigestAlgoPipFreezeV2
+    }
+}
+
+function Test-OmitPythonEnvName {
+    param([Parameter(Mandatory)][string]$Name)
+    if ($Name -eq 'PYTHONPATH' -or $Name -eq 'PYTHONHOME' -or $Name -eq 'PYTHONSTARTUP' -or
+        $Name -eq 'PYTHONUSERBASE' -or $Name -eq 'VIRTUAL_ENV' -or $Name -eq 'PYTHONNOUSERSITE') {
+        return $true
+    }
+    return $Name.StartsWith('PIP_', [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Invoke-ExternalTextCapture {
+    # PROC1-ID: fail closed — nonzero exit / missing exe is not hashed as empty — PROC1-D13
+    # Phase 6b: optional WD + PythonClean/GitClean env (match HermesDigests) — PROC1-D13
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$ArgumentList,
+        [int]$TimeoutMs = 30000,
+        [string]$WorkingDirectory,
+        [ValidateSet('None', 'PythonClean', 'GitClean')][string]$EnvironmentProfile = 'None'
+    )
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        return [pscustomobject]@{ Ok = $false; Reason = "missing:$FilePath"; Text = $null; ExitCode = -1 }
+    }
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.StandardOutputEncoding = $utf8
+    $psi.StandardErrorEncoding = $utf8
+    if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
+    # PS 5.1: ArgumentList collection may be unavailable — quote into Arguments string
+    $psi.Arguments = @($ArgumentList | ForEach-Object {
+            $a = "$_"
+            if ($a -match '[\s"]') { '"' + ($a.Replace('"', '\"')) + '"' } else { $a }
+        }) -join ' '
+
+    if ($EnvironmentProfile -ne 'None') {
+        $keep = New-Object System.Collections.Generic.List[object]
+        foreach ($entry in [System.Environment]::GetEnvironmentVariables().GetEnumerator()) {
+            $k = [string]$entry.Key
+            if ($EnvironmentProfile -eq 'PythonClean' -and (Test-OmitPythonEnvName -Name $k)) { continue }
+            if ($EnvironmentProfile -eq 'GitClean' -and $k.StartsWith('GIT_', [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $keep.Add([pscustomobject]@{ K = $k; V = [string]$entry.Value }) | Out-Null
+        }
+        $psi.EnvironmentVariables.Clear()
+        foreach ($kv in $keep) { $psi.EnvironmentVariables[$kv.K] = $kv.V }
+        if ($EnvironmentProfile -eq 'PythonClean') { $psi.EnvironmentVariables['PYTHONUTF8'] = '1' }
+    }
+
+    $p = $null
+    try {
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $psi
+        if (-not $p.Start()) {
+            return [pscustomobject]@{ Ok = $false; Reason = 'start_failed'; Text = $null; ExitCode = -1 }
+        }
+        $stdout = $p.StandardOutput.ReadToEnd()
+        $null = $p.StandardError.ReadToEnd()
+        if (-not $p.WaitForExit($TimeoutMs)) {
+            try { $p.Kill() } catch { }
+            return [pscustomobject]@{ Ok = $false; Reason = "timeout:$TimeoutMs"; Text = $null; ExitCode = -1 }
+        }
+        $code = [int]$p.ExitCode
+        if ($code -ne 0) {
+            return [pscustomobject]@{ Ok = $false; Reason = "exit:$code"; Text = $null; ExitCode = $code }
+        }
+        return [pscustomobject]@{ Ok = $true; Reason = $null; Text = $stdout; ExitCode = 0 }
+    } finally {
+        if ($null -ne $p) { $p.Dispose() }
+    }
+}
+
+function ConvertTo-V1JoinedText {
+    # PROC1-ID Phase 4c: match proc1-stable `(cmd output) -join "`n"` (no trailing LF) — PROC1-D13
+    # Fail-closed capture keeps the process trailing LF; stripping it is part of v1, not a new algorithm.
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    $normalized = ($Text -replace "`r`n", "`n") -replace "`r", "`n"
+    return $normalized.TrimEnd("`n")
+}
+
+function Get-HermesLocalEditDigestV1 {
+    # Legacy porcelain-text digest — must match proc1-stable Get-HermesStateDigest local_edit
     param([Parameter(Mandatory)][string]$HermesRoot)
-    $head = (git -C $HermesRoot rev-parse HEAD 2>$null)
-    $porcelain = (git -C $HermesRoot status --porcelain 2>$null) -join "`n"
+    $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+    $git = if ($gitCmd) { $gitCmd.Source } else { $null }
+    if (-not $git) { return [pscustomobject]@{ Ok = $false; Reason = 'missing:git'; Digest = $null } }
+    $cap = Invoke-ExternalTextCapture -FilePath $git -ArgumentList @('-C', $HermesRoot, 'status', '--porcelain')
+    if (-not $cap.Ok) { return [pscustomobject]@{ Ok = $false; Reason = $cap.Reason; Digest = $null } }
+    $joined = ConvertTo-V1JoinedText -Text $cap.Text
+    return [pscustomobject]@{ Ok = $true; Reason = $null; Digest = (Get-DigestOfText $joined); Text = $joined }
+}
+
+function Get-HermesLocalEditDigestV2 {
+    # PROC1-ID: content-aware local-edit digest; Phase 6b WD=hermesRoot, strip GIT_* — PROC1-D13
+    param([Parameter(Mandatory)][string]$HermesRoot)
+    $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+    $git = if ($gitCmd) { $gitCmd.Source } else { $null }
+    if (-not $git) { return [pscustomobject]@{ Ok = $false; Reason = 'missing:git'; Digest = $null } }
+    $cap = Invoke-ExternalTextCapture -FilePath $git -ArgumentList @(
+        '-C', $HermesRoot, 'status', '--porcelain=v1', '-z', '--untracked-files=all'
+    ) -WorkingDirectory $HermesRoot -EnvironmentProfile GitClean -TimeoutMs 30000
+    if (-not $cap.Ok) { return [pscustomobject]@{ Ok = $false; Reason = $cap.Reason; Digest = $null } }
+    $raw = $cap.Text
+    $entries = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrEmpty($raw)) {
+        $parts = $raw.Split([char]0)
+        $i = 0
+        while ($i -lt $parts.Length) {
+            $chunk = $parts[$i]
+            if ([string]::IsNullOrEmpty($chunk)) { $i++; continue }
+            # XY PATH or for renames XY ORIG\0NEW (porcelain -z)
+            if ($chunk.Length -lt 3) { $i++; continue }
+            $code = $chunk.Substring(0, 2)
+            $pathPart = $chunk.Substring(3)
+            $path = $pathPart
+            if ($code -match 'R|C') {
+                # next nul field is the destination path
+                $i++
+                if ($i -lt $parts.Length -and -not [string]::IsNullOrEmpty($parts[$i])) {
+                    $path = $parts[$i]
+                }
+            }
+            $full = Join-Path $HermesRoot ($path -replace '/', '\')
+            $payload = 'deleted'
+            if (Test-Path -LiteralPath $full -PathType Leaf) {
+                $payload = Get-FileSha256Hex -Path $full
+            }
+            $entries.Add(('{0}|{1}|{2}' -f $code, ($path -replace '\\', '/'), $payload)) | Out-Null
+            $i++
+        }
+    }
+    $sorted = @($entries | Sort-Object)
+    $text = ($sorted -join "`n") + $(if ($sorted.Count -gt 0) { "`n" } else { '' })
+    return [pscustomobject]@{ Ok = $true; Reason = $null; Digest = (Get-DigestOfText $text) }
+}
+
+function Get-PipFreezeDigest {
+    # PROC1-ID Phase 4c: v1-pip-freeze (legacy / golden only; inherits ambient env) — PROC1-D13
+    param([Parameter(Mandatory)][string]$HermesRoot)
     $py = Join-Path $HermesRoot '.venv\Scripts\python.exe'
-    $freeze = ''
-    if (Test-Path -LiteralPath $py) {
-        $freeze = (& $py -m pip freeze 2>$null) -join "`n"
+    if (-not (Test-Path -LiteralPath $py)) {
+        return [pscustomobject]@{ Ok = $false; Reason = "missing:$py"; Digest = $null; Text = $null }
+    }
+    $cap = Invoke-ExternalTextCapture -FilePath $py -ArgumentList @('-m', 'pip', 'freeze') -TimeoutMs 60000
+    if (-not $cap.Ok) { return [pscustomobject]@{ Ok = $false; Reason = $cap.Reason; Digest = $null; Text = $null } }
+    $joined = ConvertTo-V1JoinedText -Text $cap.Text
+    return [pscustomobject]@{ Ok = $true; Reason = $null; Digest = (Get-DigestOfText $joined); Text = $joined }
+}
+
+function Get-PipFreezeDigestV2 {
+    # PROC1-ID Phase 6b: v2-pip-freeze-clean — PROC1-D13
+    param([Parameter(Mandatory)][string]$HermesRoot)
+    $py = Join-Path $HermesRoot '.venv\Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $py)) {
+        return [pscustomobject]@{ Ok = $false; Reason = "missing:$py"; Digest = $null; Text = $null; RawText = $null }
+    }
+    $cap = Invoke-ExternalTextCapture -FilePath $py -ArgumentList @('-m', 'pip', 'freeze') `
+        -WorkingDirectory $HermesRoot -EnvironmentProfile PythonClean -TimeoutMs 60000
+    if (-not $cap.Ok) {
+        return [pscustomobject]@{ Ok = $false; Reason = $cap.Reason; Digest = $null; Text = $null; RawText = $null }
+    }
+    $joined = ConvertTo-V1JoinedText -Text $cap.Text
+    return [pscustomobject]@{
+        Ok = $true; Reason = $null
+        Digest = (Get-DigestOfText $joined)
+        Text = $joined
+        RawText = $cap.Text
+    }
+}
+
+function Get-HermesStateDigest {
+    # PROC1-ID: fail-closed digests; v2-content + v2-pip-freeze-clean — PROC1-D13
+    param(
+        [Parameter(Mandatory)][string]$HermesRoot,
+        [string]$LocalEditAlgorithm = $script:DigestAlgoLocalEditV2
+    )
+    $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+    $git = if ($gitCmd) { $gitCmd.Source } else { $null }
+    $headCap = $null
+    if ($git) {
+        $headCap = Invoke-ExternalTextCapture -FilePath $git -ArgumentList @('-C', $HermesRoot, 'rev-parse', 'HEAD') `
+            -WorkingDirectory $HermesRoot -EnvironmentProfile GitClean
+    } else {
+        $headCap = [pscustomobject]@{ Ok = $false; Reason = 'missing:git'; Text = $null }
+    }
+    if (-not $headCap.Ok) {
+        throw "Hermes digest not completed (head): $($headCap.Reason)"
+    }
+    $head = ($headCap.Text -split "`r?`n")[0].Trim()
+
+    if ($LocalEditAlgorithm -eq $script:DigestAlgoLocalEditV2) {
+        $local = Get-HermesLocalEditDigestV2 -HermesRoot $HermesRoot
+    } elseif ($LocalEditAlgorithm -eq $script:DigestAlgoLocalEditV1) {
+        $local = Get-HermesLocalEditDigestV1 -HermesRoot $HermesRoot
+    } else {
+        throw "Hermes digest not completed (local_edit): unknown algorithm $LocalEditAlgorithm"
+    }
+    if (-not $local.Ok) {
+        throw "Hermes digest not completed (local_edit): $($local.Reason)"
+    }
+    $pip = Get-PipFreezeDigestV2 -HermesRoot $HermesRoot
+    if (-not $pip.Ok) {
+        throw "Hermes digest not completed (pip_freeze): $($pip.Reason)"
     }
     [pscustomobject]@{
         head               = $head
-        local_edit_digest  = (Get-DigestOfText $porcelain)
-        pip_freeze_digest  = (Get-DigestOfText $freeze)
+        local_edit_digest  = $local.Digest
+        pip_freeze_digest  = $pip.Digest
+        pip_freeze_text    = $pip.Text
+        local_edit_algo    = $LocalEditAlgorithm
+        pip_freeze_algo    = $script:DigestAlgoPipFreezeV2
     }
 }
 
@@ -975,5 +1209,7 @@ Export-ModuleMember -Function @(
     'Test-ShortcutHashesMatch', 'ConvertTo-HashStringMap', 'Normalize-StringList',
     'Test-StringListsEqualSorted', 'Test-PluginDiffMatchesPrepare', 'Invoke-ProfileBackup',
     'Test-IsSqliteDatabaseFile', 'Get-ProfileFilesForBackup', 'Invoke-SqliteTool',
-    'Get-DigestOfText', 'Get-HermesStateDigest', 'Write-JsonFile', 'Read-JsonFile'
-) -Variable DefaultStableRoot, DefaultProfileRoot, DefaultClientDataRoot, DefaultHermesRoot, DefaultLiveCheckout, ShortcutName, NamedPluginExcludes, PluginMaps, MutexPhone, MutexWatcher
+    'Get-DigestOfText', 'ConvertTo-V1JoinedText', 'Get-HermesStateDigest', 'Get-HermesLocalEditDigestV1', 'Get-HermesLocalEditDigestV2',
+    'Get-PipFreezeDigest', 'Get-PipFreezeDigestV2', 'Get-PluginCompareRulesObject', 'Get-DigestAlgorithmsObject',
+    'Invoke-ExternalTextCapture', 'Write-JsonFile', 'Read-JsonFile'
+) -Variable DefaultStableRoot, DefaultProfileRoot, DefaultClientDataRoot, DefaultHermesRoot, DefaultLiveCheckout, ShortcutName, NamedPluginExcludes, PluginMaps, MutexPhone, MutexWatcher, DigestAlgoLocalEditV2, DigestAlgoPipFreezeV1, DigestAlgoPipFreezeV2, DigestAlgoLocalEditV1

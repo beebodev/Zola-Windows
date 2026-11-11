@@ -56,6 +56,9 @@ public sealed partial class HermesProcessManager : IDisposable
 
     public bool OwnsProcess { get; private set; }
 
+    // PROC1-ID: set when Shutdown's WaitForExit(5000) leaves the serve child alive — PROC1-D7
+    public bool LastShutdownChildAlive { get; private set; }
+
     // P3-LIFE: launched/attached serve identity for TTS playback ownership — P3-D14 / S17
     public int? ServeProcessId { get; private set; }
 
@@ -150,11 +153,17 @@ public sealed partial class HermesProcessManager : IDisposable
 
         try
         {
-            // P1-CLIENT: tree-kill only the serve process this client spawned — P1-D01
+            // P1-CLIENT: tree-kill only the serve process this client spawned; WaitForExit(5000) — P1-D01
             if (!child.HasExited)
             {
                 child.Kill(entireProcessTree: true);
                 child.WaitForExit(5_000);
+            }
+
+            // PROC1-ID: still-alive after bounded wait — caller may log before releasing session lock — PROC1-D7
+            if (!child.HasExited)
+            {
+                LastShutdownChildAlive = true;
             }
         }
         catch (InvalidOperationException)

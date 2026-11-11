@@ -58,6 +58,10 @@ if ($TestMode -or $isDrill) {
     if ($TestMode) {
         Assert-TestModeSafeRoot -Path $DesktopDir -LiveRoots $liveRoots -Label 'DesktopDir'
         Assert-TestModeSafeRoot -Path $ProgramsDir -LiveRoots $liveRoots -Label 'ProgramsDir'
+        # PROC1-ID: TestMode always requires an injected probe (drills skip the running check) — PROC1-D13
+        if (-not $RunningZolaProbe) {
+            throw 'TestMode requires -RunningZolaProbe'
+        }
     }
     if ($isDrill) {
         Assert-TestModeSafeRoot -Path $writeRoot -LiveRoots @((Resolve-FullPath $DefaultStableRoot)) -Label 'StableRoot'
@@ -65,7 +69,7 @@ if ($TestMode -or $isDrill) {
 }
 
 if (-not $isDrill) {
-    Assert-ZolaNotRunning -Probe $RunningZolaProbe -MutexNames $MutexNames
+    Assert-ZolaNotRunning -Probe $RunningZolaProbe -MutexNames $MutexNames -RequireProbe:$TestMode
 }
 
 $index = Read-JsonFile (Join-Path $backupDir 'backup-index.json')

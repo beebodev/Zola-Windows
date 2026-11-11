@@ -22,7 +22,9 @@ param(
     [scriptblock]$RunningZolaProbe,
     [string[]]$MutexNames,
     [scriptblock]$InjectAfterPluginCopy,
-    [switch]$ForcePluginPutBackFail
+    [switch]$ForcePluginPutBackFail,
+    # PROC1-ID: TestMode prestable outgoing — never observe real processes — PROC1-D13
+    [hashtable]$TestPreStableLaunch
 )
 
 Set-StrictMode -Version Latest
@@ -54,6 +56,10 @@ if ($TestMode) {
     Assert-TestModeSafeRoot -Path $ProfileRoot -LiveRoots $liveRoots -Label 'ProfileRoot'
     Assert-TestModeSafeRoot -Path $DesktopDir -LiveRoots $liveRoots -Label 'DesktopDir'
     Assert-TestModeSafeRoot -Path $ProgramsDir -LiveRoots $liveRoots -Label 'ProgramsDir'
+    # PROC1-ID: TestMode refuses real process/mutex scans — PROC1-D13
+    if (-not $RunningZolaProbe) {
+        throw 'TestMode requires -RunningZolaProbe'
+    }
 }
 
 function Get-TagCommit {
@@ -88,9 +94,14 @@ function Resolve-OutgoingForPrepare {
             }
         }
     }
-    $obs = Get-ObservedPreStableLaunch -LiveCheckout $LiveCheckout
-    if (-not $obs -and $TestMode -and $env:PROC1_TEST_PRESTABLE_JSON) {
-        $obs = $env:PROC1_TEST_PRESTABLE_JSON | ConvertFrom-Json
+    # PROC1-ID: TestMode never looks at real processes — injected launch only — PROC1-D13
+    if ($TestMode) {
+        if (-not $TestPreStableLaunch) {
+            throw 'TestMode requires -TestPreStableLaunch'
+        }
+        $obs = [pscustomobject]$TestPreStableLaunch
+    } else {
+        $obs = Get-ObservedPreStableLaunch -LiveCheckout $LiveCheckout
     }
     if (-not $obs) {
         throw 'Prepare: no running Zola.Client and no stable current.txt - cannot record pre-stable outgoing. Start Zola or set current.txt.'
@@ -380,14 +391,20 @@ function Invoke-PutBackAll {
 
     # staging folder
     try {
+        # PROC1-ID: role + manifest are Switch-only; strip before staging hash recheck — PROC1-D7/D13
+        $switchOnlyNames = @('stable-manifest.json', 'build-role.json')
         if ($Moved -and (Test-Path -LiteralPath $FinalDir)) {
             if (Test-Path -LiteralPath $StagingDir) { Remove-Item -LiteralPath $StagingDir -Recurse -Force }
-            $mf = Join-Path $FinalDir 'stable-manifest.json'
-            if (Test-Path -LiteralPath $mf) { Remove-Item -LiteralPath $mf -Force }
+            foreach ($n in $switchOnlyNames) {
+                $p = Join-Path $FinalDir $n
+                if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+            }
             Move-Item -LiteralPath $FinalDir -Destination $StagingDir
         } elseif (-not $Moved) {
-            $mf = Join-Path $StagingDir 'stable-manifest.json'
-            if (Test-Path -LiteralPath $mf) { Remove-Item -LiteralPath $mf -Force }
+            foreach ($n in $switchOnlyNames) {
+                $p = Join-Path $StagingDir $n
+                if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+            }
         }
         $stagingNow = Get-DirectoryFileHashMap -Root $StagingDir
         $expected = ConvertTo-HashStringMap $PrepareRecord.staging_file_hashes
@@ -415,7 +432,7 @@ function Invoke-PutBackAll {
 }
 
 function Invoke-Switch {
-    Assert-ZolaNotRunning -Probe $RunningZolaProbe -MutexNames $MutexNames
+    Assert-ZolaNotRunning -Probe $RunningZolaProbe -MutexNames $MutexNames -RequireProbe:$TestMode
 
     $promoDir = Join-Path $StableRoot "_promotions\$Tag"
     $stagingDir = Join-Path $StableRoot "_staging\$Tag"
@@ -498,7 +515,7 @@ function Invoke-Switch {
     & $restoreScript -Backup $backupDir -Target $scratch -Drill -ConfirmName (Split-Path -Leaf $backupDir) `
         -StableRoot $StableRoot -ProfileRoot $scratch -HermesRoot $HermesRoot `
         -DesktopDir $DesktopDir -ProgramsDir $ProgramsDir -TestMode:$TestMode `
-        -LiveCheckout $LiveCheckout
+        -LiveCheckout $LiveCheckout -RunningZolaProbe $RunningZolaProbe
 
     $liveChangeStarted = $false
     $pluginsApplied = $false
@@ -510,6 +527,7 @@ function Invoke-Switch {
             $liveChangeStarted = $true
         }
 
+        # PROC1-ID: fail-closed digests stop Switch before live change — PROC1-D13
         $hermes = Get-HermesStateDigest -HermesRoot $HermesRoot
         $configPath = Join-Path $ProfileRoot 'config.yaml'
         $installed = Get-LivePluginHashMap -ProfileRoot $ProfileRoot
@@ -529,8 +547,24 @@ function Invoke-Switch {
             promotion_scripts_digest   = $scriptsState.digest
             promotion_scripts_dirty    = $scriptsState.dirty
             promoted_at                = (Get-Date).ToString('o')
+            plugin_compare_rules       = (Get-PluginCompareRulesObject)
+            digest_algorithms          = (Get-DigestAlgorithmsObject)
         }
+        # PROC1-ID Phase 4c: save freeze text for drift package add/remove/change — PROC1-D13
+        $freezePath = Join-Path $promoDir 'pip-freeze.txt'
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        $freezeText = ''
+        if ($null -ne $hermes.pip_freeze_text) { $freezeText = [string]$hermes.pip_freeze_text }
+        [System.IO.File]::WriteAllText($freezePath, $freezeText, $utf8)
         Write-JsonFile -Object $manifest -Path (Join-Path $stagingDir 'stable-manifest.json')
+        # PROC1-ID: role file beside the exe; excluded from Prepare client_build_hash (written at Switch) — PROC1-D7
+        $role = [ordered]@{
+            role     = 'stable'
+            tag      = $Tag
+            commit   = [string]$record.commit
+            manifest = 'stable-manifest.json'
+        }
+        Write-JsonFile -Object $role -Path (Join-Path $stagingDir 'build-role.json')
 
         Move-Item -LiteralPath $stagingDir -Destination $finalDir
         $moved = $true

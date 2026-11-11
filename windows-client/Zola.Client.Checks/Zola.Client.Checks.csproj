@@ -54,6 +54,15 @@
     <Compile Include="..\Zola.Client\Voice\CodeReader.cs" Link="Voice\CodeReader.cs" />
     <Compile Include="..\Zola.Client\Voice\PhoneCodeRedeemer.cs" Link="Voice\PhoneCodeRedeemer.cs" />
     <Compile Include="..\Zola.Client\Voice\LocalCodeVoice.cs" Link="Voice\LocalCodeVoice.cs" />
+    <!-- PROC1-ID: build role, lock helpers, digests, drift notice — PROC1-D7 / PROC1-D13 -->
+    <Compile Include="..\Zola.Client\Identity\IdentityConstants.cs" Link="Identity\IdentityConstants.cs" />
+    <Compile Include="..\Zola.Client\Identity\IdentityLog.cs" Link="Identity\IdentityLog.cs" />
+    <Compile Include="..\Zola.Client\Identity\BuildRole.cs" Link="Identity\BuildRole.cs" />
+    <Compile Include="..\Zola.Client\Identity\RefuseMessages.cs" Link="Identity\RefuseMessages.cs" />
+    <Compile Include="..\Zola.Client\Identity\InstanceStatusFile.cs" Link="Identity\InstanceStatusFile.cs" />
+    <Compile Include="..\Zola.Client\Identity\DriftNotice.cs" Link="Identity\DriftNotice.cs" />
+    <Compile Include="..\Zola.Client\Identity\HermesDigests.cs" Link="Identity\HermesDigests.cs" />
+    <Compile Include="..\Zola.Client\Identity\DriftChecker.cs" Link="Identity\DriftChecker.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Speech" Version="9.0.4" />

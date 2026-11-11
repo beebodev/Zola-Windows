@@ -50,7 +50,12 @@ public static class SupervisionLog
         int? launcherPid,
         string? childPid = null)
     {
-        var line = Format(proc, eventName, restarts, generation, launcherPid, childPid);
+        WriteLine(Format(proc, eventName, restarts, generation, launcherPid, childPid));
+    }
+
+    // PROC1-ID: free-form lines (identity / drift) share supervisor.log — PROC1-D7 / PROC1-D13
+    public static void WriteLine(string line)
+    {
         try
         {
             var root = Path.Combine(

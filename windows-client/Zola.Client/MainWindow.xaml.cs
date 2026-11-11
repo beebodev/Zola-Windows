@@ -1459,6 +1459,20 @@ public sealed partial class MainWindow : Window
         ScrollToEnd();
     }
 
+    // PROC1-ID: drift System bubble — local UI only; not Hermes, not spoken — PROC1-D13
+    private bool _driftNoticePosted;
+
+    public void PostSystemNotice(string text)
+    {
+        if (_driftNoticePosted || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        _driftNoticePosted = true;
+        AddBubble("System", text, mine: false);
+    }
+
     // P4-REQUEST: clarify and approval cards live in the transcript — P4-D07 / P4-D08
     private void OnClarifyOpened(string id, ServerRequestBroker.ClarifyView view)
     {

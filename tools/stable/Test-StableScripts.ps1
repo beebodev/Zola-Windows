@@ -154,35 +154,40 @@ function New-Fixture([string]$Name) {
     }
 }
 
-function Set-PrestableEnv {
-    $env:PROC1_TEST_PRESTABLE_JSON = (@{
-            launch_command = 'dotnet run --project C:\Users\test\Dev\zola-windows\windows-client\Zola.Client\Zola.Client.csproj'
-            checkout       = 'C:\Users\test\Dev\zola-windows'
-            branch         = 'main'
-            head           = '9d6458432c9e56e9a69f2f616e3da727acedfe10'
-            client_exe     = 'C:\Users\test\Dev\zola-windows\windows-client\Zola.Client\bin\Debug\net9.0-windows10.0.19041.0\Zola.Client.exe'
-        } | ConvertTo-Json -Compress)
+function Get-TestPreStableLaunch {
+    # PROC1-ID: injected prestable outgoing — independent of any real Zola.Client — PROC1-D13
+    @{
+        launch_command = 'dotnet run --project C:\Users\test\Dev\zola-windows\windows-client\Zola.Client\Zola.Client.csproj'
+        checkout       = 'C:\Users\test\Dev\zola-windows'
+        branch         = 'main'
+        head           = '9d6458432c9e56e9a69f2f616e3da727acedfe10'
+        client_exe     = 'C:\Users\test\Dev\zola-windows\windows-client\Zola.Client\bin\Debug\net9.0-windows10.0.19041.0\Zola.Client.exe'
+    }
+}
+
+function Get-IdleRunningProbe {
+    { [pscustomobject]@{ Running = $false; Reasons = @() } }
 }
 
 function Get-CommonPromoteArgs($fx) {
     @{
-        StableRoot   = $fx.Stable
-        ProfileRoot  = $fx.Profile
-        HermesRoot   = $HermesRoot
-        RepoRoot     = $RepoRoot
-        DesktopDir   = $fx.Desktop
-        ProgramsDir  = $fx.Programs
-        TestMode     = $true
+        StableRoot           = $fx.Stable
+        ProfileRoot          = $fx.Profile
+        HermesRoot           = $HermesRoot
+        RepoRoot             = $RepoRoot
+        DesktopDir           = $fx.Desktop
+        ProgramsDir          = $fx.Programs
+        TestMode             = $true
+        RunningZolaProbe     = (Get-IdleRunningProbe)
+        TestPreStableLaunch  = (Get-TestPreStableLaunch)
     }
 }
 
 function Invoke-SynPrepare {
     param($fx, $Tag = 'fix-s51f', $Commit = 'abc111')
-    Set-PrestableEnv
     $c = Get-CommonPromoteArgs $fx
     & $Promote -Prepare -Tag $Tag @c -Synthetic `
-        -SyntheticPluginsRoot $fx.Plugins -SyntheticCommit $Commit `
-        -RunningZolaProbe { [pscustomobject]@{ Running = $false; Reasons = @() } }
+        -SyntheticPluginsRoot $fx.Plugins -SyntheticCommit $Commit
 }
 
 function Invoke-SynSwitch {
@@ -191,7 +196,6 @@ function Invoke-SynSwitch {
     $c['Tag'] = $Tag
     $c['Synthetic'] = $true
     $c['SyntheticCommit'] = $Commit
-    $c['RunningZolaProbe'] = { [pscustomobject]@{ Running = $false; Reasons = @() } }
     if ($Inject) { $c['InjectAfterPluginCopy'] = $Inject }
     if ($NoApprove) {
         if ($ForcePluginPutBackFail) {
@@ -243,8 +247,8 @@ try {
     Invoke-SynPrepare -fx $fx
     try {
         $c = Get-CommonPromoteArgs $fx
-        & $Promote -Switch -Tag 'fix-s51f' @c -Synthetic -SyntheticCommit 'abc111' `
-            -RunningZolaProbe { [pscustomobject]@{ Running = $true; Reasons = @('injected') } }
+        $c['RunningZolaProbe'] = { [pscustomobject]@{ Running = $true; Reasons = @('injected') } }
+        & $Promote -Switch -Tag 'fix-s51f' @c -Synthetic -SyntheticCommit 'abc111'
         Bad 'refuse-when-running' 'expected throw'
     } catch {
         if ("$($_.Exception.Message)" -match 'Refuse: Zola') { Ok 'refuse-when-running' } else { Bad 'refuse-when-running' $_.Exception.Message }
@@ -252,21 +256,27 @@ try {
 } catch { Bad 'refuse-when-running' $_ }
 
 try {
+    # PROC1-ID: test-owned mutex via injected probe — ignore any real Zola.Client — PROC1-D13
     $mtxName = 'Local\ZolaTestMutexProc1'
     $mtx = New-Object System.Threading.Mutex($true, $mtxName)
     try {
-        $st = Get-ZolaRunningStatus -MutexNames @($mtxName, 'Local\ZolaTestMutexProc1B')
-        if ($st.Running) { Ok 'refuse-held-mutex-detect' } else { Bad 'refuse-held-mutex-detect' 'not detected' }
+        $script:Proc1IdHeldMutexName = $mtxName
+        $st = Get-ZolaRunningStatus -Probe {
+            $reasons = New-Object System.Collections.Generic.List[string]
+            if (Test-MutexHeld $script:Proc1IdHeldMutexName) { $reasons.Add("mutex:$($script:Proc1IdHeldMutexName)") | Out-Null }
+            [pscustomobject]@{ Running = ($reasons.Count -gt 0); Reasons = @($reasons) }
+        }
+        if ($st.Running -and ("$($st.Reasons)" -match 'ZolaTestMutexProc1')) {
+            Ok 'refuse-held-mutex-detect'
+        } else { Bad 'refuse-held-mutex-detect' "not detected:$($st.Reasons -join ',')" }
     } finally { $mtx.ReleaseMutex() | Out-Null; $mtx.Dispose() }
 } catch { Bad 'refuse-held-mutex-detect' $_ }
 
 try {
     $fx = New-Fixture 'badtag'
-    Set-PrestableEnv
     try {
         $c = Get-CommonPromoteArgs $fx
-        & $Promote -Prepare -Tag 'no-such-tag-proc1' @c `
-            -RunningZolaProbe { [pscustomobject]@{ Running = $false; Reasons = @() } }
+        & $Promote -Prepare -Tag 'no-such-tag-proc1' @c
         Bad 'refuse-unknown-tag' 'expected throw'
     } catch {
         if ("$($_.Exception.Message)" -match 'Unknown tag') { Ok 'refuse-unknown-tag' } else { Bad 'refuse-unknown-tag' $_.Exception.Message }
@@ -486,7 +496,8 @@ try {
     $tgt = New-ScratchRoot 'drill-ok'
     & $Restore -Backup $bak.FullName -Target $tgt -Drill -ConfirmName $bak.Name -StableRoot $script:Shared.Stable `
         -ProfileRoot $tgt -HermesRoot $HermesRoot -TestMode `
-        -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs
+        -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs `
+        -RunningZolaProbe (Get-IdleRunningProbe)
     if (-not (Test-Path $tgt)) { Ok 'drill-pass-cleans-scratch' } else { Bad 'drill-pass-cleans-scratch' 'exists' }
 
     $tgt2 = New-ScratchRoot 'drill-fail'
@@ -497,7 +508,8 @@ try {
     try {
         & $Restore -Backup $bakCopy -Target $tgt2 -Drill -ConfirmName (Split-Path $bakCopy -Leaf) `
             -StableRoot $script:Shared.Stable -ProfileRoot $tgt2 -HermesRoot $HermesRoot -TestMode `
-            -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs
+            -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs `
+            -RunningZolaProbe (Get-IdleRunningProbe)
         Bad 'drill-fail-cleans-scratch' 'expected fail'
     } catch {
         if (-not (Test-Path $tgt2)) { Ok 'drill-fail-cleans-scratch' } else { Bad 'drill-fail-cleans-scratch' 'remains' }
@@ -516,7 +528,8 @@ try {
     try {
         & $Restore -Backup $bakU -Target $tgt3 -Drill -ConfirmName (Split-Path $bakU -Leaf) `
             -StableRoot $script:Shared.Stable -ProfileRoot $tgt3 -HermesRoot $HermesRoot -TestMode `
-            -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs
+            -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs `
+            -RunningZolaProbe (Get-IdleRunningProbe)
         Bad 'drill-fail-user-version' 'expected fail'
     } catch {
         if (-not (Test-Path $tgt3) -and ("$($_.Exception.Message)" -match 'user_version')) {
@@ -537,7 +550,8 @@ try {
     try {
         & $Restore -Backup $bakH -Target $tgt4 -Drill -ConfirmName (Split-Path $bakH -Leaf) `
             -StableRoot $script:Shared.Stable -ProfileRoot $tgt4 -HermesRoot $HermesRoot -TestMode `
-            -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs
+            -DesktopDir $script:Shared.Desktop -ProgramsDir $script:Shared.Programs `
+            -RunningZolaProbe (Get-IdleRunningProbe)
         Bad 'drill-fail-file-hash' 'expected fail'
     } catch {
         if (-not (Test-Path $tgt4) -and ("$($_.Exception.Message)" -match 'hash mismatch')) {
@@ -596,7 +610,8 @@ try {
     $tgt = New-ScratchRoot 'head-drill'
     & $Restore -Backup $bak.FullName -Target $tgt -Drill -ConfirmName $bak.Name -StableRoot $fx.Stable `
         -ProfileRoot $tgt -HermesRoot $HermesRoot -TestMode `
-        -DesktopDir $fx.Desktop -ProgramsDir $fx.Programs | Out-Null
+        -DesktopDir $fx.Desktop -ProgramsDir $fx.Programs `
+        -RunningZolaProbe (Get-IdleRunningProbe) | Out-Null
     $stableHashAfter = Get-ClientBuildHash -PublishDir (Join-Path $fx.Stable 'fix-s51f')
     $currentAfter = Get-Content (Join-Path $fx.Stable 'current.txt') -Raw
     if ($stableHashBefore -eq $stableHashAfter -and $currentBefore -eq $currentAfter -and -not (Test-Path $tgt)) {
@@ -937,13 +952,11 @@ try {
     New-Item -ItemType Directory -Force -Path (Join-Path $client 'Themes') | Out-Null
     Set-Content -LiteralPath (Join-Path $client 'Themes\ZolaTokens.xaml') -Value '<ResourceDictionary/>' -NoNewline
     Set-Content -LiteralPath (Join-Path $client 'ExtraPage.xaml') -Value '<Page/>' -NoNewline
-    Set-PrestableEnv
     $c = Get-CommonPromoteArgs $fx
     try {
         & $Promote -Prepare -Tag 'fix-s51f' @c -Synthetic `
             -SyntheticPluginsRoot $fx.Plugins -SyntheticCommit 'abc111' `
-            -SyntheticClientRoot $client `
-            -RunningZolaProbe { [pscustomobject]@{ Running = $false; Reasons = @() } }
+            -SyntheticClientRoot $client
         Bad 'refuse-extra-xaml-missing-xbf' 'expected throw'
     } catch {
         $msg = "$($_.Exception.Message)"
@@ -974,6 +987,184 @@ try {
         } else { Bad 'fail-names-pre-restore-backup' 'field missing' }
     }
 } catch { Bad 'fail-names-pre-restore-backup' $_ }
+
+try {
+    # PROC1-ID: injected prestable wins while a real Zola.Client.exe may be running — PROC1-D13
+    $fx = New-Fixture 'inj'
+    $inj = Get-TestPreStableLaunch
+    $inj['head'] = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    $inj['launch_command'] = 'injected-launch-command-for-test'
+    $c = Get-CommonPromoteArgs $fx
+    $c['TestPreStableLaunch'] = $inj
+    & $Promote -Prepare -Tag 'fix-s51f' @c -Synthetic -SyntheticPluginsRoot $fx.Plugins -SyntheticCommit 'abc111'
+    $rec = Get-Content (Join-Path $fx.Stable '_promotions\fix-s51f\.prepare-record.json') -Raw | ConvertFrom-Json
+    if ($rec.outgoing.head -eq 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -and $rec.outgoing.launch_command -eq 'injected-launch-command-for-test') {
+        Ok 'testmode-prepare-ignores-real-zola'
+    } else {
+        Bad 'testmode-prepare-ignores-real-zola' "$($rec.outgoing.head)/$($rec.outgoing.launch_command)"
+    }
+} catch { Bad 'testmode-prepare-ignores-real-zola' $_ }
+
+try {
+    # PROC1-ID: TestMode without probe refuses before touching live processes — PROC1-D13
+    $fx = New-Fixture 'noprobe'
+    try {
+        & $Promote -Prepare -Tag 'fix-s51f' -StableRoot $fx.Stable -ProfileRoot $fx.Profile `
+            -HermesRoot $HermesRoot -RepoRoot $RepoRoot -TestMode -Synthetic `
+            -SyntheticPluginsRoot $fx.Plugins -SyntheticCommit 'abc111' `
+            -DesktopDir $fx.Desktop -ProgramsDir $fx.Programs `
+            -TestPreStableLaunch (Get-TestPreStableLaunch)
+        Bad 'testmode-requires-running-probe' 'expected throw'
+    } catch {
+        if ("$($_.Exception.Message)" -match 'TestMode requires -RunningZolaProbe') {
+            Ok 'testmode-requires-running-probe'
+        } else { Bad 'testmode-requires-running-probe' $_.Exception.Message }
+    }
+} catch { Bad 'testmode-requires-running-probe' $_ }
+
+try {
+    # PROC1-ID: TestMode without TestPreStableLaunch refuses — PROC1-D13
+    $fx = New-Fixture 'nolaunch'
+    try {
+        & $Promote -Prepare -Tag 'fix-s51f' -StableRoot $fx.Stable -ProfileRoot $fx.Profile `
+            -HermesRoot $HermesRoot -RepoRoot $RepoRoot -TestMode -Synthetic `
+            -SyntheticPluginsRoot $fx.Plugins -SyntheticCommit 'abc111' `
+            -DesktopDir $fx.Desktop -ProgramsDir $fx.Programs `
+            -RunningZolaProbe (Get-IdleRunningProbe)
+        Bad 'testmode-requires-prestable-launch' 'expected throw'
+    } catch {
+        if ("$($_.Exception.Message)" -match 'TestMode requires -TestPreStableLaunch') {
+            Ok 'testmode-requires-prestable-launch'
+        } else { Bad 'testmode-requires-prestable-launch' $_.Exception.Message }
+    }
+} catch { Bad 'testmode-requires-prestable-launch' $_ }
+
+try {
+    # PROC1-ID: Switch writes build-role.json + digest rules — PROC1-D7/D13
+    $fx = New-Fixture 'role'
+    Invoke-SynPrepare -fx $fx
+    Invoke-SynSwitch -fx $fx
+    $rolePath = Join-Path $fx.Stable 'fix-s51f\build-role.json'
+    $mfPath = Join-Path $fx.Stable 'fix-s51f\stable-manifest.json'
+    if (-not (Test-Path $rolePath)) { Bad 'switch-writes-build-role' 'missing role'; throw 'x' }
+    $role = Get-Content $rolePath -Raw | ConvertFrom-Json
+    $mf = Get-Content $mfPath -Raw | ConvertFrom-Json
+    $hasRules = $null -ne $mf.plugin_compare_rules
+    $hasAlgo = $null -ne $mf.digest_algorithms `
+        -and $mf.digest_algorithms.hermes_local_edit -eq 'v2-content' `
+        -and $mf.digest_algorithms.pip_freeze -eq 'v2-pip-freeze-clean'
+    if ($role.role -eq 'stable' -and $role.tag -eq 'fix-s51f' -and $hasRules -and $hasAlgo) {
+        Ok 'switch-writes-build-role'
+    } else { Bad 'switch-writes-build-role' 'fields' }
+    # PROC1-ID Phase 4c: Switch writes pip-freeze.txt under _promotions\<tag> — PROC1-D13
+    $freezePath = Join-Path $fx.Stable '_promotions\fix-s51f\pip-freeze.txt'
+    if (-not (Test-Path -LiteralPath $freezePath)) {
+        Bad 'switch-writes-pip-freeze' 'missing'
+    } else {
+        $freezeRaw = [System.IO.File]::ReadAllText($freezePath)
+        if ($mf.pip_freeze_digest -eq (Get-DigestOfText $freezeRaw)) {
+            Ok 'switch-writes-pip-freeze'
+        } else { Bad 'switch-writes-pip-freeze' 'digest mismatch' }
+    }
+} catch { if ("$_" -ne 'x') { Bad 'switch-writes-build-role' $_ } }
+
+try {
+    # PROC1-ID Phase 4c: v1 digests match proc1-stable Get-DigestOfText on fixtures — PROC1-D13
+    $tmpModDir = Join-Path $env:TEMP ('proc1-id-golden-' + [guid]::NewGuid().ToString('N'))
+    Register-ScratchItem $tmpModDir
+    New-Item -ItemType Directory -Force -Path $tmpModDir | Out-Null
+    $tmpMod = Join-Path $tmpModDir 'StableCommon.psm1'
+    git -C $RepoRoot show 'proc1-stable:tools/stable/StableCommon.psm1' | Set-Content -LiteralPath $tmpMod -Encoding UTF8
+    $freezeFixture = "aiohttp==3.14.3`npypdf==6.19.0`nyarl==1.25.1"
+    $freezeCaptured = $freezeFixture + "`n"
+    $porcelainFixture = " M tracked.py`n?? untracked.txt"
+    $porcelainCaptured = $porcelainFixture + "`n"
+    # Isolated process so Import-Module does not replace this harness's StableCommon
+    $goldenFreeze = & powershell -NoProfile -ExecutionPolicy Bypass -Command {
+        param($Mod, $Text)
+        Import-Module $Mod -Force
+        Get-DigestOfText -Text $Text
+    } -args $tmpMod, $freezeFixture
+    $goldenPorc = & powershell -NoProfile -ExecutionPolicy Bypass -Command {
+        param($Mod, $Text)
+        Import-Module $Mod -Force
+        Get-DigestOfText -Text $Text
+    } -args $tmpMod, $porcelainFixture
+    $curFreeze = Get-DigestOfText (ConvertTo-V1JoinedText -Text $freezeCaptured)
+    $curPorc = Get-DigestOfText (ConvertTo-V1JoinedText -Text $porcelainCaptured)
+    if ($curFreeze -eq $goldenFreeze -and $curPorc -eq $goldenPorc) {
+        Ok 'v1-digests-match-proc1-stable-tag'
+    } else {
+        Bad 'v1-digests-match-proc1-stable-tag' "freeze=$curFreeze/$goldenFreeze porc=$curPorc/$goldenPorc"
+    }
+} catch { Bad 'v1-digests-match-proc1-stable-tag' $_ }
+
+try {
+    # PROC1-ID Phase 4c: v2 local-edit digest stable across two runs on one fixture — PROC1-D13
+    $root = Join-Path $env:TEMP ('proc1-id-v2fix-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    git -C $root init | Out-Null
+    git -C $root config user.email 't@t' | Out-Null
+    git -C $root config user.name 't' | Out-Null
+    Set-Content -LiteralPath (Join-Path $root 'a.txt') -Value 'one' -NoNewline
+    git -C $root add a.txt | Out-Null
+    git -C $root commit -m c1 | Out-Null
+    Set-Content -LiteralPath (Join-Path $root 'a.txt') -Value 'two' -NoNewline
+    Set-Content -LiteralPath (Join-Path $root 'u.txt') -Value 'untracked' -NoNewline
+    $d1 = Get-HermesLocalEditDigestV2 -HermesRoot $root
+    $d2 = Get-HermesLocalEditDigestV2 -HermesRoot $root
+    if ($d1.Ok -and $d2.Ok -and $d1.Digest -eq $d2.Digest -and $d1.Digest -ne (Get-DigestOfText '')) {
+        Ok 'v2-local-edit-stable-across-runs'
+    } else { Bad 'v2-local-edit-stable-across-runs' "$($d1.Digest)/$($d2.Digest)" }
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+} catch { Bad 'v2-local-edit-stable-across-runs' $_ }
+
+try {
+    # PROC1-ID Phase 6b: v2-pip-freeze-clean ignores ambient PYTHONPATH — PROC1-D13
+    $savedPp = [Environment]::GetEnvironmentVariable('PYTHONPATH', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('PYTHONPATH', $HermesRoot, 'Process')
+        $withPp = Get-PipFreezeDigestV2 -HermesRoot $HermesRoot
+        [Environment]::SetEnvironmentVariable('PYTHONPATH', $null, 'Process')
+        $withoutPp = Get-PipFreezeDigestV2 -HermesRoot $HermesRoot
+        if ($withPp.Ok -and $withoutPp.Ok -and $withPp.Digest -eq $withoutPp.Digest) {
+            Ok 'v2-pip-freeze-clean-ignores-pythonpath'
+        } else {
+            Bad 'v2-pip-freeze-clean-ignores-pythonpath' "$($withPp.Digest)/$($withoutPp.Digest)"
+        }
+    } finally {
+        [Environment]::SetEnvironmentVariable('PYTHONPATH', $savedPp, 'Process')
+    }
+} catch { Bad 'v2-pip-freeze-clean-ignores-pythonpath' $_ }
+
+try {
+    # PROC1-ID Phase 6b: v2-content ignores ambient GIT_DIR — PROC1-D13
+    $root = Join-Path $env:TEMP ('proc1-id-v2git-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    git -C $root init | Out-Null
+    git -C $root config user.email 't@t' | Out-Null
+    git -C $root config user.name 't' | Out-Null
+    Set-Content -LiteralPath (Join-Path $root 'a.txt') -Value 'one' -NoNewline
+    git -C $root add a.txt | Out-Null
+    git -C $root commit -m c1 | Out-Null
+    Set-Content -LiteralPath (Join-Path $root 'a.txt') -Value 'two' -NoNewline
+    $savedGitDir = [Environment]::GetEnvironmentVariable('GIT_DIR', 'Process')
+    try {
+        $bogus = Join-Path $env:TEMP ('proc1-id-bogus-git-' + [guid]::NewGuid().ToString('N'))
+        [Environment]::SetEnvironmentVariable('GIT_DIR', $bogus, 'Process')
+        $withGitDir = Get-HermesLocalEditDigestV2 -HermesRoot $root
+        [Environment]::SetEnvironmentVariable('GIT_DIR', $null, 'Process')
+        $withoutGitDir = Get-HermesLocalEditDigestV2 -HermesRoot $root
+        if ($withGitDir.Ok -and $withoutGitDir.Ok -and $withGitDir.Digest -eq $withoutGitDir.Digest) {
+            Ok 'v2-local-edit-ignores-git-dir'
+        } else {
+            Bad 'v2-local-edit-ignores-git-dir' "$($withGitDir.Ok)/$($withoutGitDir.Ok)/$($withGitDir.Digest)/$($withoutGitDir.Digest)"
+        }
+    } finally {
+        [Environment]::SetEnvironmentVariable('GIT_DIR', $savedGitDir, 'Process')
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} catch { Bad 'v2-local-edit-ignores-git-dir' $_ }
 
 # G3: always clean this track's scratch, pass or fail; then assert none remain
 try {
