@@ -655,3 +655,44 @@ Diff: `C:\Users\test\Dev\zola-spikes\prompts\PROC1-ID_Phase6b.diff`
 |------|-------|
 | Merge (tagged) | `c8bc87724f6ffe4586a808678530ca88af96daaf` |
 | Tag | annotated `proc1-id` |
+
+### Step 5 (completed) — push
+
+| Item | Value |
+|------|-------|
+| Pushed | `origin/main` = `38d0de81c9037d6736f6513f680b2d3aafd6dbcd` (docs on merge) |
+| Merge (tagged) | `c8bc87724f6ffe4586a808678530ca88af96daaf` |
+| Tag | annotated `proc1-id` → merge commit; pushed `refs/tags/proc1-id` |
+| Diff re-check before push | 26 real repo paths only (allowed) |
+
+### Step 6 — delete branch / keep worktree
+
+| Item | Value |
+|------|-------|
+| Branch delete | `git push origin --delete refs/heads/proc1-id`; local `git branch -D proc1-id` |
+| Worktree | **kept** until Phase 9 ends (`C:\Users\test\Dev\zola-windows-proc1-id`) |
+
+## Phase 7 complete
+
+## Phase 8 — Live checkout sync
+
+| Item | Value |
+|------|-------|
+| Eligibility | live on `main`, clean; client under `stable\fix-s51f\` (pid 2132) |
+| Before | `54a477f03ca9d27ef5b779c1ba1b72292fdad8bf` |
+| After | `38d0de81c9037d6736f6513f680b2d3aafd6dbcd` (`git pull --ff-only origin main`) |
+
+## Phase 8 complete
+
+## Phase 9 — Promotion decision (step 1)
+
+Promoting tag **`proc1-id`** means running `Promote-Stable.ps1` so Brian's everyday shortcut Zola becomes the merged `main` tip that carries PROC1-ID (PR-D09: everything merged into main so far).
+
+**In plain words:**
+- **On:** the single-instance lock (one Zola at a time), build role (`stable` via `build-role.json`), and the non-blocking drift warning at startup.
+- **Not changed by this promote:** live profile data, installed plugins (plugin diff expected equal), Hermes pin, companion/Kotlin.
+- Until promote, everyday Zola stays **fix-s51f** (no lock / no ID drift path). The "one build at a time" rule stays **off** until a promote lands ID (plan, Transition).
+
+Awaiting Brian's verbatim decision: promote `proc1-id` now, or decline.
+
+**STOP — Phase 9 step 1.**
