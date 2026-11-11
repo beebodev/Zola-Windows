@@ -619,3 +619,39 @@ Diff: `C:\Users\test\Dev\zola-spikes\prompts\PROC1-ID_Phase6b.diff`
 | Implementation commit | `471c5f789ea10537b556092fd231443131c04816` |
 | Message | `feat(PROC1-ID): build role, single-instance refusal, stable drift warning — PROC1-D7/D13` |
 | Files | `windows-client/Zola.Client/` (+Identity), `windows-client/Zola.Client.Checks/`, `tools/stable/*`, this progress doc |
+
+### Step 2 — fetch / origin/main
+
+`origin/main` still at Phase 1 base `54a477f03ca9d27ef5b779c1ba1b72292fdad8bf` (unchanged). Proceed.
+
+### Step 3 — merge
+
+| Item | Value |
+|------|-------|
+| Merge commit | `c8bc87724f6ffe4586a808678530ca88af96daaf` |
+| Strategy | `git checkout --detach origin/main`; `git merge --no-ff proc1-id` |
+| `git diff --stat origin/main..HEAD` | 26 real repo paths only: `tools/stable/*` (4), `windows-client/Zola.Client/**` (+Identity), `windows-client/Zola.Client.Checks/**`, this progress doc. No `--no-index` / NUL headers. |
+
+### Step 4 — suites on merged tip + crash-watch
+
+**Close (crash-watch):** phone `event=stop` **2026-11-11T09:46:37.5682143-08:00**; watcher `event=stop` **2026-11-11T09:46:37.5899925-08:00**; client gone **09:46:40.779**. Watcher wait: gone by **09:46:42.556** (`Local\ZolaWatcher` FREE) — continue.
+
+| Suite | Result |
+|-------|--------|
+| Checks | **295 PASS / 0 FAIL** (identity 24/24) |
+| Stable scripts | **54 PASS / 0 FAIL** |
+| zola_workspace | **582 OK** |
+| zola_memory | **162 OK** |
+| zola_tools | **44 OK** |
+| zola_tts | **8 OK** |
+| zola_phone (Zola closed) | **71 OK** |
+| Kotlin | **98** / assembleDebug OK |
+
+**Restart (crash-watch):** stable `Zola.Client.exe` pid **2132** CreationDate **2026-11-11 09:49:03**; watcher/phone `job_assigned` **09:49:05**.
+
+### Step 5 — push main + tag
+
+| Item | Value |
+|------|-------|
+| Merge (tagged) | `c8bc87724f6ffe4586a808678530ca88af96daaf` |
+| Tag | annotated `proc1-id` |
