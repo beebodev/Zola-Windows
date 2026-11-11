@@ -28,5 +28,6 @@ public sealed class WatcherProcess
 
     public void Start() => _inner.Start();
 
-    public void StopDeliberate() => _inner.StopDeliberate();
+    // PROC1-ID: true if child still alive after Kill + ≤5s wait — PROC1-D7
+    public bool StopDeliberate() => _inner.StopDeliberate();
 }

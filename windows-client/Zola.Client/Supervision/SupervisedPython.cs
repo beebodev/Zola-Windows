@@ -78,7 +78,8 @@ public sealed class SupervisedPython
         Spawn(pythonPath, hermesRoot);
     }
 
-    public void StopDeliberate()
+    // PROC1-ID: returns true if the child is still alive after Kill + ≤5s WaitForExit — PROC1-D7
+    public bool StopDeliberate()
     {
         _supervisor.NoteDeliberateStop();
         lock (_gate)
@@ -88,7 +89,7 @@ public sealed class SupervisedPython
         }
 
         SetLatch(WatcherProcessLatch.Stopped);
-        KillChild();
+        return KillChild();
     }
 
     private void Spawn(string pythonPath, string hermesRoot)
@@ -215,7 +216,8 @@ public sealed class SupervisedPython
         LatchChanged?.Invoke();
     }
 
-    private void KillChild()
+    // PROC1-ID: KillChild previously did not wait; now WaitForExit(5000) like serve — PROC1-D7
+    private bool KillChild()
     {
         Process? child;
         lock (_gate)
@@ -226,15 +228,19 @@ public sealed class SupervisedPython
 
         if (child is null)
         {
-            return;
+            return false;
         }
 
+        var alive = false;
         try
         {
             if (!child.HasExited)
             {
                 child.Kill(entireProcessTree: true);
+                child.WaitForExit(5_000);
             }
+
+            alive = !child.HasExited;
         }
         catch (InvalidOperationException)
         {
@@ -242,5 +248,11 @@ public sealed class SupervisedPython
         catch (System.ComponentModel.Win32Exception)
         {
         }
+        finally
+        {
+            child.Dispose();
+        }
+
+        return alive;
     }
 }
