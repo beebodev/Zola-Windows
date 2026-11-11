@@ -611,3 +611,11 @@ Diff: `C:\Users\test\Dev\zola-spikes\prompts\PROC1-ID_Phase6b.diff`
 ## Phase 7 — Commit and merge
 
 **Brian go-ahead (verbatim, 2026-11-11):** "proceed to commit and merge"
+
+### Step 1 — implementation commit
+
+| Item | Value |
+|------|-------|
+| Implementation commit | `471c5f789ea10537b556092fd231443131c04816` |
+| Message | `feat(PROC1-ID): build role, single-instance refusal, stable drift warning — PROC1-D7/D13` |
+| Files | `windows-client/Zola.Client/` (+Identity), `windows-client/Zola.Client.Checks/`, `tools/stable/*`, this progress doc |
