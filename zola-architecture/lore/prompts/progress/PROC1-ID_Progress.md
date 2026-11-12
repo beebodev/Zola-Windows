@@ -696,3 +696,61 @@ Promoting tag **`proc1-id`** means running `Promote-Stable.ps1` so Brian's every
 Awaiting Brian's verbatim decision: promote `proc1-id` now, or decline.
 
 **STOP — Phase 9 step 1.**
+
+## Phase 9 steps 2–6
+
+**Brian decision (verbatim):** "Promote proc1-id"
+
+### Step 2 — Prepare / Switch / shortcut start
+
+**Prepare:** tag `c8bc877…`; WinUI OK (`App.xbf`, `MainWindow.xbf`, `Themes\ZolaTokens.xbf`, `Zola.Client.pri`); staging 103 files / 102397892 bytes; `client_build_hash=76b387a88…ad3f`; assembleDebug OK; plugin equal; worktree removed; live/profile unchanged.
+
+**Close (crash-watch):** clear **2026-11-12T07:43:40** (after leftover backends cleared); phone suite **71 OK**.
+
+**Switch SUCCESS:** stable=`C:\Users\test\Zola\stable\proc1-id`; backup `proc1-id-20261112-074434`; drill PASS; outgoing fix-s51f → incoming proc1-id; DBs integrity ok.
+
+| Field | Value |
+|-------|--------|
+| build-role.json | role=stable tag=proc1-id commit=c8bc87724f6ffe4586a808678530ca88af96daaf |
+| digest_algorithms | hermes_local_edit=v2-content, pip_freeze=v2-pip-freeze-clean |
+| pip-freeze.txt | written under `_promotions\proc1-id\` (100 lines, no BOM) |
+
+**Shortcut start (crash-watch):** pid 21240 @ 07:47:18
+```
+identity role=stable why=ok tag=proc1-id
+drift completed=true components=none
+```
+SM-S2: exe under `stable\proc1-id\`; serve HERMES_HOME=live profile; ZOLA_HERMES_ROOT=hermes-agent.
+
+### Step 3 — SM-ID3
+
+| Order | Result |
+|-------|--------|
+| stable → `dotnet run` | PASS — popup `Zola (stable, proc1-id) is already running…`; stable unaffected |
+| close stable (07:54:24 stop) → `dotnet run` → shortcut | PASS — popup `Zola (dev) is already running…`; then close dev (08:00:35 stop); shortcut restart |
+
+**Stable restart after SM-ID3:** pid 15300 @ 08:01:41; identity/drift again `role=stable why=ok tag=proc1-id` / `components=none`.
+
+### Step 4 — SM-ID4
+
+Scratch manifest flip `plugins/zola_workspace/address_hash.py`; DriftChecker: plugins=True plugin_files=1.
+**Notice text (exact):** `Zola's installed parts have changed since this build was promoted (plugins).`
+Nothing live changed; scratch deleted.
+
+### Step 5 — Crash watch
+
+- `python.exe` Application Error (1000) since 2026-11-09 13:23:08: **none**
+- Deliberate closes/starts: Prepare-era close 07:43:40; Switch start 07:47:18; SM-ID3 close 07:54:24; SM-ID3 restart 08:01:41; intermediate order-2 close 08:00:35
+
+### Step 6 — Exit criteria (PROC1-ID)
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| Build role stable/dev | ✅ | build-role + identity logs |
+| Single-instance lock refuses and names holder (both orders) | ✅ | SM-ID3 |
+| Manifest drift notice (non-blocking) | ✅ | SM-ID4 notice text; live start components=none |
+| Switch writes role + rules + digests | ✅ | build-role, digest_algorithms, plugin_compare_rules |
+| "One build at a time" active after ID promote | ✅ | promoted proc1-id |
+| Suites / smokes | ✅ | Phase 7 suites; SM-ID1/2/5 earlier; SM-ID3/4 here |
+
+**STOP — end of Phase 9.**
