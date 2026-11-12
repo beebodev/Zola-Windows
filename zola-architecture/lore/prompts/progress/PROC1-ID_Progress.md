@@ -754,3 +754,45 @@ Nothing live changed; scratch deleted.
 | Suites / smokes | ✅ | Phase 7 suites; SM-ID1/2/5 earlier; SM-ID3/4 here |
 
 **STOP — end of Phase 9.**
+
+## Phase 10 — Closeout
+
+### Promotion record
+
+| Item | Value |
+|------|-------|
+| Brian decision (verbatim) | "Promote proc1-id" |
+| Promoted at | 2026-11-12T07:45:41.6675413-08:00 |
+| Stable folder | `C:\Users\test\Zola\stable\proc1-id\` |
+| `current.txt` | `proc1-id` |
+| Backup folder | `C:\Users\test\Zola\stable\backups\proc1-id-20261112-074434` |
+| Drill | PASS — databases=5, files=822, credentials=5 hash-checked; scratch deleted |
+| Plugin comparison | equal=True (no plugin copy) |
+| Outgoing (backup) | kind=`stable-tag` tag=`fix-s51f` folder=`C:\Users\test\Zola\stable\fix-s51f` |
+| Incoming | kind=`stable-tag` tag=`proc1-id` commit=`c8bc87724f6ffe4586a808678530ca88af96daaf` |
+| Restore target on disk | `C:\Users\test\Zola\stable\fix-s51f\` **kept** (outgoing release; restore target) |
+
+### SHAs
+
+| Item | SHA |
+|------|-----|
+| Implementation | `471c5f789ea10537b556092fd231443131c04816` |
+| Merge | `c8bc87724f6ffe4586a808678530ca88af96daaf` |
+| Tag | `proc1-id` → merge |
+| main (pre-closeout docs) | `ddb29b588339224515b99bdb4a0106b64bfb7b82` |
+
+### Suites (merged tip, Phase 7)
+
+Checks **295**/0 · scripts **54**/0 · workspace 582 · memory 162 · tools 44 · tts 8 · phone **71** OK · Kotlin 98
+
+### Smokes
+
+SM-ID1 PASS · SM-ID2 PASS · SM-ID3 PASS (both orders) · SM-ID4 PASS · SM-ID5 PASS (Phase 6b plugins-only re-run PASS)
+
+Experience (Brian, verbatim): "If I start Zola twice, the second one tells me which Zola is already running and leaves her alone."
+
+"One build at a time" rule: **on** (lock-aware `proc1-id` is the promoted stable).
+
+Crash watch: **0** python.exe crashes since 2026-11-09 13:23:08.
+
+**STOP — PROC1-ID COMPLETE (await Claude's review).**
