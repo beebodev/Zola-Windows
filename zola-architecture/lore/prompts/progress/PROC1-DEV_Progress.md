@@ -887,3 +887,31 @@ Phone close (crash-watch): `ZolaClient\logs\supervisor.log` phone `event=stop` `
 | Kotlin | **98** (15+39+30+14), 0 fail/error/skip; assembleDebug succeeded | 98 |
 
 Stable had not been started again when this was written.
+
+## Phase 7 complete
+
+## Phase 8 — Live checkout sync
+
+| Item | Value |
+|------|-------|
+| Eligibility | live checkout on `main`, clean |
+| Before | `cfc0d353f385e6d805c0b596b86ddee92eb566d3` |
+| After | `af21227b5964912726f505caee8c9bf87ef300b1` (`git pull --ff-only origin main`) |
+
+Tag `proc1-dev` points at the merge `2e9bc4a037be4c57eba5d20c45569e92aa66e686`. The branch `proc1-dev` is deleted locally and on origin. The worktree stays until Phase 9 ends.
+
+## Phase 9 — Promotion decision (step 1)
+
+Promoting tag **`proc1-dev`** means running `Promote-Stable.ps1` so Brian's everyday shortcut Zola becomes the merged `main` tip. That tip is everything merged so far (PR-D09): PROC1-STABLE, PROC1-ID, and PROC1-DEV.
+
+**In plain words:**
+- The new path code then runs in the everyday Zola.
+- A stable build still resolves today's paths: `%LOCALAPPDATA%\hermes\profiles\zola` and `%LOCALAPPDATA%\ZolaClient\` (G-STABLE-SAME). It does not switch to `hermes-dev` or `ZolaClient-dev`.
+- The dev root `%LOCALAPPDATA%\hermes-dev\profiles\zola-dev` is used only by a dev-role build.
+- Either way, the dev isolation rules switch on for the next track: synthetic data by default, and dev testing never uses the live profile.
+- Until a promote, the shortcut stays `proc1-id`.
+
+Awaiting Brian's verbatim decision: promote `proc1-dev` now, or decline.
+
+**STOP — Phase 9 step 1.**
+
