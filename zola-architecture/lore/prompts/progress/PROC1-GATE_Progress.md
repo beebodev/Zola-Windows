@@ -24,7 +24,7 @@
 | 3 Implement | DONE — STOP | self-tests + gate run (Zola up) |
 | 4 Review fixes | | |
 | 5 Clean run and isolation proof | DONE — STOP | -Promote DIRTY exit 3; phone 72; hash maps match |
-| 6 Commit and merge | in progress | |
+| 6 Commit and merge | DONE — STOP | tip+merge PASS exit 0; tag `proc1-gate`; no promotion |
 | 7 Live checkout sync and closeout | | |
 
 ## Phase 1 — Setup, baselines, facts
@@ -583,3 +583,52 @@ Import-Module unapproved-verb WARNING only (expected). No `TEST OVERRIDES IN USE
 - `Import-Module … -DisableNameChecking` (no unapproved-verb WARNING).
 - Dirty tree called out on OVERALL even when primary result is INFRA/FAIL: `… - uncommitted changes in the working tree`.
 - Self-tests **34 PASS / 0 FAIL**; `gate_self` floor = **34**; phone floor **72**.
+
+### Commit
+
+| Item | Value |
+|------|-------|
+| Branch | `proc1-gate` |
+| SHA | `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f` |
+| Message | Add PROC1-GATE one-command test gate with floors and isolation proofs. |
+| Files (9) | `test_p10_intake.py`, `Test-DevTools.ps1`, `tools/test-gate/*` (6), `PROC1-GATE_Progress.md` |
+
+### Zola closed (Brian)
+
+| Event | Time |
+|-------|------|
+| Closed (confirmed) | `2026-11-13T15:20:51-08:00` — detector free; no `Zola.Client` |
+| Restart | *(awaiting Brian)* |
+
+### Before / after hash maps (4 roots)
+
+Maps: `%TEMP%\proc1-gate-maps-p6\`. Clean before maps after close; after maps after both `-Promote` runs.
+
+| Root | Before | After | Diff |
+|------|-------:|------:|------|
+| `hermes\profiles\zola` | 914 | 914 | **0** |
+| `ZolaClient` | 27 | 27 | **0** |
+| `hermes-dev\profiles\zola-dev` | 499 | 499 | **0** |
+| `ZolaClient-dev` | 6 | 6 | **0** |
+
+### Gate on committed tip (`-Promote`, Zola closed)
+
+Result: `C:\Users\test\AppData\Local\Temp\zola-test-gate\20261113-152101\result.json`  
+**OVERALL PASS exit=0**. Commit before=after `ceb0476…` dirty=False. Overrides all false. Phone 72; assemble_debug PASS; gate_self 34.
+
+### Merge
+
+Fast-forward `main` ← `proc1-gate` in live checkout `C:\Users\test\Dev\zola-windows` (same 9 files only).
+
+### Gate on merged tip (`-Promote`, Zola still closed)
+
+Result: `C:\Users\test\AppData\Local\Temp\zola-test-gate\20261113-152805\result.json`  
+**OVERALL PASS exit=0**. Commit before=after `ceb0476…` dirty=False. Overrides all false.
+
+### Tag
+
+Annotated tag **`proc1-gate`** → `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f`. **No promotion.**
+
+---
+
+**Phase 6 STOP** (awaiting Brian restart time to record).
