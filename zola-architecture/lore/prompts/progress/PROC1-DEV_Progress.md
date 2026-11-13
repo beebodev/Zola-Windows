@@ -845,3 +845,45 @@ Serve pid 2700 locked and read `hermes-dev\profiles\zola-dev\runtime\active_sess
 | Files | `windows-client/Zola.Client/` (+ClientPaths, Identity dev validation), `windows-client/Zola.Client.Checks/`, `hermes-plugins/zola_tts/deepgram_tts.py` and its test, `tools/dev/*`, this progress doc |
 
 `origin/main` is still the Phase 1 base `cfc0d353f385e6d805c0b596b86ddee92eb566d3`. It has not moved.
+
+### Step 2 — fetch
+
+`origin/main` had not moved. Still `cfc0d353f385e6d805c0b596b86ddee92eb566d3`.
+
+### Step 3 — merge
+
+| Item | Value |
+|------|-------|
+| Merge commit | `2e9bc4a037be4c57eba5d20c45569e92aa66e686` |
+| Strategy | `git checkout --detach origin/main`; `git merge --no-ff proc1-dev` |
+| Diff | 37 paths. Client, checks, `hermes-plugins/zola_tts/deepgram_tts.py` and `tests/test_deepgram_tts.py`, `tools/dev/*`, this progress doc. Nothing else. |
+
+### Merge record
+
+D4 amendment. Brian's verbatim approval: "Approved." The dev profile name stays `zola-dev`. The dev root is `%LOCALAPPDATA%\hermes-dev`, so the profile is `%LOCALAPPDATA%\hermes-dev\profiles\zola-dev`. Stable paths stay `%LOCALAPPDATA%\hermes\profiles\zola` and `%LOCALAPPDATA%\ZolaClient\`.
+
+SM-DEV3 plan deviation. Calendar is read-only by design, so the create-event smoke was not run. It was replaced by 3a, a read of the test-account marker "PROC1-DEV marker", and 3b, a draft titled "PROC1-DEV test draft" that was not sent. Brian confirmed neither was on the real account.
+
+Phase 6, first session. SM-DEV1 through SM-DEV6 passed, with SM-DEV3 as 3a and 3b. The dev serve opened the live profile's `active_sessions.json` and `.lock`. That was accepted as the STOP that led to the separate Hermes root. The live profile differed only in `zola_memory.db-shm` from a `mode=ro` open without `immutable=1`.
+
+Phase 6, short rerun at 10:12. About four minutes, so the 300 s sweep did not run. Pop-up was the same dev-already-running sentence. Live roots were byte-identical. Deepgram key reads only.
+
+Phase 6, longer run. Serve start `2026-11-13T10:50:31`, watcher stop `2026-11-13T11:07:13`. Serve pid 2700 locked and read `hermes-dev\profiles\zola-dev\runtime\active_sessions.lock` and `active_sessions.json` at 10:51:06, 10:55:34, 11:00:34, and 11:05:34. No `WriteFile`. 184 capture events. No event under `%LOCALAPPDATA%\hermes\`. `ZolaClient\` access was the shared Deepgram key, reads only. While-running printed `while-running command lines match zola-dev`. After-close hashes matched, 914 and 27 files. Stable start `2026-11-13T11:15:25`, `identity role=stable`, drift `components=none`. A later stable start is in the log at `2026-11-13T11:34:56`, same role and drift. Experience check, Brian's words: "I can try things in a dev Zola with made-up data and my test Google account, and my real Zola, data and phone aren't touched."
+
+### Step 4 — suites on the merged tip
+
+Phone close (crash-watch): `ZolaClient\logs\supervisor.log` phone `event=stop` `2026-11-13T11:41:43.2561828-08:00`, watcher `event=stop` `2026-11-13T11:41:43.2796404-08:00`. Both mutexes free at 11:42:31. No Zola process.
+
+| Suite | Result | Floor |
+|-------|--------|------:|
+| Checks | **322 PASS / 0 FAIL**, exit 0. Identity 51/51 | 295 |
+| Stable scripts | **54 PASS / 0 FAIL** (summary line) | 54 |
+| Dev tools | **16 PASS / 0 FAIL** | |
+| zola_workspace | **582 OK** | 582 |
+| zola_memory | **162 OK** | 162 |
+| zola_tools | **44 OK** | 44 |
+| zola_tts | **9 OK** | 8 |
+| zola_phone (Zola closed) | **71 OK** | 71 |
+| Kotlin | **98** (15+39+30+14), 0 fail/error/skip; assembleDebug succeeded | 98 |
+
+Stable had not been started again when this was written.
