@@ -831,3 +831,17 @@ Process Monitor, 179 events, then deleted. No `WriteFile`. No event under `profi
 The 10:12 session was about 4 minutes, so the 300 s lease sweep did not run. Brian will give the experience check after this longer run. Stable was closed. Before maps, 914 and 27 files: `%TEMP%\proc1-dev-maps\6c-long-before-profile.clixml` and `6c-long-before-client.clixml`. Process Monitor is running. The filter includes the whole native `\hermes\` tree, `\ZolaClient\`, and `hermes-dev\profiles\zola-dev\runtime\active_sessions`, and excludes `\ZolaClient-dev\`. Dev started `2026-11-13T10:50:31`. Smoke pid 11920. Serve `-p zola-dev`, launcher pid 2000, child pid 2700. `identity role=dev` at `10:50:30`. Watcher stop `2026-11-13T11:07:13`. At `11:03:18`, `Test-DevIsolation.ps1 -Mode WhileRunning` printed `while-running command lines match zola-dev`, exit 0. Brian clicked the stable shortcut. The pop-up was `Zola (dev) is already running. Close it before starting another.` The stable process `Zola\stable\proc1-id\Zola.Client.exe` pid 19940 had no file event in the capture.
 
 Serve pid 2700 locked and read `hermes-dev\profiles\zola-dev\runtime\active_sessions.lock` and `active_sessions.json` at 10:51:06 (startup), then at 10:55:34, 11:00:34, and 11:05:34. No `WriteFile`. The capture has 184 events. No event under `%LOCALAPPDATA%\hermes\`. Dev access under `ZolaClient\` is the shared Deepgram key only, reads. No dev writes. After maps at 11:08:49: live profile 914 files, `ZolaClient` 27 files. Both `Test-DevIsolation.ps1 -Mode AfterClose` runs printed `after-close hashes match`, exit 0. No file under the native `hermes` directory changed between 10:50 and 11:10. Live SQLite was not opened. The capture was deleted. Stable started `2026-11-13T11:15:25`, `identity role=stable`, tag `proc1-id`, drift `components=none`. Serve `-p zola` at `11:15:26`. No Application Error for python or Zola between 10:50 and 11:21. Experience check, Brian's words: "I can try things in a dev Zola with made-up data and my test Google account, and my real Zola, data and phone aren't touched."
+
+## Phase 7 — Commit and merge
+
+**Brian go-ahead (verbatim):** "proceed to commit and merge"
+
+### Step 1 — implementation commit
+
+| Item | Value |
+|------|-------|
+| Implementation commit | `07c1d4a58cf2952a47dcc945dd91af679a0c9e13` |
+| Message | `feat(PROC1-DEV): dev profile and client data root, fail closed, test-only Google, no phone in dev — PROC1-D4/D5/D6/D13/D14` |
+| Files | `windows-client/Zola.Client/` (+ClientPaths, Identity dev validation), `windows-client/Zola.Client.Checks/`, `hermes-plugins/zola_tts/deepgram_tts.py` and its test, `tools/dev/*`, this progress doc |
+
+`origin/main` is still the Phase 1 base `cfc0d353f385e6d805c0b596b86ddee92eb566d3`. It has not moved.
