@@ -63,6 +63,12 @@
     <Compile Include="..\Zola.Client\Identity\DriftNotice.cs" Link="Identity\DriftNotice.cs" />
     <Compile Include="..\Zola.Client\Identity\HermesDigests.cs" Link="Identity\HermesDigests.cs" />
     <Compile Include="..\Zola.Client\Identity\DriftChecker.cs" Link="Identity\DriftChecker.cs" />
+    <!-- PROC1-DEV: path plan, fail-closed validation, and profile match are pure — PROC1-D4 / PROC1-D5 -->
+    <Compile Include="..\Zola.Client\ClientPaths.cs" Link="ClientPaths.cs" />
+    <Compile Include="..\Zola.Client\Identity\DevProfileRefuse.cs" Link="Identity\DevProfileRefuse.cs" />
+    <Compile Include="..\Zola.Client\Identity\DevProfileValidation.cs" Link="Identity\DevProfileValidation.cs" />
+    <Compile Include="..\Zola.Client\ServeProfileMatcher.cs" Link="ServeProfileMatcher.cs" />
+    <Compile Include="..\Zola.Client\OtherProfileLog.cs" Link="OtherProfileLog.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Speech" Version="9.0.4" />

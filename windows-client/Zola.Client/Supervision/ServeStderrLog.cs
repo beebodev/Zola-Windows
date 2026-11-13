@@ -15,7 +15,7 @@ public sealed class ServeStderrLog
     private bool _aclFailureLogged;
 
     public ServeStderrLog()
-        : this(DefaultDirectory(), "serve-stderr.log")
+        : this(ClientPaths.Current?.ServeStderrDirectory ?? "", "serve-stderr.log")
     {
     }
 
@@ -25,18 +25,10 @@ public sealed class ServeStderrLog
         _fileName = fileName;
     }
 
-    private static string DefaultDirectory()
-    {
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ZolaClient",
-            "logs",
-            "serve-stderr");
-    }
-
     public void WriteLine(string? line)
     {
-        if (string.IsNullOrEmpty(line))
+        // PROC1-DEV: empty directory means the path plan is not installed — PROC1-D4
+        if (string.IsNullOrEmpty(line) || string.IsNullOrEmpty(_directory))
         {
             return;
         }

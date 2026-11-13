@@ -17,7 +17,8 @@ public sealed partial class HermesProcessManager : IDisposable
 
     private readonly object _gate = new();
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
-    private readonly ServeStderrLog _stderr = new();
+    private readonly ClientPaths _paths;
+    private readonly ServeStderrLog _stderr;
     private Process? _child;
     private bool _shutdown;
     private long _ignoreExitGeneration = -1;
@@ -34,14 +35,12 @@ public sealed partial class HermesProcessManager : IDisposable
     // P10-INTAKE: the client mints this once and serve restarts keep it — P10-D12
     public string PhoneLaunchSecret { get; set; } = "";
 
-    public HermesProcessManager()
+    public HermesProcessManager(ClientPaths paths)
     {
-        // P1-CLIENT: dedicated profile lives under the Hermes profiles root, never the shared home — P1-D01
-        ProfileDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "hermes",
-            "profiles",
-            ZolaServeCommand.ProfileName);
+        // PROC1-DEV: profile directory and name come from the one path plan — PROC1-D4
+        _paths = paths;
+        _stderr = new ServeStderrLog(paths.ServeStderrDirectory, "serve-stderr.log");
+        ProfileDirectory = paths.ProfileDirectory;
         StatusText = "Starting the Zola backend…";
         DetailText = ProfileDirectory;
     }
@@ -243,7 +242,7 @@ public sealed partial class HermesProcessManager : IDisposable
         start.ArgumentList.Add("-m");
         start.ArgumentList.Add("hermes_cli.main");
         start.ArgumentList.Add("-p");
-        start.ArgumentList.Add(ZolaServeCommand.ProfileName);
+        start.ArgumentList.Add(_paths.ProfileName);
         start.ArgumentList.Add("serve");
         start.ArgumentList.Add("--isolated");
         start.ArgumentList.Add("--host");
@@ -254,6 +253,12 @@ public sealed partial class HermesProcessManager : IDisposable
         start.Environment["HERMES_HOME"] = ProfileDirectory;
         start.Environment["HERMES_DASHBOARD_SESSION_TOKEN"] = spawnToken;
         start.Environment["PYTHONUNBUFFERED"] = "1";
+        // PROC1-DEV: stable leaves the key path unset, so it stays today's file — PROC1-D5
+        if (_paths.IsDev)
+        {
+            start.Environment[ClientPaths.DeepgramEnvVar] = _paths.DeepgramKeyPath;
+        }
+
         if (!string.IsNullOrEmpty(PhoneLaunchSecret))
         {
             start.Environment[PythonStart.SecretEnv] = PhoneLaunchSecret;
@@ -357,7 +362,9 @@ public sealed partial class HermesProcessManager : IDisposable
 
         child.BeginOutputReadLine();
         child.BeginErrorReadLine();
-        Publish("Launching hermes serve --isolated against the zola profile…", $"{pythonPath} -m hermes_cli.main -p zola serve --isolated --host 127.0.0.1 --port 0");
+        Publish(
+            "Launching hermes serve --isolated against the profile…",
+            $"{pythonPath} -m hermes_cli.main -p {_paths.ProfileName} serve --isolated --host 127.0.0.1 --port 0");
 
         var finished = await Task.WhenAny(ready.Task, blocked.Task, Task.Delay(ReadyTimeoutMs)).ConfigureAwait(false);
         if (finished != ready.Task || !ready.Task.IsCompletedSuccessfully)
@@ -479,7 +486,7 @@ public sealed partial class HermesProcessManager : IDisposable
         }
     }
 
-    private static async Task<(int Pid, int Port, string CommandLine)?> FindDedicatedServeAsync()
+    private async Task<(int Pid, int Port, string CommandLine)?> FindDedicatedServeAsync()
     {
         try
         {
@@ -494,12 +501,12 @@ public sealed partial class HermesProcessManager : IDisposable
                 {
                     using var row = (ManagementObject)item;
                     var commandLine = row["CommandLine"] as string ?? "";
-                    if (!ZolaServeCommand.IsDedicatedServe(commandLine))
+                    var pid = Convert.ToInt32(row["ProcessId"]);
+                    if (!AcceptServe(commandLine, pid))
                     {
                         continue;
                     }
 
-                    var pid = Convert.ToInt32(row["ProcessId"]);
                     var port = ZolaServeCommand.ReadPort(commandLine);
                     if (port == 0)
                     {
@@ -537,8 +544,8 @@ public sealed partial class HermesProcessManager : IDisposable
         // P1-CLIENT: health passed and the token is known, so the chat view may open /api/ws — P1-D01
         var soul = Path.Combine(ProfileDirectory, "SOUL.md");
         var soulNote = File.Exists(soul)
-            ? $"SOUL.md is under the zola profile ({soul})."
-            : $"SOUL.md is not in the zola profile yet ({soul}).";
+            ? $"SOUL.md is under the profile ({soul})."
+            : $"SOUL.md is not in the profile yet ({soul}).";
         var mode = spawned ? "Spawned" : "Attached";
         Publish(
             $"{mode}. Backend ready at {baseUrl}.",
@@ -590,6 +597,19 @@ public sealed partial class HermesProcessManager : IDisposable
         start.Environment["PYTHONPATH"] = string.IsNullOrEmpty(current)
             ? hermesRoot
             : hermesRoot + Path.PathSeparator + current;
+    }
+
+    // PROC1-DEV: another profile is logged once and is neither attached nor killed — PROC1-D4
+    private bool AcceptServe(string commandLine, int pid)
+    {
+        var match = ServeProfileMatcher.Classify(commandLine, _paths.ProfileName, out var flag);
+        if (match == ServeProfileMatch.OtherProfile)
+        {
+            OtherProfileLog.Once(pid, flag);
+            return false;
+        }
+
+        return match == ServeProfileMatch.ThisProfile;
     }
 
     private static string BaseUrl(int port) => $"http://{ZolaServeCommand.BindHost}:{port}";

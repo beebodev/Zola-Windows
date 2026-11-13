@@ -106,7 +106,7 @@ public sealed partial class HermesProcessManager
         }
     }
 
-    private static List<int> FindDedicatedServePids()
+    private List<int> FindDedicatedServePids()
     {
         var pids = new List<int>();
         try
@@ -117,12 +117,13 @@ public sealed partial class HermesProcessManager
             {
                 using var row = (ManagementObject)item;
                 var commandLine = row["CommandLine"] as string ?? "";
-                if (!ZolaServeCommand.IsDedicatedServe(commandLine))
+                var pid = Convert.ToInt32(row["ProcessId"]);
+                if (!AcceptServe(commandLine, pid))
                 {
                     continue;
                 }
 
-                pids.Add(Convert.ToInt32(row["ProcessId"]));
+                pids.Add(pid);
             }
         }
         catch (ManagementException)

@@ -103,32 +103,16 @@ static class HermesLaunchResolver
     }
 }
 
-// P1-CLIENT: recognize a serve process that was launched for the zola profile with --isolated — P1-D01
+// P1-CLIENT: recognize a serve process that was launched for this build's profile with --isolated — P1-D01
 static partial class ZolaServeCommand
 {
-    public const string ProfileName = "zola";
     public const string BindHost = "127.0.0.1";
     public const int BindPort = 9119;
 
-    public static bool IsDedicatedServe(string commandLine)
+    public static bool IsDedicatedServe(string commandLine, string profileName)
     {
-        // P1-CLIENT: --isolated is required; -p zola alone re-execs onto the machine server — P1-D01
-        if (commandLine.Contains("serve", StringComparison.OrdinalIgnoreCase) == false)
-        {
-            return false;
-        }
-
-        if (commandLine.Contains("--isolated", StringComparison.OrdinalIgnoreCase) == false)
-        {
-            return false;
-        }
-
-        if (commandLine.Contains(BindHost, StringComparison.OrdinalIgnoreCase) == false)
-        {
-            return false;
-        }
-
-        return ProfileFlag().IsMatch(commandLine);
+        // PROC1-DEV: the profile flag is this build's name, so zola and zola-dev do not match — PROC1-D4
+        return ServeProfileMatcher.IsDedicatedServe(commandLine, profileName);
     }
 
     public static int ReadPort(string commandLine)
@@ -137,9 +121,6 @@ static partial class ZolaServeCommand
         var match = PortFlag().Match(commandLine);
         return match.Success && int.TryParse(match.Groups[1].Value, out var port) ? port : BindPort;
     }
-
-    [GeneratedRegex(@"(?:^|\s)(?:-p|--profile)(?:=|\s+)zola(?:\s|$)", RegexOptions.IgnoreCase)]
-    private static partial Regex ProfileFlag();
 
     [GeneratedRegex(@"--port(?:=|\s+)(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex PortFlag();

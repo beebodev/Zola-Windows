@@ -127,9 +127,6 @@ sealed class VoiceController
     // P2-SPEAK: three consecutive voice.interrupted trips with no complete in between pause Voice — P2-D12
     private const int SelfInterruptLimit = 3;
     // P2-SPEAK: one append-only line per spoken turn for Phase 5 measurement — P2-D06
-    // P3-STATE: display-state.log shares this folder — P3-D03
-    internal const string TimelineClientFolder = "ZolaClient";
-    internal const string TimelineLogFolder = "logs";
     private const string TimelineLogFile = "voice-timeline.log";
     // P4-LOCK: gate facts update synchronously; close/open work is queued after — P4-D01 / P4-D02
     private const string GateFactLineFormat = "gate fact: locked={0} suspended={1}";
@@ -222,8 +219,6 @@ sealed class VoiceController
     private const string NoticeWakeHeld = "Wake word held by another connection";
     private const string NoticeWakeMissed = "Didn't catch that — say 'Hey Zola' again";
     private const string NoticeStaleWake = "stale wake reply";
-    private const string WakeModelRelativePath = @"cache\wakewords\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\tokens.txt";
-
     private static readonly Regex FenceBlocks = new("```[\\s\\S]*?```", RegexOptions.Compiled);
     private static readonly Regex MarkdownMarks = new(@"[#*_`>\[\]\(\)]+", RegexOptions.Compiled);
     // P2-WAKE: clock-only a.m./p.m. match; echo normalization is unchanged — P2-D12
@@ -3640,7 +3635,12 @@ sealed class VoiceController
     {
         try
         {
-            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), TimelineClientFolder, TimelineLogFolder);
+            // PROC1-DEV: voice timeline follows the role's logs directory — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var root))
+            {
+                return;
+            }
+
             Directory.CreateDirectory(root);
             File.AppendAllText(Path.Combine(root, TimelineLogFile), DateTimeOffset.Now.ToString("o") + " " + line + Environment.NewLine);
         }
@@ -4410,13 +4410,14 @@ sealed class VoiceController
 
     private void RecordWakeModelLanding(double durationSeconds)
     {
-        var tokens = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "hermes",
-            "profiles",
-            "zola",
-            WakeModelRelativePath);
-        WriteTimeline($"wake.model duration={durationSeconds:0.###}s tokens={(File.Exists(tokens) ? tokens : "missing")}");
+        // PROC1-DEV: wake tokens live under this build's profile — PROC1-D4
+        var shown = "missing";
+        if (ClientPaths.TryGetWakeTokenPath(out var tokens))
+        {
+            shown = File.Exists(tokens) ? tokens : "missing";
+        }
+
+        WriteTimeline($"wake.model duration={durationSeconds:0.###}s tokens={shown}");
     }
 
     private void MarkUnavailable(string details)

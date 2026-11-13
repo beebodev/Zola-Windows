@@ -421,10 +421,11 @@ internal sealed class PresenceView : UserControl, IDisposable
     // P3-LOOK: DEBUG file watch applies the same F12 JSON without needing window focus — P3-D13
     private void StartLookFileWatcher()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            VoiceController.TimelineClientFolder,
-            PresenceLook.DebugSubfolder);
+        // PROC1-DEV: debug look files follow the role's debug directory — PROC1-D4
+        if (!ClientPaths.TryGetDebugDirectory(out var dir))
+        {
+            return;
+        }
         Directory.CreateDirectory(dir);
         _lookWatchDebounce = _dispatcher.CreateTimer();
         _lookWatchDebounce.IsRepeating = false;
@@ -466,11 +467,13 @@ internal sealed class PresenceView : UserControl, IDisposable
     // P3-LOOK: F12 replaces from defaults; the JSON must list every look value — P3-D19
     internal void DebugReloadLook()
     {
-        var path = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            VoiceController.TimelineClientFolder,
-            PresenceLook.DebugSubfolder,
-            PresenceLook.DebugFileName);
+        if (!ClientPaths.TryGetDebugDirectory(out var debugDir))
+        {
+            WriteLog("P3-LOOK: look reload rejected — debug directory is not available");
+            return;
+        }
+
+        var path = Path.Combine(debugDir, PresenceLook.DebugFileName);
         if (!File.Exists(path))
         {
             WriteLog("P3-LOOK: look reload rejected — " + PresenceLook.DebugFileName + " is missing");
@@ -508,11 +511,12 @@ internal sealed class PresenceView : UserControl, IDisposable
     // P3-LOOK: dump the full applied look after a complete replace — P3-D19
     private void WriteEffectiveLook()
     {
-        var path = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            VoiceController.TimelineClientFolder,
-            PresenceLook.DebugSubfolder,
-            PresenceLook.EffectiveFileName);
+        if (!ClientPaths.TryGetDebugDirectory(out var debugDir))
+        {
+            return;
+        }
+
+        var path = Path.Combine(debugDir, PresenceLook.EffectiveFileName);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -1115,10 +1119,12 @@ internal sealed class PresenceView : UserControl, IDisposable
     {
         try
         {
-            var root = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                VoiceController.TimelineClientFolder,
-                VoiceController.TimelineLogFolder);
+            // PROC1-DEV: presence log follows the role's logs directory — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var root))
+            {
+                return;
+            }
+
             Directory.CreateDirectory(root);
             File.AppendAllText(
                 Path.Combine(root, PresenceLogFile),

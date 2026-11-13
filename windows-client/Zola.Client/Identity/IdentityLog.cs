@@ -49,5 +49,9 @@ public static class IdentityLog
     public static string ReleaseAfterWait(string child) =>
         $"identity release_after_wait child={child} alive=true";
 
+    // PROC1-DEV: count only; the credential file's values stay out of the log — PROC1-D5
+    public static string DevModelCredentials(int codexCount) =>
+        $"identity dev_model_credentials openai-codex={codexCount.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
     public static void Write(string line) => SupervisionLog.WriteLine(line);
 }

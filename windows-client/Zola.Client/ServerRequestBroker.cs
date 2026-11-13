@@ -22,8 +22,6 @@ sealed class ServerRequestBroker
     private const string NoticeUnsupportedPrefix = "Declined unsupported server request: ";
     private const string NoticeApprovalUnparseable = "Approval request could not be shown; denied.";
     private const string NoticeWithdrawnWhileAway = "A waiting question was withdrawn while you were away.";
-    private const string LogClientFolder = "ZolaClient";
-    private const string LogFolder = "logs";
     private const string LogFileName = "server-requests.log";
     private const string EventReceived = "received";
     private const string EventShown = "shown";
@@ -863,7 +861,12 @@ sealed class ServerRequestBroker
     {
         try
         {
-            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), LogClientFolder, LogFolder);
+            // PROC1-DEV: server-request log follows the role's logs directory — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var root))
+            {
+                return;
+            }
+
             Directory.CreateDirectory(root);
             var line = $"{DateTimeOffset.Now:o} {eventName} id={id} method={method} session_id={sessionId} text_or_len={textOrLen ?? "-"} reason={reason ?? "-"}{Environment.NewLine}";
             File.AppendAllText(Path.Combine(root, LogFileName), line);

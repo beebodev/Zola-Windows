@@ -58,10 +58,12 @@ public static class SupervisionLog
     {
         try
         {
-            var root = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ZolaClient",
-                "logs");
+            // PROC1-DEV: no log directory until the path plan is installed, so a refused start writes nothing — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var root))
+            {
+                return;
+            }
+
             Directory.CreateDirectory(root);
             File.AppendAllText(
                 Path.Combine(root, "supervisor.log"),
