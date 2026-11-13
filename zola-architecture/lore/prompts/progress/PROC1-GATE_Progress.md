@@ -656,7 +656,7 @@ Brian (verbatim): "Works as expected"
 |------|-------|
 | Eligibility | live on `main`, clean |
 | Before Phase 7 closeout commit | `2b4c34af44617b893ec98af28fa4ac47627a403f` |
-| After | `main` at closeout commit; `git status` clean; matches `origin/main` after push |
+| After | `661a774ab2d818554df1185f10b1ad86fb4f38aa` (`docs: record PROC1-GATE closeout`); clean; matches `origin/main` after push |
 
 ### Delete branch / worktree
 
@@ -672,6 +672,7 @@ Brian (verbatim): "Works as expected"
 | Implementation | `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f` |
 | Merge | fast-forward → same SHA (`ceb0476…`) |
 | Tag | `proc1-gate` → implementation |
+| main (closeout) | `661a774ab2d818554df1185f10b1ad86fb4f38aa` |
 | Gate tip + merged (`-Promote`, Zola closed) | PASS exit 0 both — Checks 322 · scripts 54 · dev 16 · workspace 582 · memory 162 · tools 44 · tts 9 · phone **72** · Kotlin 98 · assemble 1 · gate_self 34 |
 | Gate Zola running | phone INFRA exit 2 (Brian experience run `20261113-150838`) |
 | Self-tests | **34**/0 |
