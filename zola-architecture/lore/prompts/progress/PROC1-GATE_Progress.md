@@ -663,7 +663,7 @@ Brian (verbatim): "Works as expected"
 | Item | Value |
 |------|-------|
 | Branch delete | local `git branch -D proc1-gate`; remote `proc1-gate` never existed on origin |
-| Worktree | removed `C:\Users\test\Dev\zola-windows-proc1-gate` (prompt Phase 7) |
+| Worktree | `git worktree remove` Permission denied (folder in use); unregistered from `git worktree list`. Folder `C:\Users\test\Dev\zola-windows-proc1-gate` still on disk — delete when unlocked. |
 
 ### Closeout
 
