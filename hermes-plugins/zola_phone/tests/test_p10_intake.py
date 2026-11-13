@@ -43,6 +43,92 @@ def _phone_key():
     return private, public
 
 
+def _process_tree_pids(root_pid: int) -> set[int]:
+    """Root PID plus descendants (venv python.exe is a launcher; the leaf holds sockets).
+
+    Fail closed: if the PowerShell/CIM query fails or returns nothing usable, raise.
+    Do not fall back to ``{root_pid}`` alone on query failure.
+    """
+    try:
+        done = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                (
+                    "$root=%d; $all=@($root); $q=[System.Collections.Generic.Queue[int]]::new(); "
+                    "$q.Enqueue($root); "
+                    "while($q.Count){ $p=$q.Dequeue(); "
+                    "Get-CimInstance Win32_Process -Filter ('ParentProcessId='+$p) -EA SilentlyContinue | "
+                    "ForEach-Object { $id=[int]$_.ProcessId; if($all -notcontains $id){ $all+=$id; $q.Enqueue($id) } } }; "
+                    "$all -join ','"
+                )
+                % root_pid,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("process tree query failed") from exc
+    if done.returncode not in (0, None):
+        err = (done.stderr or "").strip() or ("exit %s" % done.returncode)
+        raise RuntimeError("process tree query failed: %s" % err)
+    text = (done.stdout or "").strip()
+    if not text:
+        raise RuntimeError("process tree query returned empty")
+    out: set[int] = set()
+    for part in text.split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    if root_pid not in out:
+        raise RuntimeError(
+            "process tree query unusable: root pid %s missing from %r" % (root_pid, text)
+        )
+    return out
+
+
+def _listening_tcp_for_tree(root_pid: int) -> list[str]:
+    """LISTENING TCP local addresses owned by root_pid or any descendant.
+
+    Returns ['netstat-unavailable'] when netstat cannot run (must fail the test).
+    """
+    try:
+        done = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ["netstat-unavailable"]
+    if done.returncode not in (0, None) and not (done.stdout or "").strip():
+        return ["netstat-unavailable"]
+    pids = {str(p) for p in _process_tree_pids(root_pid)}
+    found: list[str] = []
+    for line in (done.stdout or "").splitlines():
+        parts = line.split()
+        # Proto  Local Address  Foreign Address  State  PID
+        if len(parts) != 5:
+            continue
+        if parts[0].upper() != "TCP":
+            continue
+        if parts[3].upper() != "LISTENING":
+            continue
+        if parts[4] not in pids:
+            continue
+        found.append(parts[1])
+    return found
+
+
+def _listening_tcp_for_pid(pid: int) -> list[str]:
+    """Compat name: whole process tree (launcher + children)."""
+    return _listening_tcp_for_tree(pid)
+
+
 def _pipe(name: str, body: dict) -> dict:
     last: Exception | None = None
     for _ in range(20):
@@ -333,7 +419,11 @@ class IntakeTests(unittest.TestCase):
         env["HERMES_HOME"] = str(self.home)
         env["PYTHONPATH"] = str(PLUGINS)
         env["ZOLA_PHONE_LAUNCH_SECRET"] = "isolation-secret"
-        env["ZOLA_PHONE_LISTEN_PORT"] = "0"
+        # PROC1-GATE: 8765 is refused by allowed_bind (explicit `int(port) == 8765` → False),
+        # so listen_forever never calls websockets.serve — no Tailscale TCP listener.
+        env["ZOLA_PHONE_LISTEN_PORT"] = "8765"
+        self.assertFalse(allowed_bind("100.64.0.1", 8765, 8765))
+        self.assertEqual(bind_action("", "100.64.0.1", 8765, 8765), "refuse")
         proc = subprocess.Popen(
             [str(PYTHON), "-m", "zola_phone"],
             cwd=str(PLUGINS),
@@ -358,6 +448,50 @@ class IntakeTests(unittest.TestCase):
             for name in ("gmail", "read_common", "loops", "taint", "turn_context", "recorded_results"):
                 self.assertNotIn(name, text.split("forbidden=", 1)[-1])
             self.assertNotIn("isolation-secret", text)
+            self.assertIsNone(proc.poll())
+            # Give listen_forever at least one refuse loop, then prove no TCP listener.
+            time.sleep(0.5)
+            listening = _listening_tcp_for_tree(proc.pid)
+            self.assertNotEqual(listening, ["netstat-unavailable"], "netstat must be available")
+            self.assertEqual(
+                listening,
+                [],
+                "expected no TCP listener while ZOLA_PHONE_LISTEN_PORT=8765 (allowed_bind refuse)",
+            )
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    def test_listening_helper_finds_launcher_child_listener(self) -> None:
+        """Control: venv python.exe launches a child that binds; helper must see the child socket."""
+        script = (
+            "import socket,sys,time\n"
+            "s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(1)\n"
+            "print(s.getsockname()[1], flush=True)\n"
+            "time.sleep(30)\n"
+        )
+        proc = subprocess.Popen(
+            [str(PYTHON), "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            line = proc.stdout.readline().strip()
+            self.assertTrue(line.isdigit(), line)
+            port = int(line)
+            deadline = time.time() + 5
+            found: list[str] = []
+            while time.time() < deadline:
+                found = _listening_tcp_for_tree(proc.pid)
+                self.assertNotEqual(found, ["netstat-unavailable"], "netstat must be available")
+                if any(f.endswith(":" + str(port)) or f.endswith(":%d" % port) for f in found):
+                    break
+                time.sleep(0.1)
+            self.assertTrue(
+                any(f.endswith(":" + str(port)) or f.endswith(":%d" % port) for f in found),
+                "helper must find LISTENING on 127.0.0.1:%s via launcher child; got %r" % (port, found),
+            )
         finally:
             proc.kill()
             proc.wait(timeout=10)
@@ -849,7 +983,11 @@ class IntakeTests(unittest.TestCase):
         env["HERMES_HOME"] = str(self.home)
         env["PYTHONPATH"] = str(PLUGINS)
         env["ZOLA_PHONE_LAUNCH_SECRET"] = "second-secret"
-        env["ZOLA_PHONE_LISTEN_PORT"] = "0"
+        # PROC1-GATE: 8765 is refused by allowed_bind (explicit `int(port) == 8765` → False),
+        # so listen_forever never calls websockets.serve — no Tailscale TCP listener.
+        env["ZOLA_PHONE_LISTEN_PORT"] = "8765"
+        self.assertFalse(allowed_bind("100.64.0.1", 8765, 8765))
+        self.assertEqual(bind_action("", "100.64.0.1", 8765, 8765), "refuse")
         first = subprocess.Popen(
             [str(PYTHON), "-m", "zola_phone"],
             cwd=str(PLUGINS),
@@ -865,6 +1003,14 @@ class IntakeTests(unittest.TestCase):
                     break
                 time.sleep(0.1)
             self.assertIsNone(first.poll())
+            time.sleep(0.5)
+            listening = _listening_tcp_for_tree(first.pid)
+            self.assertNotEqual(listening, ["netstat-unavailable"], "netstat must be available")
+            self.assertEqual(
+                listening,
+                [],
+                "expected no TCP listener while ZOLA_PHONE_LISTEN_PORT=8765 (allowed_bind refuse)",
+            )
             second = subprocess.run(
                 [str(PYTHON), "-m", "zola_phone"],
                 cwd=str(PLUGINS),
@@ -874,6 +1020,7 @@ class IntakeTests(unittest.TestCase):
                 timeout=20,
             )
             self.assertEqual(second.returncode, 2, second.stderr)
+            self.assertIsNone(first.poll(), "first process must still hold mutex/pipe after refuse-port loop")
             with self.assertRaises(Exception):
                 create_pipe(r"\\.\pipe\ZolaPhone", first=True)
         finally:

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "suites": {
+    "client_checks": {
+      "min_passed": 322,
+      "allowed_skips": []
+    },
+    "stable_scripts": {
+      "min_passed": 54,
+      "allowed_skips": []
+    },
+    "dev_tools": {
+      "min_passed": 16,
+      "allowed_skips": []
+    },
+    "zola_workspace": {
+      "min_passed": 582,
+      "allowed_skips": []
+    },
+    "zola_memory": {
+      "min_passed": 162,
+      "allowed_skips": []
+    },
+    "zola_tools": {
+      "min_passed": 44,
+      "allowed_skips": []
+    },
+    "zola_tts": {
+      "min_passed": 9,
+      "allowed_skips": []
+    },
+    "zola_phone": {
+      "min_passed": 72,
+      "allowed_skips": []
+    },
+    "kotlin_unit": {
+      "min_passed": 98,
+      "allowed_skips": []
+    },
+    "assemble_debug": {
+      "min_passed": 1,
+      "allowed_skips": []
+    },
+    "gate_self": {
+      "min_passed": 34,
+      "allowed_skips": []
+    }
+  }
+}

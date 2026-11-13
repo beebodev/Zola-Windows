@@ -148,17 +148,27 @@ Assert-That 'replace refuses while Zola is running and leaves the dev folder' {
     $dev = Join-Path $root 'hermes-dev\profiles\zola-dev'
     New-Item -ItemType Directory -Force -Path $dev | Out-Null
     [IO.File]::WriteAllText((Join-Path $dev 'canary.txt'), 'dev-canary')
-    $created = $false
-    $mutex = $null
     try {
-        $mutex = New-Object System.Threading.Mutex($false, 'Local\ZolaClient')
-        try { $created = $mutex.WaitOne(0) } catch { $created = $false }
-        $result = New-DevProfileTree -LocalAppData $root -Replace
+        # PROC1-GATE: read-only OpenExisting on the live name — never WaitOne (G-NO-LIVE).
+        $held = $false
+        try {
+            $opened = [Threading.Mutex]::OpenExisting('Local\ZolaClient')
+            $opened.Dispose()
+            $held = $true
+        } catch [System.Threading.WaitHandleCannotBeOpenedException] {
+            $held = $false
+        } catch {
+            # Access denied / unexpected → treat as held (fail closed), same as production probe.
+            $held = $true
+        }
+        if ($held) {
+            $result = New-DevProfileTree -LocalAppData $root -Replace
+        } else {
+            $result = New-DevProfileTree -LocalAppData $root -Replace -RunningProbe { $true }
+        }
         $still = [IO.File]::ReadAllText((Join-Path $dev 'canary.txt'))
         return (-not $result.Ok) -and ($result.Reason -eq 'refusing: Zola is running') -and ($still -eq 'dev-canary')
     } finally {
-        if ($created -and $null -ne $mutex) { $mutex.ReleaseMutex() }
-        if ($null -ne $mutex) { $mutex.Dispose() }
         Remove-Item -LiteralPath $root -Recurse -Force
     }
 }
