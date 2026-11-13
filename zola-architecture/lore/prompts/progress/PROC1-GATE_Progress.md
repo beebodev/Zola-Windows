@@ -24,8 +24,8 @@
 | 3 Implement | DONE — STOP | self-tests + gate run (Zola up) |
 | 4 Review fixes | | |
 | 5 Clean run and isolation proof | DONE — STOP | -Promote DIRTY exit 3; phone 72; hash maps match |
-| 6 Commit and merge | DONE — STOP | tip+merge PASS exit 0; tag `proc1-gate`; no promotion |
-| 7 Live checkout sync and closeout | | |
+| 6 Commit and merge | DONE | tip+merge PASS exit 0; tag `proc1-gate`; no promotion |
+| 7 Live checkout sync and closeout | DONE — STOP | pushed; live synced; worktree/branch removed; Stable not promoted |
 
 ## Phase 1 — Setup, baselines, facts
 
@@ -578,6 +578,8 @@ Import-Module unapproved-verb WARNING only (expected). No `TEST OVERRIDES IN USE
 
 ## Phase 6 — Commit and merge
 
+**Brian go-ahead (verbatim):** Experience check: "Works as expected" · Commit and merge: "Commit and merge"
+
 ### Pre-merge polish (before commit)
 
 - `Import-Module … -DisableNameChecking` (no unapproved-verb WARNING).
@@ -592,6 +594,8 @@ Import-Module unapproved-verb WARNING only (expected). No `TEST OVERRIDES IN USE
 | SHA | `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f` |
 | Message | Add PROC1-GATE one-command test gate with floors and isolation proofs. |
 | Files (9) | `test_p10_intake.py`, `Test-DevTools.ps1`, `tools/test-gate/*` (6), `PROC1-GATE_Progress.md` |
+
+**Commit message note:** differs from the prompt’s specified message (`feat(PROC1-GATE): … — PR-D01 / PROC1-D8/D9`). Left as is so the gate-tested SHA stays unchanged.
 
 ### Zola closed (Brian)
 
@@ -618,7 +622,7 @@ Result: `C:\Users\test\AppData\Local\Temp\zola-test-gate\20261113-152101\result.
 
 ### Merge
 
-Fast-forward `main` ← `proc1-gate` in live checkout `C:\Users\test\Dev\zola-windows` (same 9 files only).
+Fast-forward `main` ← `proc1-gate` in live checkout `C:\Users\test\Dev\zola-windows` (same 9 files only). The merge was a fast-forward, so the merged tip is the tested commit `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f`.
 
 ### Gate on merged tip (`-Promote`, Zola still closed)
 
@@ -629,6 +633,51 @@ Result: `C:\Users\test\AppData\Local\Temp\zola-test-gate\20261113-152805\result.
 
 Annotated tag **`proc1-gate`** → `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f`. **No promotion.**
 
+### Experience check (Brian, Phase 6 review)
+
+Brian (verbatim): "Works as expected"
+
 ---
 
-**Phase 6 STOP.**
+## Phase 7 — Live checkout sync and closeout
+
+### Push
+
+| Item | Value |
+|------|-------|
+| Pushed | `origin/main` ← `main` (implementation + Phase 6/7 docs); tag `proc1-gate` |
+| Implementation / merged tip (tagged) | `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f` |
+| Tag | annotated `proc1-gate` → `ceb0476…`; pushed `refs/tags/proc1-gate` |
+| Stable | **not promoted** |
+
+### Live checkout sync
+
+| Item | Value |
+|------|-------|
+| Eligibility | live on `main`, clean |
+| Before Phase 7 closeout commit | `2b4c34af44617b893ec98af28fa4ac47627a403f` |
+| After | `main` at closeout commit; `git status` clean; matches `origin/main` after push |
+
+### Delete branch / worktree
+
+| Item | Value |
+|------|-------|
+| Branch delete | local `git branch -D proc1-gate`; remote `proc1-gate` never existed on origin |
+| Worktree | removed `C:\Users\test\Dev\zola-windows-proc1-gate` (prompt Phase 7) |
+
+### Closeout
+
+| Item | Value |
+|------|-------|
+| Implementation | `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f` |
+| Merge | fast-forward → same SHA (`ceb0476…`) |
+| Tag | `proc1-gate` → implementation |
+| Gate tip + merged (`-Promote`, Zola closed) | PASS exit 0 both — Checks 322 · scripts 54 · dev 16 · workspace 582 · memory 162 · tools 44 · tts 9 · phone **72** · Kotlin 98 · assemble 1 · gate_self 34 |
+| Gate Zola running | phone INFRA exit 2 (Brian experience run `20261113-150838`) |
+| Self-tests | **34**/0 |
+| Isolation | live + dev roots byte-identical (Phase 6 four-root maps) |
+| Experience check | "Works as expected" |
+| Crash watch | **2** `python.exe` Application Error since 2026-11-09 13:23:08 (both 2026-11-12: 10:36:04 `python312.dll`, 10:47:32 `sqlite3.dll`) |
+| Stable | not promoted (`current.txt` remains `proc1-dev`) |
+
+**Phase 7 STOP.**
