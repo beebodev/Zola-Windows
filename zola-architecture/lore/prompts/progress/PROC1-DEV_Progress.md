@@ -915,3 +915,66 @@ Awaiting Brian's verbatim decision: promote `proc1-dev` now, or decline.
 
 **STOP — Phase 9 step 1.**
 
+## Phase 9 steps 2–end
+
+**Brian decision (verbatim):** "Promote proc1-dev"
+
+**Plugin copy (verbatim):** "Yes, copy that file." The switch-time comparison matched Prepare: added none, removed none, changed `zola-tts/deepgram_tts.py` only. That file was copied.
+
+### Prepare
+
+Zola was already closed (no client, both client mutexes free). Outgoing from `current.txt`: `proc1-id`. Tag commit `2e9bc4a037be4c57eba5d20c45569e92aa66e686`. Release build 0 errors, the same CS8604. `assembleDebug` succeeded. Staging `C:\Users\test\Zola\stable\_staging\proc1-dev`: 103 files, 102,435,496 bytes. WinUI check OK (`App.xbf`, `MainWindow.xbf`, `Themes\ZolaTokens.xbf`, `Zola.Client.pri`). `Zola.Client.exe`, both Rajdhani fonts, and `Assets\Presence\zola.glb` present. Client build hash `480ffbdb34e00f3fdc7da86c94db9f7dda3ca52435781f42965da7878aaf463b`. The temp build folder was removed after a too-long-path delete; it is gone.
+
+### Switch
+
+Pre-check `2026-11-13T11:55:11`: no Zola process, `Local\ZolaClient`, `Local\ZolaPhone`, and `Local\ZolaWatcher` free. `Promote-Stable.ps1 -Switch -Tag proc1-dev -ApprovedPluginCopy` exited 0.
+
+| Item | Value |
+|------|-------|
+| Promoted at | `2026-11-13T11:56:37.3711236-08:00` |
+| Stable folder | `C:\Users\test\Zola\stable\proc1-dev\` |
+| `current.txt` | `proc1-dev` |
+| Backup | `C:\Users\test\Zola\stable\backups\proc1-dev-20261113-115531` (901 files, 48,876,398 bytes) |
+| Outgoing | stable-tag `proc1-id`, folder `C:\Users\test\Zola\stable\proc1-id` |
+| Incoming | stable-tag `proc1-dev`, commit `2e9bc4a037be4c57eba5d20c45569e92aa66e686` |
+| Databases | 5, each `integrity_check` OK, schema version 0 |
+| Drill | PASS — databases=5, files=823, credentials=5; scratch deleted |
+| build-role.json | role=stable tag=proc1-dev commit=`2e9bc4a` manifest=`stable-manifest.json` |
+| Shortcuts | Desktop and Start Menu `Zola.lnk` → `C:\Users\test\Zola\stable\proc1-dev\Zola.Client.exe`, working directory that folder |
+
+### Shortcut start
+
+Brian: "desktop is open. Voice sounds normal."
+
+Start `2026-11-13T11:58:55`. Exe `C:\Users\test\Zola\stable\proc1-dev\Zola.Client.exe` pid 23612. Serve `-p zola` (launcher 25984, child 23248). `ZolaClient\logs\supervisor.log`:
+
+```
+identity role=stable why=ok tag=proc1-dev
+drift completed=true components=none
+```
+
+This start's wake-model path is `%LOCALAPPDATA%\hermes\profiles\zola`. Logs written since the start are under `ZolaClient\logs\` only. No `ZolaClient-dev` log was written, and those stable logs do not name `hermes-dev`.
+
+## Phase 10 — Closeout
+
+Docs-only record on `main`. Dev isolation rules are on for the next track.
+
+| Item | Value |
+|------|-------|
+| Implementation | `07c1d4a58cf2952a47dcc945dd91af679a0c9e13` |
+| Merge | `2e9bc4a037be4c57eba5d20c45569e92aa66e686` |
+| Tag | `proc1-dev` → merge |
+| Dev profile | `zola-dev`, created 2026-11-12, moved to `%LOCALAPPDATA%\hermes-dev\profiles\zola-dev` on 2026-11-13 |
+| Dev client data | `%LOCALAPPDATA%\ZolaClient-dev` |
+| Model sign-in | option (a), openai-codex |
+| Google in dev | test account, connected 2026-11-13 |
+| Phone in dev | none |
+| Isolation | PASS — live roots byte-identical on the longer run |
+| Suites | Checks 322/0 · scripts 54/0 · dev tools 16/0 · workspace 582 · memory 162 · tools 44 · tts 9 · phone 71 · Kotlin 98 |
+| SM-DEV1–6 | pass; SM-DEV3 was 3a read and 3b unsent draft |
+| Experience check | "I can try things in a dev Zola with made-up data and my test Google account, and my real Zola, data and phone aren't touched." |
+| Crash watch | 2 `python.exe` Application Error events since 2026-11-09 13:23:08: 2026-11-12 10:36:04 (`python312.dll`, `0xc0000005`) and 2026-11-12 10:47:32 (`sqlite3.dll`, `0xc0000005`). None on 2026-11-13. |
+
+Deliberate closes and starts on 2026-11-13: dev watcher stop 11:07:13; stable start 11:15:25; stable start 11:34:56; phone and watcher stop 11:41:43; switch 11:56:37; shortcut start 11:58:55.
+
+
