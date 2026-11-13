@@ -598,7 +598,7 @@ Import-Module unapproved-verb WARNING only (expected). No `TEST OVERRIDES IN USE
 | Event | Time |
 |-------|------|
 | Closed (confirmed) | `2026-11-13T15:20:51-08:00` — detector free; no `Zola.Client` |
-| Restart | *(awaiting Brian)* |
+| Restart | process start `2026-11-13T15:35:35-08:00` (pid 19960); agent confirmed `15:35:46` — detector held |
 
 ### Before / after hash maps (4 roots)
 
@@ -631,4 +631,4 @@ Annotated tag **`proc1-gate`** → `ceb0476f31c5a12b82bcdcbc26fb7bb2d8f6744f`. *
 
 ---
 
-**Phase 6 STOP** (awaiting Brian restart time to record).
+**Phase 6 STOP.**
