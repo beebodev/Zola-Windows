@@ -46,7 +46,27 @@ public partial class App : Application
 
         var baseDir = AppContext.BaseDirectory;
         _buildRole = BuildRole.Resolve(baseDir);
+        // PROC1-DEV: path plan, then dev validation, and only then the first persistent write — PROC1-D4
+        var paths = ClientPaths.ForRole(_buildRole.Role);
+        var codexCount = 0;
+        if (paths.IsDev && !DevProfileValidation.TryValidate(paths, out var devFailure, out codexCount))
+        {
+            var text = DevProfileRefuse.Text(devFailure);
+            Debug.WriteLine($"proc1-dev refuse: {text}");
+            NativeMessageBox.Show(IdentityConstants.RefuseTitle, text);
+            _instanceLock.Dispose();
+            _instanceLock = null;
+            Environment.Exit(0);
+            return;
+        }
+
+        ClientPaths.Install(paths);
         IdentityLog.Write(IdentityLog.RoleLine(_buildRole.Role, _buildRole.Why, _buildRole.Tag));
+        if (paths.IsDev)
+        {
+            IdentityLog.Write(IdentityLog.DevModelCredentials(codexCount));
+        }
+
         var exePath = Environment.ProcessPath ?? Path.Combine(baseDir, "Zola.Client.exe");
         if (_instanceLock.TryWriteStatus(_buildRole, exePath, out var statusFail))
         {
@@ -60,19 +80,24 @@ public partial class App : Application
         // P9-SUPERVISE: prune old local dumps on startup; the folder may be absent — P9-D02
         DumpPruner.PruneOnStartup();
         // P1-CLIENT: own the backend for this window; chat socket stays closed until health passes — P1-D01
-        _backend = new HermesProcessManager();
+        _backend = new HermesProcessManager(paths);
         // P10-INTAKE: one secret for this launch, passed only to serve and zola-phone — P10-D12
-        _phoneSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        _backend.PhoneLaunchSecret = _phoneSecret;
+        // PROC1-DEV: dev does not mint a phone secret and does not start zola-phone — PROC1-D6
+        if (!paths.IsDev)
+        {
+            _phoneSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            _backend.PhoneLaunchSecret = _phoneSecret;
+            _phone = new PhoneProcess(paths.ProfileDirectory, () => _phoneSecret);
+        }
+
         // P9-WATCH: polling continues while serve is down, so the watcher is not serve's child — P9-D02
-        _watcher = new WatcherProcess(_backend.ProfileDirectory);
-        _phone = new PhoneProcess(_backend.ProfileDirectory, () => _phoneSecret);
+        _watcher = new WatcherProcess(paths.ProfileDirectory);
         _window = new MainWindow(_backend, _watcher, _phone);
         _window.Closed += (_, _) =>
         {
             _driftCts?.Cancel();
             // PROC1-ID: phone/watcher KillChild now WaitForExit(5000); serve already waited 5000 — PROC1-D7
-            if (_phone.StopDeliberate())
+            if (_phone is not null && _phone.StopDeliberate())
             {
                 IdentityLog.Write(IdentityLog.ReleaseAfterWait("phone"));
             }
@@ -93,7 +118,10 @@ public partial class App : Application
         };
         _window.Activate();
         _watcher.Start();
-        _phone.Start();
+        if (_phone is not null)
+        {
+            _phone.Start();
+        }
         _ = StartBackendAsync();
         if (_buildRole.Role == IdentityConstants.RoleStable)
         {

@@ -300,10 +300,12 @@ internal sealed class ProactiveSpeechSession
 
         try
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ZolaClient",
-                "logs");
+            // PROC1-DEV: proactive log follows the role's logs directory — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var dir))
+            {
+                return;
+            }
+
             Directory.CreateDirectory(dir);
             File.AppendAllText(Path.Combine(dir, "proactive.log"), line + Environment.NewLine);
         }

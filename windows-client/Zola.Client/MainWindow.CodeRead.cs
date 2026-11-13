@@ -69,7 +69,12 @@ public sealed partial class MainWindow
     {
         try
         {
-            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZolaClient", "logs");
+            // PROC1-DEV: code-read log follows the role's logs directory — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var root))
+            {
+                return;
+            }
+
             Directory.CreateDirectory(root);
             lock (_codeLogGate)
             {

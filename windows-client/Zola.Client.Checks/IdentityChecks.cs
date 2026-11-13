@@ -354,6 +354,8 @@ internal sealed partial class CheckRunner
                 Environment.SetEnvironmentVariable("GIT_DIR", saved);
             }
         });
+
+        RunDevProfileRows();
     }
 
     private static string NewIdentityTempDir()

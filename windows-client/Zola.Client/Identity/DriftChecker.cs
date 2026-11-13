@@ -228,10 +228,12 @@ public static class DriftChecker
 
         try
         {
-            var root = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ZolaClient",
-                "logs");
+            // PROC1-DEV: package capture stays in this build's logs directory — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var root))
+            {
+                return null;
+            }
+
             Directory.CreateDirectory(root);
             var name = "drift-pip-freeze-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt";
             var path = Path.Combine(root, name);

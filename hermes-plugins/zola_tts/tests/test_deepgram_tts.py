@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import textwrap
@@ -50,7 +51,15 @@ class DeepgramTtsTests(unittest.TestCase):
         patcher = mock.patch.object(tts, "KEY_PATH", self.key_path)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self._saved_key_env = os.environ.pop(tts.KEY_PATH_ENV, None)
+        self.addCleanup(self._restore_key_env)
         self.assertNotEqual(tts.KEY_PATH, Path(_REAL_KEY))
+
+    def _restore_key_env(self) -> None:
+        if self._saved_key_env is None:
+            os.environ.pop(tts.KEY_PATH_ENV, None)
+        else:
+            os.environ[tts.KEY_PATH_ENV] = self._saved_key_env
 
     def _argv(self, *extra: str) -> list[str]:
         return ["deepgram_tts.py", str(self.input_path), str(self.output_path), *extra]
@@ -223,6 +232,17 @@ class DeepgramTtsTests(unittest.TestCase):
         self.assertEqual(body["text"], _TEXT)
         self.assertIn(_FAKE_KEY, seen[0].headers["Authorization"])
         self._assert_quiet(out, err)
+
+    def test_unset_or_empty_env_uses_todays_key_path(self) -> None:
+        os.environ.pop(tts.KEY_PATH_ENV, None)
+        with mock.patch.object(tts, "KEY_PATH", Path(_REAL_KEY)):
+            self.assertEqual(tts.resolve_key_path(), Path(_REAL_KEY))
+        os.environ[tts.KEY_PATH_ENV] = "   "
+        with mock.patch.object(tts, "KEY_PATH", Path(_REAL_KEY)):
+            self.assertEqual(tts.resolve_key_path(), Path(_REAL_KEY))
+        os.environ.pop(tts.KEY_PATH_ENV, None)
+        source = Path(tts.__file__).read_text(encoding="utf-8")
+        self.assertIn(_REAL_KEY, source)
 
     def test_key_file_with_and_without_bom(self) -> None:
         self.input_path.write_text(_TEXT, encoding="utf-8")

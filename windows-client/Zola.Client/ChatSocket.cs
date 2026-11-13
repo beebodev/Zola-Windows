@@ -827,10 +827,12 @@ sealed class ChatSocket : IDisposable
     {
         try
         {
-            var root = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                VoiceController.TimelineClientFolder,
-                VoiceController.TimelineLogFolder);
+            // PROC1-DEV: tool events follow the role's logs directory — PROC1-D4
+            if (!ClientPaths.TryGetLogsDirectory(out var root))
+            {
+                return;
+            }
+
             Directory.CreateDirectory(root);
             File.AppendAllText(
                 Path.Combine(root, ToolRiskLogFile),

@@ -627,6 +627,13 @@ internal sealed class TtsPlaybackMonitor : IDisposable
 
     private static int? DiscoverServePidByCommandLine()
     {
+        // PROC1-DEV: playback follows this build's exact profile token and leaves the other profile — PROC1-D4
+        var paths = ClientPaths.Current;
+        if (paths is null)
+        {
+            return null;
+        }
+
         try
         {
             using var searcher = new ManagementObjectSearcher(
@@ -634,22 +641,18 @@ internal sealed class TtsPlaybackMonitor : IDisposable
             foreach (ManagementObject row in searcher.Get())
             {
                 var cmd = row["CommandLine"] as string ?? "";
-                if (cmd.IndexOf("hermes_cli.main", StringComparison.OrdinalIgnoreCase) < 0)
+                var pid = Convert.ToInt32(row["ProcessId"]);
+                var match = ServeProfileMatcher.Classify(cmd, paths.ProfileName, out var flag);
+                if (match == ServeProfileMatch.OtherProfile)
                 {
+                    OtherProfileLog.Once(pid, flag);
                     continue;
                 }
 
-                if (cmd.IndexOf("serve", StringComparison.OrdinalIgnoreCase) < 0)
+                if (match == ServeProfileMatch.ThisProfile)
                 {
-                    continue;
+                    return pid;
                 }
-
-                if (cmd.IndexOf("--isolated", StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    continue;
-                }
-
-                return Convert.ToInt32(row["ProcessId"]);
             }
         }
         catch

@@ -1,7 +1,8 @@
 """Speak one Hermes command-provider job with a Deepgram Aura-2 model.
 
-Stdlib only. Reads the key from the ZolaClient secrets file, never from the
-environment. Prints neither the key nor the text. The model is argv[3] and
+Stdlib only. The key file is ZOLA_DEEPGRAM_KEY_PATH when that variable is set
+to a non-empty path, and otherwise the installed ZolaClient secrets file.
+Prints neither the key nor the text. The model is argv[3] and
 must match ^aura-2-[a-z]+-en$. Speed, when passed as argv[4], stays 0.7-1.5.
 
 Deepgram limits, read 2026-10-12:
@@ -12,6 +13,7 @@ Deepgram limits, read 2026-10-12:
 """
 
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -20,6 +22,7 @@ import urllib.request
 from pathlib import Path
 
 KEY_PATH = Path(r"C:\Users\test\AppData\Local\ZolaClient\secrets\deepgram_api_key")
+KEY_PATH_ENV = "ZOLA_DEEPGRAM_KEY_PATH"
 SPEAK_URL = "https://api.deepgram.com/v1/speak"
 MODEL_RE = re.compile(r"^aura-2-[a-z]+-en$")
 CHAR_LIMIT = 2000
@@ -34,9 +37,16 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
+def resolve_key_path() -> Path:
+    raw = os.environ.get(KEY_PATH_ENV, "").strip()
+    if not raw:
+        return KEY_PATH
+    return Path(raw)
+
+
 def read_key() -> str:
     try:
-        lines = KEY_PATH.read_text(encoding="utf-8-sig").splitlines()
+        lines = resolve_key_path().read_text(encoding="utf-8-sig").splitlines()
         key = lines[0].strip() if lines else ""
     except (OSError, ValueError):
         fail("deepgram: no key")

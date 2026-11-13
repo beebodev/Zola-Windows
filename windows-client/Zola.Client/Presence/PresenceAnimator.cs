@@ -288,6 +288,11 @@ internal sealed class PresenceAnimator
     internal void DebugWriteDefaults()
     {
         var path = DebugPath(PresenceLife.DefaultsFileName);
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, PresenceLife.CreateDefault().ToPrettyJson());
         PresenceView.WriteLog("P3-LIFE: wrote defaults keys=" + PresenceLife.RequiredKeys.Length);
@@ -296,7 +301,7 @@ internal sealed class PresenceAnimator
     internal void DebugReloadLife()
     {
         var path = DebugPath(PresenceLife.DebugFileName);
-        if (!File.Exists(path))
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
             PresenceView.WriteLog("P3-LIFE: life reload rejected — " + PresenceLife.DebugFileName + " is missing");
             return;
@@ -408,13 +413,15 @@ internal sealed class PresenceAnimator
         RequestRender();
     }
 
-    private static string DebugPath(string fileName)
+    private static string? DebugPath(string fileName)
     {
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            VoiceController.TimelineClientFolder,
-            PresenceLook.DebugSubfolder,
-            fileName);
+        // PROC1-DEV: debug life files follow the role's debug directory — PROC1-D4
+        if (!ClientPaths.TryGetDebugDirectory(out var dir))
+        {
+            return null;
+        }
+
+        return Path.Combine(dir, fileName);
     }
 #endif
 

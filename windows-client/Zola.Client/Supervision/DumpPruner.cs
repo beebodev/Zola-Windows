@@ -7,10 +7,12 @@ public static class DumpPruner
     {
         try
         {
-            var folder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ZolaClient",
-                "dumps");
+            // PROC1-DEV: dumps follow the role's client data root — PROC1-D4
+            if (!ClientPaths.TryGetDumpsDirectory(out var folder))
+            {
+                return;
+            }
+
             var dir = new DirectoryInfo(folder);
             if (!dir.Exists || dir.Attributes.HasFlag(FileAttributes.ReparsePoint))
             {
