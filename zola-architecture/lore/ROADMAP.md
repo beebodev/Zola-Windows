@@ -427,15 +427,28 @@ Honest items:
 - `notification_queue_drops=2` is the N9 overflow and was not reset.
 - Ingest leaves `thread_id` empty. History items carry it. Stored items do not.
 
+## Process tracks (PROC1) and S51 fixes — COMPLETE
+
+SOP v3 adopted at the Phase 10 lore closeout (2026-11-06). Transition rules applied until the process tracks below merged; after PROC1-LORE merges, Stage 0 reads `KNOWN_ISSUES.md` and `EXPERIENCE_LOG.md`, the fast-lane log is in use, the scenario library grows at lore closeout, merge gate = `Run-TestGate.ps1` (Zola closed, exit 0), and everyday stable changes only via `tools/stable/` promotion.
+
+| Track | Implementation | Merge / tip | Tag | Promoted to stable |
+|-------|----------------|-------------|-----|--------------------|
+| PROC1-AUDIT | `659025c` | `9c7059a` | — | — |
+| S51F-FIX | `37e5f49` | `74941cf` | `fix-s51f` | 2026-11-10 (`PROC1-STABLE` Switch; `current.txt`=`fix-s51f`) |
+| PROC1-STABLE | `ed985f7` | `5db407f` | `proc1-stable` | (scripts; first everyday promote was `fix-s51f`) |
+| PROC1-ID | `471c5f7` | `c8bc877` | `proc1-id` | 2026-11-12 07:45:41 |
+| PROC1-DEV | `07c1d4a` | `2e9bc4a` | `proc1-dev` | 2026-11-13 11:56:37 |
+| PROC1-GATE | `ceb0476` | `ceb0476` | `proc1-gate` | — (gate only; no promote required) |
+| S51M-FIX | `7b07c70` | `7b07c70` | `fix-s51m` | 2026-11-16 07:42:36; watch restart 07:43:37 |
+| PROC1-LORE | this commit · `proc1-lore` | this commit | `proc1-lore` | — |
+
+Verified against repo tags/commits 2026-11-16: `fix-s51f`→`74941cf`, `proc1-stable`→`5db407f`, `proc1-id`→`c8bc877`, `proc1-dev`→`2e9bc4a`, `proc1-gate`→`ceb0476`, `fix-s51m`→`7b07c70`.
+
 ## Next
 
-1. ARCH-SWAP, after the Phase 10 closeout merges and before any P11PRE work.
-2. SPEECH-BASELINE (prompt v1.4) on the `p10-closed` tag. Measurement only.
-3. The first process track: test gate, stable and development builds.
-4. The serve crash investigation (S51), before Phase 11 scoping.
-5. Phase 11 — Memory and World Understanding. P11PRE first.
-
-SOP v3 adopted at the Phase 10 lore closeout (2026-11-06); its transition rules apply until the first process track merges.
+1. Finish PROC1-LORE merge (four SOP v3 lore files + S51/PROC1 lore records); then Stage 0 rules are fully on.
+2. Phase 11 — Memory and World Understanding. P11PRE first — **blocked** while open serious known issues remain under PR-D03 (KI-S51-PA, KI-S51-3B1FF, KI-S51-SQLITE watching ~to 2026-11-23), unless Brian accepts dated resolve notes or changes the serious flags.
+3. Crash-watch closeout on `fix-s51m` (quiet watch → dated resolve notes on the S51 rows / S103).
 
 ## Later candidates
 
