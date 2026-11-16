@@ -715,10 +715,10 @@ Compared to current live `%LOCALAPPDATA%\hermes\profiles\zola\plugins\zola_memor
 
 ### Decision
 
-**Brian (verbatim):** [promote fix-s51m]
+**Brian (verbatim):** `[promote fix-s51m]`
 
 Plugin diff from Prepare matched exactly:
-`plugins/zola_memory/consolidate.py`, `provider.py`, `log.py` — Brian's promote line is the `-ApprovedPluginCopy` approval.
+`plugins/zola_memory/consolidate.py`, `provider.py`, `log.py` — Brian's verbatim `[promote fix-s51m]` is the `-ApprovedPluginCopy` approval.
 
 ### Prepare
 
@@ -803,6 +803,67 @@ The shutdown race is fixed and the crash watch has restarted; longer observation
 
 
 ---
+
+---
+
+## Post-closeout note — live crash stacks on old code (2026-11-16)
+
+Read-only. Two Application Errors after the Nov-12 motivating pair, still on unfixed `zola_memory`, with faulthandler in `%LOCALAPPDATA%\ZolaClient\logs\serve-stderr\serve-stderr.log`.
+
+### Crash-watch counting rule (from now)
+
+Count only `python.exe` Application Errors whose faulting PID appears as `supervisor proc=serve … child_pid=<pid>` in `%LOCALAPPDATA%\ZolaClient\logs\supervisor.log`. List stress/test/unknown crashes separately.
+
+### A — 2026-11-14 16:22:00 pid=22692 (`python312.dll+0x3b1ff`)
+
+Serve child: `2026-11-13T17:25:04` `child_pid=22692`.
+
+**Crashing thread** (`serve-stderr` ~L400–409): consolidator `_runner` → `run_consolidation` → `try_pending_sanitize` → `store.meta_get` (store.py:466).
+
+**Teardown thread** (~L438–453): Timer `_reap` → `_teardown_popped_session` → `agent.close` → `shutdown_memory_provider` → `provider.shutdown` (provider.py:359).
+
+**zola_memory fields (~1 min before):**
+```
+16:21:41 store_open pid=22692
+16:21:59.920 on_session_end message_count=65
+16:21:59.920 consolidate.lease acquired ok=true
+16:21:59.920 consolidate.lease released ok=true
+16:21:59.926 on_session_end message_count=65
+16:21:59.926 consolidate.lease acquired ok=true
+```
+No `shutdown ok=` before the AV (dies mid-shutdown).
+
+**Fit:** **yes** — consolidator in SQLite + teardown `shutdown`.
+
+### B — 2026-11-15 12:54:46 pid=13920 (`python312.dll+0x3b1ff`)
+
+Serve child: `2026-11-14T16:22:11` `child_pid=13920` (replacement after crash A).
+
+**Crashing thread** (`serve-stderr` ~L590–599): consolidator `_runner` → `run_consolidation` → `_release_lease` → `store.meta_set` (store.py:471).
+
+**Teardown thread** (~L608–630): same `_reap` → … → `provider.shutdown` (provider.py:363, logging `shutdown` event via `write_event`).
+
+**zola_memory fields (~1 min before):**
+```
+12:54:27 store_open pid=13920
+12:54:46.455 on_session_end message_count=25
+12:54:46.462 on_session_end message_count=0
+12:54:46.462 consolidate.lease acquired ok=true
+```
+No `shutdown ok=` before the AV; next line is `12:55:08 store_open pid=29536` (restart).
+
+**Fit:** **yes** — consolidator in SQLite + teardown `shutdown`.
+
+### Crash-watch recount since 2026-11-09 13:23:08
+
+| Class | Count | Events |
+|-------|------:|--------|
+| **Live serve-child** | **3** | 2026-11-12 10:47:32 pid=25000 sqlite3+0xc9310; 2026-11-14 16:22:00 pid=22692 0x3b1ff; 2026-11-15 12:54:46 pid=13920 0x3b1ff |
+| Stress / test / unknown | 25 | Nov-13 16:25–16:28 and 20:04–20:05 clusters; Nov-14 10:30 cluster; Nov-12 10:36:04 pid=13640 (matched `store_open` but not a logged serve `child_pid`) |
+
+### Promotion wording (Brian, verbatim)
+
+`[promote fix-s51m]`
 
 ## STOP — S51M-FIX COMPLETE
 
