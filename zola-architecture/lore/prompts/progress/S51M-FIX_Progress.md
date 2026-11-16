@@ -652,7 +652,68 @@ Dev smoke PASS (real WS-orphan teardown; shutdown **13 ms**; recall PASS). Gate 
 
 ## Phase 6 — Commit and merge
 
-Progress doc UTF-8 cleaned (removed BOM; repaired double-encoded punctuation across the whole file, not only Phase 5). Other diff files audited: no mojibake (consolidate/provider/log/tests/floors).
+Progress doc UTF-8 cleaned before commit (removed BOM; repaired double-encoded punctuation across the whole file). Other diff files audited: no mojibake.
 
 **Brian go-ahead (verbatim):** commit and merge
+
+### Commit
+
+| Item | Value |
+|------|-------|
+| Branch | `s51m-fix` |
+| SHA | `7b07c70e5e666c0831c6db86d4822ed775833895` |
+| Message | `fix(S51M): close memory store only after background work stops — S51 0x3b1ff/sqlite crash class` |
+| Files (7) | `consolidate.py`, `log.py`, `provider.py`, `test_episodes_phase4.py`, `test_s51m_shutdown.py`, `floors.json`, `S51M-FIX_Progress.md` |
+
+### Zola closed
+
+| Event | Time |
+|-------|------|
+| Closed (confirmed 0 client / 0 serve) | 2026-11-16 **07:07:27** |
+
+### Gate on committed tip (`-Promote`, Zola closed)
+
+Result: `%TEMP%\zola-test-gate\20261116-070735\result.json`  
+**OVERALL PASS exit=0**. Commit before=after `7b07c70…` dirty=False. Overrides all false.
+
+### Merge
+
+Fast-forward `main` ← `s51m-fix` in live checkout. Merged tip = `7b07c70…`. Pushed `origin/main`.
+
+### Gate on merged tip (`-Promote`, Zola still closed)
+
+Result: `%TEMP%\zola-test-gate\20261116-071626\result.json`  
+**OVERALL PASS exit=0**. Commit before=after `7b07c70…` dirty=False. Overrides all false.
+
+### Tag
+
+Annotated tag **`fix-s51m`** → `7b07c70e5e666c0831c6db86d4822ed775833895` (pushed).
+
+Zola kept closed for Phase 7 promotion decision.
+
+---
+
+## Phase 7 — Promotion report (await Brian's decision)
+
+### What promoting `fix-s51m` changes for everyday Zola
+
+Stable today is **`proc1-dev`**. Promoting `fix-s51m` replaces that Release build with one built from tag `fix-s51m` (`7b07c70…` on `main`). Everyday Zola then runs the S51M memory shutdown fix: when a conversation ends (WS-orphan teardown), serve no longer races consolidator vs `provider.shutdown`, so the Nov-12 crash class (`0x3b1ff` / sqlite AV) is closed on that path; pending turns survive and consolidate later.
+
+Also on `main` since `proc1-dev` (already merged earlier, not yet in the stable folder): PROC1-DEV closeout docs, PROC1-GATE (test gate tooling), and related docs commits. The **client/tools** in the new stable folder therefore pick up everything from `proc1-dev` → `fix-s51m`. The **live plugin copy** for this promotion is expected to touch only `zola_memory` runtime files (tests are not mirrored).
+
+### Plugin files expected to differ (live profile mirror)
+
+Compared to current live `%LOCALAPPDATA%\hermes\profiles\zola\plugins\zola_memory\`:
+
+| File | Role |
+|------|------|
+| `consolidate.py` | ordered shutdown helper, lease-by-provider, quiet live registry, `store_closed` |
+| `provider.py` | null-conn then wait `store.locked` then close |
+| `log.py` | `STORE_CLOSED` event |
+
+`store.py` / `forget.py` match live already. New tests stay in the repo only.
+
+### Decision needed
+
+Brian: approve or refuse promoting `fix-s51m` via `Promote-Stable.ps1 -Prepare` / `-Switch` (with `-ApprovedPluginCopy` for exactly the Prepare diff). Zola is closed; say the word to proceed or stop.
 
