@@ -18,7 +18,7 @@
       "allowed_skips": []
     },
     "zola_memory": {
-      "min_passed": 162,
+      "min_passed": 174,
       "allowed_skips": []
     },
     "zola_tools": {

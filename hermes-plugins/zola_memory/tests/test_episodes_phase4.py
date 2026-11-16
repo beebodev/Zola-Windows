@@ -487,9 +487,9 @@ class TestConsolidateCore(_TempHome):
         # Slow stub: bump generation mid-flight via forget API after begin
         real_commit = consolidate._commit
 
-        def flip_then_commit(conn, token, rows, episodes, pending_ids):
-            forget.bump_consolidation_generation_best_effort(conn)
-            return real_commit(conn, token, rows, episodes, pending_ids)
+        def flip_then_commit(provider, token, rows, episodes, pending_ids):
+            forget.bump_consolidation_generation_best_effort(provider._conn)
+            return real_commit(provider, token, rows, episodes, pending_ids)
 
         stub = _StubLLM(self._episode_payload(pending_ids=[pid]))
         consolidate.set_llm_for_tests(stub)

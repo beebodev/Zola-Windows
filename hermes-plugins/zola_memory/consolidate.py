@@ -8,8 +8,9 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 try:
     from . import forget
@@ -239,7 +240,8 @@ _MONTHS = {
 
 _lock = threading.RLock()
 _running = False
-_coalesce: Optional[str] = None
+_coalesce_trigger: Optional[str] = None
+_coalesce_provider: Any = None
 _attempt_counts: Dict[str, int] = {}  # keyed by sorted pending-id fingerprint
 _last_pending_write_at: Optional[float] = None
 _timer_started = False
@@ -248,15 +250,27 @@ _llm_override: Any = None
 _quiet_minutes_override: Optional[float] = None
 _background_enabled = True
 _instance_id = str(uuid.uuid4())
+# Live providers for quiet timer / coalesce (insertion order). Pending is shared per DB.
+_live_providers: Dict[int, Any] = {}
+# id(provider) whose consolidator run currently holds the process lease, or None.
+_lease_holder_id: Optional[int] = None
+# Providers that already logged store_closed this lifecycle (cleared on register).
+_store_closed_logged_ids: Set[int] = set()
+
+
+class StoreClosed(Exception):
+    """Provider store closed or replaced; stop cleanly — not an attempt."""
 
 
 def reset_for_tests() -> None:
-    global _running, _coalesce, _attempt_counts, _last_pending_write_at
-    global _timer_started, _llm_override, _quiet_minutes_override, _instance_id
-    global _timer_stop, _background_enabled
+    global _running, _coalesce_trigger, _coalesce_provider, _attempt_counts
+    global _last_pending_write_at, _timer_started, _llm_override, _quiet_minutes_override
+    global _instance_id, _timer_stop, _background_enabled, _live_providers
+    global _lease_holder_id, _store_closed_logged_ids
     with _lock:
         _running = False
-        _coalesce = None
+        _coalesce_trigger = None
+        _coalesce_provider = None
         _attempt_counts = {}
         _last_pending_write_at = None
         _timer_stop.set()
@@ -266,6 +280,9 @@ def reset_for_tests() -> None:
         _background_enabled = False
         _instance_id = str(uuid.uuid4())
         _timer_stop = threading.Event()
+        _live_providers = {}
+        _lease_holder_id = None
+        _store_closed_logged_ids = set()
 
 
 def set_background_enabled_for_tests(enabled: bool) -> None:
@@ -321,9 +338,71 @@ def _get_llm() -> Any:
         return None
 
 
-def start_quiet_timer(provider: Any) -> None:
-    """Start the background quiet-gap watcher once per process."""
+def register_live_provider(provider: Any) -> None:
+    """Register a live provider for quiet-timer wakes (same DB → any live peer)."""
+    with _lock:
+        _live_providers[id(provider)] = provider
+        _store_closed_logged_ids.discard(id(provider))
+
+
+def unregister_live_provider(provider: Any) -> None:
+    with _lock:
+        _live_providers.pop(id(provider), None)
+
+
+def _pick_live_provider() -> Any:
+    """Oldest registered provider that still has a live conn and is not shutting down."""
+    with _lock:
+        for p in _live_providers.values():
+            if getattr(p, "_shutting_down", False):
+                continue
+            if getattr(p, "_conn", None) is None:
+                continue
+            return p
+    return None
+
+
+def _store_closed_for(
+    provider: Any, conn_used: Optional[sqlite3.Connection] = None
+) -> bool:
+    """Classify stop as store-closed by provider state, not exception type."""
+    if getattr(provider, "_shutting_down", False):
+        return True
+    live = getattr(provider, "_conn", None)
+    if live is None:
+        return True
+    if conn_used is not None and live is not conn_used:
+        return True
+    return False
+
+
+def _note_store_closed(provider: Any, *, trigger: str = "-") -> None:
+    """Log store_closed once per provider shutdown / aborted-run lifecycle."""
+    pid = id(provider)
+    with _lock:
+        if pid in _store_closed_logged_ids:
+            return
+        _store_closed_logged_ids.add(pid)
+    memlog.write_event(memlog.LOG_EVENT_STORE_CLOSED, ok=True, trigger=trigger or "-")
+
+
+@contextmanager
+def _db(provider: Any, conn: Optional[sqlite3.Connection] = None) -> Iterator[sqlite3.Connection]:
+    """Take store.locked only (never provider._lock). Abort if provider closed/replaced."""
+    c = conn if conn is not None else getattr(provider, "_conn", None)
+    if c is None or getattr(provider, "_shutting_down", False):
+        raise StoreClosed()
+    with store.locked(c):
+        if getattr(provider, "_conn", None) is not c:
+            raise StoreClosed()
+        yield c
+
+
+def start_quiet_timer(provider: Any = None) -> None:
+    """Start the quiet-gap watcher once per process; optionally register *provider*."""
     global _timer_started
+    if provider is not None:
+        register_live_provider(provider)
     if not _background_enabled:
         return
     with _lock:
@@ -338,20 +417,27 @@ def start_quiet_timer(provider: Any) -> None:
                 _timer_stop.wait(5.0)
                 if _timer_stop.is_set():
                     break
-                conn = getattr(provider, "_conn", None)
-                if conn is None:
+                p = _pick_live_provider()
+                if p is None:
                     continue
-                with store.locked(conn):
-                    n = pending_mod.count_pending(conn)
+                try:
+                    with _db(p) as conn:
+                        n = pending_mod.count_pending(conn)
+                except StoreClosed:
+                    continue
+                except Exception:
+                    if _store_closed_for(p):
+                        continue
+                    continue
                 if n <= 0:
                     continue
                 with _lock:
                     last = _last_pending_write_at
                 if last is None:
-                    request_consolidate(provider, "quiet")
+                    request_consolidate(p, "quiet")
                     continue
                 if (time.monotonic() - last) >= _quiet_minutes() * 60.0:
-                    request_consolidate(provider, "quiet")
+                    request_consolidate(p, "quiet")
             except Exception:
                 pass
 
@@ -374,36 +460,54 @@ def stop_quiet_timer_for_tests() -> None:
 
 def request_consolidate(provider: Any, trigger: str) -> None:
     """Non-blocking: coalesce a consolidator wake (never runs LLM inline)."""
-    global _coalesce, _running
+    global _coalesce_trigger, _coalesce_provider, _running
     if not _background_enabled:
         return
+    if getattr(provider, "_conn", None) is None or getattr(provider, "_shutting_down", False):
+        return
     with _lock:
-        _coalesce = trigger
+        _coalesce_trigger = trigger
+        _coalesce_provider = provider
         if _running:
             return
         _running = True
 
     def _runner() -> None:
-        global _running, _coalesce
+        global _running, _coalesce_trigger, _coalesce_provider
         try:
             while True:
                 with _lock:
-                    trig = _coalesce or trigger
-                    _coalesce = None
+                    trig = _coalesce_trigger or trigger
+                    prov = _coalesce_provider or provider
+                    _coalesce_trigger = None
+                    _coalesce_provider = None
+                if getattr(prov, "_shutting_down", False) or getattr(
+                    prov, "_conn", None
+                ) is None:
+                    prov = _pick_live_provider()
+                if prov is None:
+                    with _lock:
+                        _running = False
+                        return
                 try:
-                    run_consolidation(provider, trig)
+                    run_consolidation(prov, trig)
+                except StoreClosed:
+                    _note_store_closed(prov, trigger=trig)
                 except Exception:
-                    memlog.write_event(
-                        memlog.LOG_EVENT_CONSOLIDATE,
-                        trigger=trig,
-                        turns=0,
-                        episodes=0,
-                        ok=False,
-                        attempt=0,
-                        elapsed_ms=0,
-                    )
+                    if _store_closed_for(prov):
+                        _note_store_closed(prov, trigger=trig)
+                    else:
+                        memlog.write_event(
+                            memlog.LOG_EVENT_CONSOLIDATE,
+                            trigger=trig,
+                            turns=0,
+                            episodes=0,
+                            ok=False,
+                            attempt=0,
+                            elapsed_ms=0,
+                        )
                 with _lock:
-                    if _coalesce is None:
+                    if _coalesce_trigger is None:
                         _running = False
                         return
         finally:
@@ -422,8 +526,7 @@ def request_consolidate(provider: Any, trigger: str) -> None:
 
 def run_consolidation(provider: Any, trigger: str) -> bool:
     """Run one consolidation attempt (blocking). Returns True on commit."""
-    conn = getattr(provider, "_conn", None)
-    if conn is None:
+    if getattr(provider, "_conn", None) is None or getattr(provider, "_shutting_down", False):
         return False
     if not getattr(provider, "llm_available", False) and _llm_override is None:
         memlog.write_event(
@@ -437,111 +540,173 @@ def run_consolidation(provider: Any, trigger: str) -> bool:
         )
         return False
 
-    if not _acquire_lease(conn):
+    if not _acquire_lease(provider):
         return False
     t0 = time.perf_counter()
+    key: Optional[str] = None
+    attempt = 0
     try:
-        # P6-EPISODES: retry deferred G-ERASE WAL TRUNCATE — P6-D04
         try:
-            with store.locked(conn):
-                store.try_pending_sanitize(conn, trigger="consolidate")
-        except Exception:
-            pass
-        with store.locked(conn):
-            token = forget.begin_consolidation(conn)
-            rows = pending_mod.list_pending_ordered(conn)
-        if not rows:
-            return False
-        pending_ids = [r["id"] for r in rows]
-        key = ",".join(sorted(pending_ids))
-        attempt = _attempt_counts.get(key, 0) + 1
-        if attempt > CONSOLIDATE_MAX_ATTEMPTS:
-            memlog.write_event(
-                memlog.LOG_EVENT_CONSOLIDATE_GIVEUP,
-                attempts=attempt - 1,
-                pending_count=len(pending_ids),
-            )
-            # One more try only at initialize — allow reset when trigger is initialize
-            if trigger != "initialize":
+            # P6-EPISODES: retry deferred G-ERASE WAL TRUNCATE — P6-D04
+            try:
+                with _db(provider) as conn:
+                    store.try_pending_sanitize(conn, trigger="consolidate")
+            except StoreClosed:
+                _note_store_closed(provider, trigger=trigger)
                 return False
-            _attempt_counts[key] = 0
-            attempt = 1
+            except Exception:
+                if _store_closed_for(provider):
+                    _note_store_closed(provider, trigger=trigger)
+                    return False
+                # sanitize failure on a live store is non-fatal (prior behaviour)
 
-        llm = _get_llm()
-        if llm is None:
-            memlog.write_event(
-                memlog.LOG_EVENT_CONSOLIDATE,
-                trigger=trigger,
-                turns=len(rows),
-                episodes=0,
-                ok=False,
-                attempt=0,
-                elapsed_ms=int((time.perf_counter() - t0) * 1000),
-            )
-            return False
+            try:
+                with _db(provider) as conn:
+                    token = forget.begin_consolidation(conn)
+                    rows = list(pending_mod.list_pending_ordered(conn))
+            except StoreClosed:
+                _note_store_closed(provider, trigger=trigger)
+                return False
+            except Exception:
+                if _store_closed_for(provider):
+                    _note_store_closed(provider, trigger=trigger)
+                    return False
+                raise
 
-        input_text = _build_model_input(conn, rows)
-        try:
-            # P8-CONNECT: attribution line when Workspace-tainted / unavailable — P8-D09
-            instructions = summarizer_instructions_for(rows)
-            result = llm.complete_structured(
-                instructions=instructions,
-                input=[{"type": "text", "text": input_text}],
-                json_schema=EPISODE_JSON_SCHEMA,
-                timeout=CONSOLIDATE_LLM_TIMEOUT_S,
-            )
-        except Exception:
-            _attempt_counts[key] = attempt
-            memlog.write_event(
-                memlog.LOG_EVENT_CONSOLIDATE,
-                trigger=trigger,
-                turns=len(rows),
-                episodes=0,
-                ok=False,
-                attempt=attempt,
-                elapsed_ms=int((time.perf_counter() - t0) * 1000),
-            )
-            return False
-
-        parsed = _extract_parsed(result)
-        ok_val, episodes = validate_episodes(parsed, rows, conn)
-        if not ok_val:
-            _attempt_counts[key] = attempt
-            if attempt >= CONSOLIDATE_MAX_ATTEMPTS:
+            if not rows:
+                return False
+            pending_ids = [r["id"] for r in rows]
+            key = ",".join(sorted(pending_ids))
+            attempt = _attempt_counts.get(key, 0) + 1
+            if attempt > CONSOLIDATE_MAX_ATTEMPTS:
                 memlog.write_event(
                     memlog.LOG_EVENT_CONSOLIDATE_GIVEUP,
-                    attempts=attempt,
+                    attempts=attempt - 1,
                     pending_count=len(pending_ids),
                 )
+                # One more try only at initialize — allow reset when trigger is initialize
+                if trigger != "initialize":
+                    return False
+                _attempt_counts[key] = 0
+                attempt = 1
+
+            llm = _get_llm()
+            if llm is None:
+                memlog.write_event(
+                    memlog.LOG_EVENT_CONSOLIDATE,
+                    trigger=trigger,
+                    turns=len(rows),
+                    episodes=0,
+                    ok=False,
+                    attempt=0,
+                    elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                )
+                return False
+
+            try:
+                with _db(provider) as conn:
+                    input_text = _build_model_input(conn, rows)
+            except StoreClosed:
+                _note_store_closed(provider, trigger=trigger)
+                return False
+            except Exception:
+                if _store_closed_for(provider):
+                    _note_store_closed(provider, trigger=trigger)
+                    return False
+                raise
+
+            try:
+                # P8-CONNECT: attribution line when Workspace-tainted / unavailable — P8-D09
+                # LLM call stays outside store.locked — S51M-FIX
+                instructions = summarizer_instructions_for(rows)
+                result = llm.complete_structured(
+                    instructions=instructions,
+                    input=[{"type": "text", "text": input_text}],
+                    json_schema=EPISODE_JSON_SCHEMA,
+                    timeout=CONSOLIDATE_LLM_TIMEOUT_S,
+                )
+            except Exception:
+                if _store_closed_for(provider):
+                    _note_store_closed(provider, trigger=trigger)
+                    return False
+                _attempt_counts[key] = attempt
+                memlog.write_event(
+                    memlog.LOG_EVENT_CONSOLIDATE,
+                    trigger=trigger,
+                    turns=len(rows),
+                    episodes=0,
+                    ok=False,
+                    attempt=attempt,
+                    elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                )
+                return False
+
+            parsed = _extract_parsed(result)
+            try:
+                with _db(provider) as conn:
+                    ok_val, episodes = validate_episodes(parsed, rows, conn)
+            except StoreClosed:
+                _note_store_closed(provider, trigger=trigger)
+                return False
+            except Exception:
+                if _store_closed_for(provider):
+                    _note_store_closed(provider, trigger=trigger)
+                    return False
+                raise
+
+            if not ok_val:
+                _attempt_counts[key] = attempt
+                if attempt >= CONSOLIDATE_MAX_ATTEMPTS:
+                    memlog.write_event(
+                        memlog.LOG_EVENT_CONSOLIDATE_GIVEUP,
+                        attempts=attempt,
+                        pending_count=len(pending_ids),
+                    )
+                memlog.write_event(
+                    memlog.LOG_EVENT_CONSOLIDATE,
+                    trigger=trigger,
+                    turns=len(rows),
+                    episodes=0,
+                    ok=False,
+                    attempt=attempt,
+                    elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                )
+                return False
+
+            try:
+                _renew_lease(provider)
+                committed = _commit(provider, token, rows, episodes, pending_ids)
+            except StoreClosed:
+                _note_store_closed(provider, trigger=trigger)
+                return False
+            except Exception:
+                if _store_closed_for(provider):
+                    _note_store_closed(provider, trigger=trigger)
+                    return False
+                raise
+
             memlog.write_event(
                 memlog.LOG_EVENT_CONSOLIDATE,
                 trigger=trigger,
                 turns=len(rows),
-                episodes=0,
-                ok=False,
+                episodes=len(episodes) if committed else 0,
+                ok=committed,
                 attempt=attempt,
                 elapsed_ms=int((time.perf_counter() - t0) * 1000),
             )
+            if committed:
+                _attempt_counts.pop(key, None)
+            else:
+                _attempt_counts[key] = attempt
+            return committed
+        except StoreClosed:
+            _note_store_closed(provider, trigger=trigger)
             return False
-
-        _renew_lease(conn)
-        committed = _commit(conn, token, rows, episodes, pending_ids)
-        memlog.write_event(
-            memlog.LOG_EVENT_CONSOLIDATE,
-            trigger=trigger,
-            turns=len(rows),
-            episodes=len(episodes) if committed else 0,
-            ok=committed,
-            attempt=attempt,
-            elapsed_ms=int((time.perf_counter() - t0) * 1000),
-        )
-        if committed:
-            _attempt_counts.pop(key, None)
-        else:
-            _attempt_counts[key] = attempt
-        return committed
     finally:
-        _release_lease(conn)
+        try:
+            _release_lease(provider)
+        except Exception:
+            pass
 
 
 def _extract_parsed(result: Any) -> Any:
@@ -950,14 +1115,14 @@ def _parse_iso(value: str) -> Optional[datetime]:
 
 
 def _commit(
-    conn: sqlite3.Connection,
+    provider: Any,
     token: Dict[str, Any],
     rows: Sequence[sqlite3.Row],
     episodes: List[Dict[str, Any]],
     pending_ids: List[str],
 ) -> bool:
     by_id = {r["id"]: r for r in rows}
-    with store.locked(conn):
+    with _db(provider) as conn:
         try:
             conn.execute("BEGIN IMMEDIATE")
             if not forget.can_commit(conn, token):
@@ -1023,6 +1188,8 @@ def _commit(
             except Exception:
                 pass
             return True
+        except StoreClosed:
+            raise
         except Exception:
             try:
                 conn.execute("ROLLBACK")
@@ -1082,50 +1249,58 @@ def _upsert_entity(
 # --- lease ------------------------------------------------------------------------
 
 
-def _acquire_lease(conn: sqlite3.Connection) -> bool:
+def _acquire_lease(provider: Any) -> bool:
+    global _lease_holder_id
     now = time_context.capture_now()
     expires = now.timestamp() + CONSOLIDATE_LEASE_TTL_S
     expires_iso = time_context.marker_iso(
         datetime.fromtimestamp(expires, tz=timezone.utc).astimezone(now.tzinfo)
     )
-    with store.locked(conn):
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            owner = store.meta_get(conn, store.META_CONSOLIDATE_LEASE_OWNER)
-            exp = store.meta_get(conn, store.META_CONSOLIDATE_LEASE_EXPIRES_AT)
-            exp_dt = _parse_iso(exp) if exp else None
-            if owner and exp_dt is not None and exp_dt > now and owner != _instance_id:
-                conn.execute("ROLLBACK")
+    try:
+        with _db(provider) as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                owner = store.meta_get(conn, store.META_CONSOLIDATE_LEASE_OWNER)
+                exp = store.meta_get(conn, store.META_CONSOLIDATE_LEASE_EXPIRES_AT)
+                exp_dt = _parse_iso(exp) if exp else None
+                if owner and exp_dt is not None and exp_dt > now and owner != _instance_id:
+                    conn.execute("ROLLBACK")
+                    memlog.write_event(
+                        memlog.LOG_EVENT_CONSOLIDATE_LEASE,
+                        action="busy",
+                        ok=False,
+                    )
+                    return False
+                store.meta_set(conn, store.META_CONSOLIDATE_LEASE_OWNER, _instance_id)
+                store.meta_set(conn, store.META_CONSOLIDATE_LEASE_EXPIRES_AT, expires_iso)
+                conn.execute("COMMIT")
+                with _lock:
+                    _lease_holder_id = id(provider)
                 memlog.write_event(
                     memlog.LOG_EVENT_CONSOLIDATE_LEASE,
-                    action="busy",
-                    ok=False,
+                    action="acquired",
+                    ok=True,
                 )
-                return False
-            store.meta_set(conn, store.META_CONSOLIDATE_LEASE_OWNER, _instance_id)
-            store.meta_set(conn, store.META_CONSOLIDATE_LEASE_EXPIRES_AT, expires_iso)
-            conn.execute("COMMIT")
-            memlog.write_event(
-                memlog.LOG_EVENT_CONSOLIDATE_LEASE,
-                action="acquired",
-                ok=True,
-            )
-            return True
-        except Exception:
-            try:
-                conn.execute("ROLLBACK")
+                return True
+            except StoreClosed:
+                raise
             except Exception:
-                pass
-            return False
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                return False
+    except StoreClosed:
+        return False
 
 
-def _renew_lease(conn: sqlite3.Connection) -> None:
+def _renew_lease(provider: Any) -> None:
     now = time_context.capture_now()
     expires = now.timestamp() + CONSOLIDATE_LEASE_TTL_S
     expires_iso = time_context.marker_iso(
         datetime.fromtimestamp(expires, tz=timezone.utc).astimezone(now.tzinfo)
     )
-    with store.locked(conn):
+    with _db(provider) as conn:
         try:
             conn.execute("BEGIN IMMEDIATE")
             owner = store.meta_get(conn, store.META_CONSOLIDATE_LEASE_OWNER)
@@ -1139,6 +1314,8 @@ def _renew_lease(conn: sqlite3.Connection) -> None:
                 action="renewed",
                 ok=True,
             )
+        except StoreClosed:
+            raise
         except Exception:
             try:
                 conn.execute("ROLLBACK")
@@ -1146,22 +1323,75 @@ def _renew_lease(conn: sqlite3.Connection) -> None:
                 pass
 
 
-def _release_lease(conn: sqlite3.Connection) -> None:
-    with store.locked(conn):
+def _release_lease(provider: Any) -> None:
+    """Release lease meta only if this provider's run holds it."""
+    global _lease_holder_id
+    with _lock:
+        if _lease_holder_id is not None and _lease_holder_id != id(provider):
+            return
+    conn = getattr(provider, "_conn", None)
+    if conn is None:
+        with _lock:
+            if _lease_holder_id == id(provider):
+                _lease_holder_id = None
+        return
+    try:
+        with _db(provider, conn) as c:
+            try:
+                c.execute("BEGIN IMMEDIATE")
+                owner = store.meta_get(c, store.META_CONSOLIDATE_LEASE_OWNER)
+                if owner == _instance_id:
+                    store.meta_set(c, store.META_CONSOLIDATE_LEASE_OWNER, "")
+                    store.meta_set(c, store.META_CONSOLIDATE_LEASE_EXPIRES_AT, "")
+                c.execute("COMMIT")
+                memlog.write_event(
+                    memlog.LOG_EVENT_CONSOLIDATE_LEASE,
+                    action="released",
+                    ok=True,
+                )
+            except StoreClosed:
+                raise
+            except Exception:
+                try:
+                    c.execute("ROLLBACK")
+                except Exception:
+                    pass
+    except StoreClosed:
+        pass
+    finally:
+        with _lock:
+            if _lease_holder_id == id(provider):
+                _lease_holder_id = None
+
+
+def release_lease_if_held_by(provider: Any, conn: sqlite3.Connection) -> None:
+    """Shutdown helper: clear lease only if this provider's run holds it.
+
+    Caller already holds ``store.locked(conn)`` (and provider ``_lock``). Does not
+    take ``provider._lock``. Leave the lease alone if another provider's run holds it.
+    """
+    global _lease_holder_id
+    with _lock:
+        if _lease_holder_id != id(provider):
+            return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        owner = store.meta_get(conn, store.META_CONSOLIDATE_LEASE_OWNER)
+        if owner == _instance_id:
+            store.meta_set(conn, store.META_CONSOLIDATE_LEASE_OWNER, "")
+            store.meta_set(conn, store.META_CONSOLIDATE_LEASE_EXPIRES_AT, "")
+        conn.execute("COMMIT")
+        memlog.write_event(
+            memlog.LOG_EVENT_CONSOLIDATE_LEASE,
+            action="released",
+            ok=True,
+        )
+    except Exception:
         try:
-            conn.execute("BEGIN IMMEDIATE")
-            owner = store.meta_get(conn, store.META_CONSOLIDATE_LEASE_OWNER)
-            if owner == _instance_id:
-                store.meta_set(conn, store.META_CONSOLIDATE_LEASE_OWNER, "")
-                store.meta_set(conn, store.META_CONSOLIDATE_LEASE_EXPIRES_AT, "")
-            conn.execute("COMMIT")
-            memlog.write_event(
-                memlog.LOG_EVENT_CONSOLIDATE_LEASE,
-                action="released",
-                ok=True,
-            )
+            conn.execute("ROLLBACK")
         except Exception:
-            try:
-                conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            pass
+    finally:
+        with _lock:
+            if _lease_holder_id == id(provider):
+                _lease_holder_id = None

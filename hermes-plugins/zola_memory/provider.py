@@ -47,6 +47,7 @@ class ZolaMemoryProvider(MemoryProvider):
         self._parent_session_id: str = ""
         self._current_user_message = ""
         self._initialized = False
+        self._shutting_down = False
         # P6-STORE: provider-level lock mirrors connection lock — P6-D03
         self._lock = threading.RLock()
         # P6-FORGET: disposition / hold / candidates (process memory) — P6-D06
@@ -127,6 +128,7 @@ class ZolaMemoryProvider(MemoryProvider):
             return
 
         with self._lock:
+            self._shutting_down = False
             self._conn = store.open_store(hermes_home)
             result = fact_index.run_file_check(self._conn, hermes_home, force=True)
             self._initialized = True
@@ -137,6 +139,7 @@ class ZolaMemoryProvider(MemoryProvider):
         if self._session_id:
             registry.put(self._session_id, self)
         # P6-EPISODES: quiet timer + initialize backlog consolidate signal — P6-D04
+        # S51M-FIX: register this provider; timer picks any live peer for the shared DB
         consolidate.start_quiet_timer(self)
         try:
             with store.locked(self._conn):
@@ -297,7 +300,9 @@ class ZolaMemoryProvider(MemoryProvider):
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
         # P6-EPISODES: signal only — never inline consolidate (E5) — P6-D04
-        consolidate.request_consolidate(self, "session_end")
+        # S51M-FIX: safe if Hermes fires twice or after shutdown
+        if self._conn is not None and not self._shutting_down:
+            consolidate.request_consolidate(self, "session_end")
         memlog.write_event(
             memlog.LOG_EVENT_ON_SESSION_END,
             session_id="-",
@@ -344,20 +349,37 @@ class ZolaMemoryProvider(MemoryProvider):
         return ""
 
     def shutdown(self) -> None:
+        # S51M-FIX: mark closed under provider lock, then close while holding store.locked
+        # (lock order: provider._lock → store.locked). D1=(A): wait only for the current
+        # protected DB block; never clear another provider's consolidate lease.
         ok = True
         try:
             # P6-TIME: identity-checked registry remove before closing conn — P6-D05
             registry.remove(self._session_id or "", self)
             with self._lock:
+                if self._shutting_down and self._conn is None:
+                    memlog.write_event(memlog.LOG_EVENT_SHUTDOWN, ok=True)
+                    return
+                self._shutting_down = True
+                consolidate.unregister_live_provider(self)
                 self._forget_state.clear_on_shutdown()
-                if self._conn is not None:
-                    try:
-                        forget.clear_hold_meta(self._conn)
-                    except Exception:
-                        pass
-                    store.release_lock(self._conn)
-                    self._conn.close()
-                    self._conn = None
+                conn = self._conn
+                self._conn = None
+                if conn is not None:
+                    with store.locked(conn):
+                        try:
+                            forget.clear_hold_meta(conn)
+                        except Exception:
+                            pass
+                        try:
+                            consolidate.release_lease_if_held_by(self, conn)
+                        except Exception:
+                            pass
+                        try:
+                            conn.close()
+                        except Exception:
+                            ok = False
+                    store.release_lock(conn)
         except Exception:
             ok = False
         memlog.write_event(memlog.LOG_EVENT_SHUTDOWN, ok=ok)
