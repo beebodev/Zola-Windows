@@ -299,3 +299,30 @@ Diff: `C:\Users\test\Dev\zola-spikes\prompts\PROC1-LORE_Phase2.diff` (updated fo
 
 ### Commit
 
+
+| Item | Value |
+|------|-------|
+| Commit | `f535ea5` |
+| Branch-tip gate | PASS exit=0 (commit `f535ea5`, dirty=False) |
+| Merge | `d0c633e` `Merge branch 'proc1-lore'` |
+| Merged-tip gate | PASS exit=0 (commit `d0c633e`, dirty=False) |
+| Tag | `proc1-lore` → `d0c633e` |
+| Promotion | none |
+
+### Brian starts Zola (times)
+
+| Event | Time |
+|-------|------|
+| Client start | 2026-11-16 **09:14:45** pid **31468** `…\stable\fix-s51m\Zola.Client.exe` |
+| identity | 2026-11-16 **09:14:45.904** `role=stable why=ok tag=fix-s51m` |
+| watcher job_assigned | 2026-11-16 **09:14:47.737** launcher 28292 child 28800 |
+| phone job_assigned | 2026-11-16 **09:14:47.760** launcher 31796 child 21008 |
+| serve start | 2026-11-16 **09:14:48.150** launcher 30620 child **28008** |
+| drift | 2026-11-16 **09:14:49.690** `components=none` |
+
+Crash watch on `fix-s51m` since 2026-11-16 07:43:37: see closeout (counting rule).
+
+### Sync / worktree
+
+Live checkout `ff-only` / already at merge tip. Worktree removed after tag.
+
