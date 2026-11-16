@@ -2205,3 +2205,111 @@ Wire contract version 4. Companion 1.1.1, versionCode 10. Capabilities: `receive
 - Hands off the phone unless a step needs it and is approved (`P10-NOTIFY_Progress.md`).
 - Stop only processes this track started, by PID. Check for orphans after every client close (`P10-READ_Progress.md`, `P10-NOTIFY_Progress.md`).
 - Claude's reviews caught defects the tests did not. Track 3: the C11 empty-payload drain. Track 4: F1 through F9, including the production pipe override and the Life360 duplicate. Track 5: the pending-list wording, the inject line, and the mask miss. Track 6: the turn id and the yes-path order.
+
+## Process and crash fixes (PROC1 / S51F / S51M)
+
+Recorded at PROC1-LORE Phase 2 (2026-11-16) from progress docs, build-plan summaries, and the PROC1-LORE prompt appendix (Brian's verbatim words). Full PROC1 decision text: Claude's project `claude/PROC1_DECISIONS.md`. Full S51F decision text: `claude/S51_FIX_DECISIONS.md`. SOP v3 process decisions: `claude/PROCESS_DECISIONS.md` and `Phase_SOP_Generic.md` v3.0 (not on disk here).
+
+Brian (2026-11-09, PROC1 D1–D14): "approved". Brian (SOP v3): "SOP v3 is good".
+
+### S51F-D01 — Thinking sound off
+
+`voice.thinking_sound: false` (S51F-PRE, 2026-11-09). Crash watch started at relaunch.
+
+Brian (verbatim, appendix): "I would prefer to turn off the thinking sound. It feels very AI or robotic and not realistic to what an actual conversation would do. I would prefer Zola to say something like, "Let me check on that" or "Let me look". Not hardcoded, but something that tells you she may need some time to figure it out."
+
+Spoken "let me check" style is deferred to the speech track (not hardcoded here).
+
+### S51F-D02 — Pre-tool acknowledgement → speech track
+
+Deferred. Brian (verbatim): "I agree with your 5 points"
+
+### S51F-D03 — Hermes beeps off
+
+`voice.beep_enabled: false` directly after `thinking_sound: false` in the `voice:` block. Brian (verbatim, the exact line): "insert one line `beep_enabled: false` directly after `thinking_sound: false` in the `voice:` block, at the same indentation." Smoke: "Test ran. No beeps were heard." / "I can tell when she is listening"
+
+### S51F-D04 — Lost-request notice
+
+Visible line: "Sorry, your last request didn't go through. Please ask again." No auto-resubmit; no spoken notice now. Brian (verbatim): "I guess the first one for now." (His earlier proposal: "You last request didn't go through. What were you saying again?")
+
+### S51F-D05 — No Zira notice while the backend is down — Pandora is her voice
+
+Decision wording (as directed for lore): "No Zira notice while the backend is down — Pandora is her voice." The client does not speak any crash notice. Agreed with Claude's recommendation (Brian agreed, 2026-11-09; no separate sentence in the appendix).
+
+### S51F-D06 — Faulthandler on Python children
+
+`PYTHONFAULTHANDLER=1` on every Python process the client launches, plus pid logging. Agreed with Claude's recommendation (Brian agreed, 2026-11-09; no separate sentence).
+
+### S51M-D1 — Shutdown vs consolidator
+
+(A) Stop cleanly, finish later: null `_conn`, wait `store.locked`, then close; pending consolidates on later initialize/quiet. Brian (verbatim): "(A) Approved"
+
+### PROC1-D1 — Stable folder + shortcut
+
+Release `Zola.Client.exe` under `C:\Users\test\Zola\stable\<tag>\`; Desktop/Start Menu shortcut named **Zola**; always finds Hermes (`ZOLA_HERMES_ROOT`). `dotnet run` is dev-only. Brian (PROC1 D1–D14): "approved"
+
+### PROC1-D2 — Framework-dependent build
+
+Framework-dependent win-x64 Release. Brian: "approved". Note: built with `dotnet build -o` since the first switch (publish omitted `.xbf`/`.pri`; PROC1-STABLE).
+
+### PROC1-D3 — Stable shares hermes-agent/venv for now
+
+Stable shares `C:\Users\test\Dev\hermes-agent` and its venv for now; no Hermes or package change without Brian's approval. Brian: "approved"
+
+### PROC1-D4 — Dev profile fail-closed
+
+Profile `zola-dev`. A dev build that can't confirm it is dev refuses to start. **Amendment:** Hermes root `%LOCALAPPDATA%\hermes-dev` → `hermes-dev\profiles\zola-dev`, because Hermes's `release_orphaned_leases` sweeps every profile under its root every 300 s and can write. Brian (amendment, verbatim): "Approved". Brian (D1–D14): "approved"
+
+### PROC1-D5 — Dev shares Deepgram/LLM keys for now
+
+Dev shares the Deepgram and LLM-provider keys for now (cost and quota only). Brian: "approved"
+
+### PROC1-D6 — No real phone in dev
+
+"No real phone in dev: phone features off, or the simulator if it works outside tests; a virtual phone (Android emulator) later if a track needs end-to-end phone testing." Brian's question (verbatim, appendix): "The problem with D6 is I don't have a fake test phone. Are you saying we can generate one in dev?" Implementation (PROC1-DEV): dev never starts `zola-phone`, and its phone tools answer "I can't reach your phone right now." Brian: "approved"
+
+### PROC1-D7 — Second Zola refuses; names holder; never kills first
+
+A second Zola refuses with a pop-up naming the running build; the lock is taken before any data is opened or Hermes attached; it never closes the first. Brian: "approved"
+
+### PROC1-D8 — INFRA ≠ pass; clean full gate on exact commit
+
+INFRA is not a pass; every merge needs a clean full run on the exact commit; "phone mutex tests may report INFRA while stable is open". Brian: "approved"
+
+### PROC1-D9 — Kotlin unit in gate; assembleDebug at promotion
+
+Kotlin unit tests in the gate; `assembleDebug` at promotion. Brian: "approved"
+
+### PROC1-D10 — Four SOP v3 lore files as lore root siblings
+
+`KNOWN_ISSUES.md`, `SCENARIO_LIBRARY.md`, `EXPERIENCE_LOG.md`, `FAST_LANE_LOG.md` beside the existing lore root files. Brian: "approved"
+
+### PROC1-D11 — Speech baseline referenced, not copied
+
+Speech-baseline material is cited from `zola-spikes/speech-baseline`, not copied into lore. Brian: "approved"
+
+### PROC1-D12 — Backup + restore drill every promotion
+
+Consistent backup and a tested restore at every promotion; restore loses data stored since that promotion and can't undo sends. Brian: "approved"
+
+### PROC1-D13 — Plugins to live only via promotion; stable manifest / start check
+
+Plugin code reaches the live profile only through promotion; stable manifest recorded at promotion and checked at startup. Brian: "approved"
+
+### PROC1-D14 — Dev = test Google only (or Google off); never live token
+
+Dev uses only the test Google account or has Google off; never falls back to the live token. Brian: "approved"
+
+### PR-D01–D09 — Process decisions behind SOP v3
+
+Full text lives in Claude's project (`claude/PROCESS_DECISIONS.md`, `Phase_SOP_Generic.md` v3.0). Each line is what was decided, then Brian's verdict once:
+
+- **PR-D01** — one-command test gate before every merge, with each suite reported, FAIL and INFRA both blocking, and new functionality shipping with tests; Brian: "Adopt. Run tests automatically before merges. Also require tests for new functionality, not just existing tests."
+- **PR-D02** — separate stable and dev builds, data and configuration, with verified isolation and refuse-not-kill; Brian: "Keep stable and development builds separate, including their data and configuration where necessary."
+- **PR-D03** — the stability gate, with serious failures defined and historical ones investigated before blocking; Brian: "Block serious failures, but don't let unrelated minor bugs hold up development."
+- **PR-D04** — an experience log as an audit input, with no fixed minimum; Brian: "Make your actual experience with Zola part of the acceptance process."
+- **PR-D05** — one active coding track (repo code only); Brian: "One active coding track, but don't unnecessarily restrict avatar work or design discussions."
+- **PR-D06** — refactor when complexity makes a planned change risky, with tests before and after; Brian: "Refactor oversized files when justified. Require regression tests before and after. I won't pay for outside review."
+- **PR-D07** — the fast lane, with its eligibility list; Brian: "Small, contained fixes shouldn't need the full SOP."
+- **PR-D08** — the behavioural regression library, with the run-scope safeguard; Brian: "Yes, approved, with that safeguard."
+- **PR-D09** — three milestones (track merge, phase release, stable promotion), plus the stable-hotfix rule; Brian: "Yes, approved, with explicit testing on both branches."
