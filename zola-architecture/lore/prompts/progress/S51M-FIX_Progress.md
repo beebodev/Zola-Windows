@@ -713,7 +713,96 @@ Compared to current live `%LOCALAPPDATA%\hermes\profiles\zola\plugins\zola_memor
 
 `store.py` / `forget.py` match live already. New tests stay in the repo only.
 
-### Decision needed
+### Decision
 
-Brian: approve or refuse promoting `fix-s51m` via `Promote-Stable.ps1 -Prepare` / `-Switch` (with `-ApprovedPluginCopy` for exactly the Prepare diff). Zola is closed; say the word to proceed or stop.
+**Brian (verbatim):** [promote fix-s51m]
+
+Plugin diff from Prepare matched exactly:
+`plugins/zola_memory/consolidate.py`, `provider.py`, `log.py` — Brian's promote line is the `-ApprovedPluginCopy` approval.
+
+### Prepare
+
+| Item | Value |
+|------|-------|
+| Start / end | 2026-11-16 **07:39:25** → **07:41:10** |
+| Tag commit | `7b07c70e5e666c0831c6db86d4822ed775833895` |
+| Client build hash | `6f1bff9439c314eedbbb3b0d4b5e25480ef31ddf31c702d60d0d81f2cbf902d4` |
+| Plugin compare | changed only the three `zola_memory` files above |
+
+### Switch
+
+| Item | Value |
+|------|-------|
+| Promoted | 2026-11-16 **07:42:36** (exit 0) |
+| Stable folder | `C:\Users\test\Zola\stable\fix-s51m\` |
+| `current.txt` | `fix-s51m` |
+| Backup | `C:\Users\test\Zola\stable\backups\fix-s51m-20261116-074136` |
+| Drill | PASS — databases=5, files=823, credentials=5; scratch deleted |
+| Outgoing | `proc1-dev` |
+| Plugins copied | consolidate.py, provider.py, log.py (live SHA match tip) |
+
+### Shortcut start + stable smoke
+
+| Item | Value |
+|------|-------|
+| Client start | 2026-11-16 **07:43:35** pid 5396 `…\stable\fix-s51m\Zola.Client.exe` |
+| Serve start (crash watch restart) | 2026-11-16 **07:43:37** / supervisor serve start **07:43:38** (launcher 18288, child 25956) |
+| Identity | `role=stable why=ok tag=fix-s51m` |
+| Drift | `completed=true components=none` |
+| Memory | `store_open` + `initialize ok=true`; profile `-p zola` (not hermes-dev) |
+
+### Crash watch — every `python.exe` Application Error since 2026-11-09 13:23:08
+
+Count: **28**. Offsets shown.
+
+| Time (local) | Module | Exception | Fault offset | PID |
+|--------------|--------|-----------|--------------|-----|
+| 2026-11-12 10:36:04 | python312.dll | 0xc0000005 | 0x3b1ff | 13640 |
+| 2026-11-12 10:47:32 | sqlite3.dll | 0xc0000005 | 0xc9310 | 25000 |
+| 2026-11-13 16:25:46–16:28:06 | python312.dll | 0xc0000005 | mostly 0x3b1ff (10 events; one 0x47e64) | cluster |
+| 2026-11-13 20:04:21–20:05:50 | python312.dll / sqlite3.dll | 0xc0000005 | 0x3b1ff / 0x47e64 / 0xc92b0 (9 events) | cluster |
+| 2026-11-14 10:30:00–10:30:46 | python312.dll | 0xc0000005 | 0x3b1ff / 0x47e64 (5 events) | cluster |
+| 2026-11-14 16:22:00 | python312.dll | 0xc0000005 | 0x3b1ff | 22692 |
+| 2026-11-15 12:54:46 | python312.dll | 0xc0000005 | 0x3b1ff | 13920 |
+
+Nov-13 afternoon/evening and Nov-14 10:30 clusters align with S51M Phase 3/4 scratch stress (before-fix AVs). Nov-12 pair = the motivating live crashes. Nov-14 16:22 and Nov-15 12:54 = live serve (supervisor stale/restart). Full TSV: `%TEMP%\s51m-crashes.tsv`.
+
+### Deliberate closes / starts this track
+
+| Event | Time |
+|-------|------|
+| Stable close (Phase 5) | 2026-11-15 13:04:16 |
+| Dev start / close (smoke) | 13:06:17 / 13:15:25 |
+| Stable start (experience) | 13:25:03 |
+| Stable close (Phase 6) | 2026-11-16 07:07:27 |
+| Promote Switch | 07:42:36 |
+| Stable start (promoted) | 07:43:35 — crash watch restart |
+
+### Verdict (required wording)
+
+The shutdown race is fixed and the crash watch has restarted; longer observation decides whether it accounts for all historical 0x3b1ff/sqlite crashes (history fit: `0x3b1ff` 6/3/1, sqlite 0/2/1).
+
+---
+
+## Closeout
+
+### Live checkout sync
+
+| Item | Value |
+|------|-------|
+| Live | `C:\Users\test\Dev\zola-windows` on `main` |
+| Tip | `2b10f10…` (docs record) + implementation `7b07c70…`; matches `origin/main` after closeout commit |
+
+### Worktree / branch
+
+| Item | Value |
+|------|-------|
+| Worktree remove | OK — C:\Users\test\Dev\zola-windows-s51m-fix gone |
+| Branch delete | local s51m-fix deleted (was 7b07c70) |
+| Remote branch | never pushed |
+
+
+---
+
+## STOP — S51M-FIX COMPLETE
 
