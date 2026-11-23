@@ -93,8 +93,8 @@ Owner placement (Brian); wake-under-owner strategy; `voice.tts` disarm policy. B
 | Record | SHA |
 |--------|-----|
 | Audit commit (12d) | `8bdd4347445e68d8e89e21da1b415bb0e7426684` |
-| Tip SHA commit (12e) | _(this commit)_ |
-| Merge to `main` (12g) | _(pending)_ |
+| Tip SHA commit (12e) | `77111359a2b2b8002b7ee8c8f2001afe28365bd3` |
+| Merge to `main` (12g) | `b2b12854f25ca3e2fe96315144281f50fe855307` |
 
 **12a:** changes only under `zola-architecture/audit/speech-pre/`; hermes-agent clean at pin; spike listings identical (6594 / 3179).  
 **12b:** privacy scan — 0 transcript/reply/email/message/memory content hits; 0 key-like strings (false positives only: test names / table rules).  
