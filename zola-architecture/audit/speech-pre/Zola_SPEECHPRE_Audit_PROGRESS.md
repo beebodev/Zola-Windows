@@ -51,7 +51,7 @@ G-SCOPE diagnostic only · G-NOCHANGE · G-NO-AUDIO · G-NO-RESTART · G-SECRETS
 | 9 Tests/refactor | `Zola_SPEECHPRE_Audit_09_TestsRefactor.md` | COMPLETE |
 | 10 Missing evidence | `Zola_SPEECHPRE_Audit_10_MissingEvidence.md` | COMPLETE |
 | 11 Synthesis | `Zola_SPEECHPRE_Audit_SYNTHESIS.md` | COMPLETE — STOP for Claude |
-| 12 Closeout | — | IN PROGRESS |
+| 12 Closeout | — | COMPLETE |
 
 ## Readiness verdict
 
@@ -90,4 +90,12 @@ Owner placement (Brian); wake-under-owner strategy; `voice.tts` disarm policy. B
 
 ## Closeout SHAs (Phase 12)
 
-_Audit commit / tip SHA / merge SHA: pending closeout._
+| Record | SHA |
+|--------|-----|
+| Audit commit (12d) | `8bdd4347445e68d8e89e21da1b415bb0e7426684` |
+| Tip SHA commit (12e) | _(this commit)_ |
+| Merge to `main` (12g) | _(pending)_ |
+
+**12a:** changes only under `zola-architecture/audit/speech-pre/`; hermes-agent clean at pin; spike listings identical (6594 / 3179).  
+**12b:** privacy scan — 0 transcript/reply/email/message/memory content hits; 0 key-like strings (false positives only: test names / table rules).  
+**12c:** phases COMPLETE; findings **27** (7 HIGH, 12 MEDIUM, 8 LOW).
